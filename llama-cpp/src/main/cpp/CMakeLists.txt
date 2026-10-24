@@ -39,14 +39,21 @@ if(LLAMAJNI_ENABLE_VULKAN)
             URL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/${LLAMAJNI_VULKAN_TAG}.zip")
         FetchContent_Declare(llamajni_vulkan_hpp
             URL "https://github.com/KhronosGroup/Vulkan-Hpp/archive/refs/tags/${LLAMAJNI_VULKAN_TAG}.zip")
+        # ggml-vulkan-types.h also drinks from <spirv/unified1/spirv.hpp>; on
+        # desktop that rides along with the Vulkan SDK, which Android lacks.
+        FetchContent_Declare(llamajni_spirv_headers
+            URL "https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/vulkan-sdk-1.4.363.0.zip")
         FetchContent_Populate(llamajni_vulkan_headers)
         FetchContent_Populate(llamajni_vulkan_hpp)
+        FetchContent_Populate(llamajni_spirv_headers)
         if(EXISTS "${llamajni_vulkan_headers_SOURCE_DIR}/include/vulkan/vulkan.h"
-           AND EXISTS "${llamajni_vulkan_hpp_SOURCE_DIR}/vulkan/vulkan.hpp")
+           AND EXISTS "${llamajni_vulkan_hpp_SOURCE_DIR}/vulkan/vulkan.hpp"
+           AND EXISTS "${llamajni_spirv_headers_SOURCE_DIR}/include/spirv/unified1/spirv.hpp")
             set(LLAMAJNI_VULKAN_HEADERS_READY ON CACHE BOOL "" FORCE)
             include_directories(BEFORE
                 "${llamajni_vulkan_headers_SOURCE_DIR}/include"
-                "${llamajni_vulkan_hpp_SOURCE_DIR}")
+                "${llamajni_vulkan_hpp_SOURCE_DIR}"
+                "${llamajni_spirv_headers_SOURCE_DIR}/include")
         else()
             message(WARNING "llamajni: Vulkan headers fetch layout unexpected — building without Vulkan")
             set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
