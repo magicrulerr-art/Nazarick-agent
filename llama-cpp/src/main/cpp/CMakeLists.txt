@@ -60,7 +60,14 @@ endif()
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
 
 # The OpenCL stub is reached only through FindOpenCL's imported target, which
-# carries no build-order edge; declare it for anything that may link the file.
+# carries no build-order edge and may hand the linker -lOpenCL without our
+# output dir on the search path. Wire search path, file, and ordering by hand.
+if(TARGET OpenCL::OpenCL AND TARGET llamajni_opencl_stub)
+    set_property(TARGET OpenCL::OpenCL PROPERTY IMPORTED_LOCATION
+        "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so")
+    set_property(TARGET OpenCL::OpenCL APPEND PROPERTY INTERFACE_LINK_DIRECTORIES
+        "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 foreach(_llamajni_opencl_consumer ggml ggml-opencl)
     if(TARGET ${_llamajni_opencl_consumer} AND TARGET llamajni_opencl_stub)
         add_dependencies(${_llamajni_opencl_consumer} llamajni_opencl_stub)
