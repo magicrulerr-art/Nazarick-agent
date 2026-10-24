@@ -23,7 +23,7 @@ android {
                 // GPU backend selector: -Pllama.gpu=cpu|vulkan|opencl.
                 // Vulkan is the portable path and this branch's experiment default;
                 // OpenCL is the Adreno-tuned A/B variant. cpu = upstream behavior.
-                val llamaGpu = providers.gradleProperty("llama.gpu").getOrElse("vulkan")
+                val llamaGpu = providers.gradleProperty("llama.gpu").getOrElse("opencl")
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
                     "-DLLAMAJNI_ENABLE_OPENCL=${if (llamaGpu == "opencl") "ON" else "OFF"}",
