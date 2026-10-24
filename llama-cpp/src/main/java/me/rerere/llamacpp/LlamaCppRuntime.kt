@@ -13,6 +13,11 @@ import org.json.JSONObject
  */
 interface LlamaCppNative {
     fun loadModel(path: String): Long
+
+    /** [loadModel] with GPU layer offload: [nGpuLayers] layers handed to the compiled-in
+     *  GPU backend (-1 = all the backend can take). Defaults to delegating to the 1-arg
+     *  form so JVM fakes stay single-method; the real native overrides it directly. */
+    fun loadModel(path: String, nGpuLayers: Int): Long = loadModel(path)
     fun freeModel(handle: Long)
     fun modelInfo(handle: Long): String
     fun createContext(
@@ -51,7 +56,8 @@ interface LlamaCppNative {
 
 /** Delegates straight to [LlamaCppJni]'s String-in/String-out wrappers. */
 object RealLlamaCppNative : LlamaCppNative {
-    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path)
+    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path, 0)
+    override fun loadModel(path: String, nGpuLayers: Int) = LlamaCppJni.nativeLoadModel(path, nGpuLayers)
     override fun freeModel(handle: Long) = LlamaCppJni.nativeFreeModel(handle)
     override fun modelInfo(handle: Long): String = LlamaCppJni.nativeModelInfo(handle)
     override fun createContext(
@@ -136,10 +142,11 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
         systemPromptBytes: Int,
         availableRamBytes: Long,
         threads: Int = defaultThreads(),
+        gpuLayers: Int = 0,
     ): ContextPlan = mutex.withLock {
         unloadLocked()
 
-        val model = native.loadModel(path)
+        val model = native.loadModel(path, gpuLayers)
         val plan = try {
             val info = parseModelInfo(native.modelInfo(model))
             val planned = ContextPlanner.plan(info, availableRamBytes, tools, systemPromptBytes)

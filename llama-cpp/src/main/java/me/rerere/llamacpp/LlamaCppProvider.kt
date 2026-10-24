@@ -232,13 +232,14 @@ class LlamaCppProvider(
             tools: List<ToolDeclaration>,
             systemPromptBytes: Int,
             availableRamBytes: Long,
+            gpuLayers: Int = 0,
         ) {
             if (loadedPath.get() == path) {
                 runtime.replan(tools, systemPromptBytes)
                 return
             }
             loadedPath.set(null)
-            runtime.load(path, tools, systemPromptBytes, availableRamBytes)
+            runtime.load(path, tools, systemPromptBytes, availableRamBytes, gpuLayers = gpuLayers)
             loadedPath.set(path)
         }
 
