@@ -20,9 +20,14 @@ android {
                 // C++17 and RTTI/exceptions are required: common links nlohmann/json
                 // and a Jinja implementation, both of which throw.
                 cppFlags += listOf("-std=c++17", "-fexceptions", "-frtti")
+                // GPU backend selector: -Pllama.gpu=cpu|vulkan|opencl.
+                // Vulkan is the portable path and this branch's experiment default;
+                // OpenCL is the Adreno-tuned A/B variant. cpu = upstream behavior.
+                val llamaGpu = providers.gradleProperty("llama.gpu").getOrElse("vulkan")
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
-                    "-DLLAMAJNI_ENABLE_OPENCL=OFF",
+                    "-DLLAMAJNI_ENABLE_OPENCL=${if (llamaGpu == "opencl") "ON" else "OFF"}",
+                    "-DLLAMAJNI_ENABLE_VULKAN=${if (llamaGpu == "vulkan") "ON" else "OFF"}",
                 )
             }
         }
