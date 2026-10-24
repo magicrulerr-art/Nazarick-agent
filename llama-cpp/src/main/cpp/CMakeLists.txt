@@ -23,21 +23,18 @@ set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 
 if(LLAMAJNI_ENABLE_OPENCL)
     set(GGML_OPENCL ON CACHE BOOL "" FORCE)
-    # FindOpenCL() doesn't understand the NDK sysroot layout, so it misses the
-    # platform OpenCL stub (CL/cl.h + libOpenCL.so) every NDK ships and the device
-    # provides at runtime. Point the finder at the sysroot explicitly.
+    # FindOpenCL() doesn't understand the NDK sysroot layout, and NDK r28 ships the
+    # CL/cl.h headers without a linkable libOpenCL.so. The real library is provided at
+    # runtime by the GPU driver ICD, so link against an empty linker script whose only
+    # job is to record DT_NEEDED=libOpenCL.so — resolved on device by Adreno/Mali.
     if(ANDROID AND NOT OpenCL_INCLUDE_DIR)
         string(TOLOWER "${CMAKE_HOST_SYSTEM_NAME}-x86_64" LLAMAJNI_HOST_DIR)
         set(_llamajni_ndk_sysroot
             "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${LLAMAJNI_HOST_DIR}/sysroot")
-        if(ANDROID_ABI STREQUAL "arm64-v8a")
-            set(_llamajni_abi_triple "aarch64-linux-android")
-        else()
-            set(_llamajni_abi_triple "${ANDROID_ABI}-linux-android")
-        endif()
         set(OpenCL_INCLUDE_DIR "${_llamajni_ndk_sysroot}/usr/include" CACHE PATH "" FORCE)
-        set(OpenCL_LIBRARY "${_llamajni_ndk_sysroot}/usr/lib/${_llamajni_abi_triple}/libOpenCL.so"
-            CACHE FILEPATH "" FORCE)
+        set(_llamajni_opencl_lib "${CMAKE_CURRENT_BINARY_DIR}/opencl-stub/libOpenCL.so")
+        file(WRITE "${_llamajni_opencl_lib}" "INPUT(libOpenCL.so)\n")
+        set(OpenCL_LIBRARY "${_llamajni_opencl_lib}" CACHE FILEPATH "" FORCE)
     endif()
 endif()
 
