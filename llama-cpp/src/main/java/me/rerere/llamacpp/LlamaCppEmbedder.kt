@@ -41,7 +41,7 @@ interface LlamaCppEmbedNative {
 
 /** Delegates straight to [LlamaCppJni]. */
 object RealLlamaCppEmbedNative : LlamaCppEmbedNative {
-    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path)
+    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path, 0)
     override fun freeModel(handle: Long) = LlamaCppJni.nativeFreeModel(handle)
     override fun modelInfo(handle: Long): String = LlamaCppJni.nativeModelInfo(handle)
     override fun createEmbedContext(modelHandle: Long, nCtx: Int, nThreads: Int) =

@@ -23,14 +23,15 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstring pathIn) {
+Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstring pathIn, jint nGpuLayersIn) {
     JNI_GUARD(env, 0L, {
         llama_backend_init();
         const std::string path = jstringToUtf8(env, pathIn);
 
         llama_model_params params = llama_model_default_params();
-        // CPU only for now; the spec keeps GPU offload behind a CMake option.
-        params.n_gpu_layers = 0;
+        // Layer offload is the caller's decision per model: 0 keeps the CPU path, -1 offloads
+        // everything the compiled-in GPU backend (see llama.gpu Gradle property) can take.
+        params.n_gpu_layers = static_cast<int>(nGpuLayersIn);
         // Default params already select mmap; set it explicitly since the field this
         // used to be (a plain use_mmap bool) was replaced by this enum in b10228.
         params.load_mode = LLAMA_LOAD_MODE_MMAP;
