@@ -23,18 +23,27 @@ set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 
 if(LLAMAJNI_ENABLE_OPENCL)
     set(GGML_OPENCL ON CACHE BOOL "" FORCE)
-    # FindOpenCL() doesn't understand the NDK sysroot layout, and NDK r28 ships the
-    # CL/cl.h headers without a linkable libOpenCL.so. The real library is provided at
-    # runtime by the GPU driver ICD, so link against an empty linker script whose only
-    # job is to record DT_NEEDED=libOpenCL.so — resolved on device by Adreno/Mali.
+    # NDK r28 sysroots carry neither CL/cl.h nor libOpenCL.so. Fetch Khronos'
+    # official headers at configure time; if the fetch misses, degrade quietly
+    # to CPU (the app discovers backends at runtime and must not die on it).
     if(ANDROID AND NOT OpenCL_INCLUDE_DIR)
-        string(TOLOWER "${CMAKE_HOST_SYSTEM_NAME}-x86_64" LLAMAJNI_HOST_DIR)
-        set(_llamajni_ndk_sysroot
-            "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${LLAMAJNI_HOST_DIR}/sysroot")
-        set(OpenCL_INCLUDE_DIR "${_llamajni_ndk_sysroot}/usr/include" CACHE PATH "" FORCE)
-        set(_llamajni_opencl_lib "${CMAKE_CURRENT_BINARY_DIR}/opencl-stub/libOpenCL.so")
-        file(WRITE "${_llamajni_opencl_lib}" "INPUT(libOpenCL.so)\n")
-        set(OpenCL_LIBRARY "${_llamajni_opencl_lib}" CACHE FILEPATH "" FORCE)
+        include(FetchContent)
+        set(LLAMAJNI_OPENCL_HEADERS_TAG "v2026.05.29")
+        FetchContent_Declare(llamajni_opencl_headers
+            URL "https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/tags/${LLAMAJNI_OPENCL_HEADERS_TAG}.zip")
+        FetchContent_Populate(llamajni_opencl_headers)
+        if(EXISTS "${llamajni_opencl_headers_SOURCE_DIR}/CL/cl.h")
+            set(OpenCL_INCLUDE_DIR "${llamajni_opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
+            # The real libOpenCL.so is provided at runtime by the GPU driver ICD.
+            # Link against an empty linker script whose only job is to record
+            # DT_NEEDED=libOpenCL.so, resolved on device by Adreno/Mali.
+            set(_llamajni_opencl_lib "${CMAKE_CURRENT_BINARY_DIR}/opencl-stub/libOpenCL.so")
+            file(WRITE "${_llamajni_opencl_lib}" "INPUT(libOpenCL.so)\n")
+            set(OpenCL_LIBRARY "${_llamajni_opencl_lib}" CACHE FILEPATH "" FORCE)
+        else()
+            message(WARNING "llamajni: OpenCL headers fetch missed — building without OpenCL")
+            set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
+        endif()
     endif()
 endif()
 
