@@ -1,10 +1,11 @@
-cmake_minimum_required(VERSION 3.22.1)
+﻿cmake_minimum_required(VERSION 3.22.1)
 project(llamajni CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(LLAMAJNI_ENABLE_OPENCL "Build the OpenCL backend for Adreno GPUs" OFF)
+option(LLAMAJNI_ENABLE_VULKAN "Build the Vulkan backend (portable GPU path)" OFF)
 
 set(LLAMA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../native/llama.cpp)
 
@@ -22,6 +23,11 @@ set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 
 if(LLAMAJNI_ENABLE_OPENCL)
     set(GGML_OPENCL ON CACHE BOOL "" FORCE)
+endif()
+
+if(LLAMAJNI_ENABLE_VULKAN)
+    # ggml-vulkan dlopens libvulkan.so at runtime; no extra Android linking needed.
+    set(GGML_VULKAN ON CACHE BOOL "" FORCE)
 endif()
 
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
