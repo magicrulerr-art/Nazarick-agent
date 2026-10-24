@@ -107,6 +107,10 @@ jobs:
           cmake -S "$RUNNER_TEMP/spirv-headers" -B "$RUNNER_TEMP/sv-build" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sv"
           cmake --install "$RUNNER_TEMP/sv-build"
           echo "SPIRV_HEADERS_PREFIX=$RUNNER_TEMP/sv" >> "$GITHUB_ENV"
+          # glslc compiles ggml's compute shaders at build time; FindVulkan can't see
+          # the runner's copy through the NDK toolchain, so name it explicitly.
+          command -v glslc || sudo apt-get install -y glslang-tools
+          echo "GLSLC=$(command -v glslc)" >> "$GITHUB_ENV"
 
       - name: Cache ccache (native build)
         uses: actions/cache@v4

@@ -38,6 +38,13 @@ android {
                         "-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH",
                     )
                 }
+                // FindVulkan resolves glslc (the offline shader compiler ggml needs) from
+                // the desktop Vulkan SDK, which the NDK toolchain hides; CI installs
+                // glslang-tools and exports the path. Local SDK installs keep working
+                // untouched because the variable is simply absent there.
+                System.getenv("GLSLC")?.let {
+                    arguments += "-DVulkan_GLSLC_EXECUTABLE=$it"
+                }
             }
         }
     }
