@@ -109,8 +109,16 @@ jobs:
           echo "SPIRV_HEADERS_PREFIX=$RUNNER_TEMP/sv" >> "$GITHUB_ENV"
           # glslc compiles ggml's compute shaders at build time; FindVulkan can't see
           # the runner's copy through the NDK toolchain, so name it explicitly.
-          command -v glslc || sudo apt-get install -y glslang-tools
-          echo "GLSLC=$(command -v glslc)" >> "$GITHUB_ENV"
+          GLSLC_BIN="$(command -v glslc || true)"
+          if [ -z "$GLSLC_BIN" ]; then
+            GLSLC_BIN="$(find "$ANDROID_HOME/ndk" -type f -name glslc 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$GLSLC_BIN" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y glslang-tools
+            GLSLC_BIN="$(command -v glslc || true)"
+          fi
+          echo "GLSLC=$GLSLC_BIN" | tee -a "$GITHUB_ENV"
+          [ -x "$GLSLC_BIN" ] || { echo "no glslc found; candidates:"; find "$ANDROID_HOME" /usr -name 'glslc*' -o -name 'glslangValidator*' 2>/dev/null | head -20; exit 1; }
 
       - name: Cache ccache (native build)
         uses: actions/cache@v4
