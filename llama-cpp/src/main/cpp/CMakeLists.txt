@@ -26,7 +26,6 @@ if(LLAMAJNI_ENABLE_OPENCL)
 endif()
 
 if(LLAMAJNI_ENABLE_VULKAN)
-    # ggml-vulkan dlopens libvulkan.so at runtime; no extra Android linking needed.
     set(GGML_VULKAN ON CACHE BOOL "" FORCE)
     # The NDK sysroot carries the C Vulkan headers only, but ggml-vulkan's
     # sources include <vulkan/vulkan.hpp> — the C++ bindings ship with nothing
@@ -62,6 +61,19 @@ if(LLAMAJNI_ENABLE_VULKAN)
 endif()
 
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
+
+# ggml-vulkan calls the Vulkan loader directly; this checkout doesn't pull in
+# volk. The NDK sysroot ships the libvulkan.so import stub, and every device
+# we target (API 26+) carries the real loader.
+if(TARGET ggml-vulkan)
+    find_library(VULKAN_LIB vulkan)
+    if(VULKAN_LIB)
+        target_link_libraries(ggml-vulkan PRIVATE ${VULKAN_LIB})
+    else()
+        message(WARNING "llamajni: no libvulkan in sysroot — building without Vulkan")
+        set_target_properties(ggml-vulkan PROPERTIES EXCLUDE_FROM_ALL ON)
+    endif()
+endif()
 
 add_library(llamajni SHARED llama_jni.cpp)
 
