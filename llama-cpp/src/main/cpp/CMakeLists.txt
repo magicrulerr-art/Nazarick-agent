@@ -37,10 +37,13 @@ if(LLAMAJNI_ENABLE_OPENCL)
             # The real libOpenCL.so is provided at runtime by the GPU driver's
             # ICD. Link against a do-nothing stub library carrying the right
             # soname instead — a self-referencing linker script crashes lld.
-            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.c"
-                 "/* Carries the libOpenCL.so soname; the ICD resolves symbols at load time. */\n")
-            add_library(llamajni_opencl_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.c")
-            set_target_properties(llamajni_opencl_stub PROPERTIES OUTPUT_NAME "OpenCL")
+            # CXX-only project: a .c stub would demand the unenabled C language.
+            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp"
+                 "// Carries the libOpenCL.so soname; the ICD resolves symbols at load time.\n")
+            add_library(llamajni_opencl_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp")
+            set_target_properties(llamajni_opencl_stub PROPERTIES
+                OUTPUT_NAME "OpenCL"
+                EXCLUDE_FROM_ALL ON)  # link-time only — must not ride in the APK and shadow the driver's lib
             set(OpenCL_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so" CACHE FILEPATH "" FORCE)
         else()
             message(WARNING "llamajni: OpenCL headers fetch missed — building without OpenCL")
