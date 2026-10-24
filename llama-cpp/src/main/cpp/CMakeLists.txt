@@ -34,12 +34,14 @@ if(LLAMAJNI_ENABLE_OPENCL)
         FetchContent_Populate(llamajni_opencl_headers)
         if(EXISTS "${llamajni_opencl_headers_SOURCE_DIR}/CL/cl.h")
             set(OpenCL_INCLUDE_DIR "${llamajni_opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
-            # The real libOpenCL.so is provided at runtime by the GPU driver ICD.
-            # Link against an empty linker script whose only job is to record
-            # DT_NEEDED=libOpenCL.so, resolved on device by Adreno/Mali.
-            set(_llamajni_opencl_lib "${CMAKE_CURRENT_BINARY_DIR}/opencl-stub/libOpenCL.so")
-            file(WRITE "${_llamajni_opencl_lib}" "INPUT(libOpenCL.so)\n")
-            set(OpenCL_LIBRARY "${_llamajni_opencl_lib}" CACHE FILEPATH "" FORCE)
+            # The real libOpenCL.so is provided at runtime by the GPU driver's
+            # ICD. Link against a do-nothing stub library carrying the right
+            # soname instead — a self-referencing linker script crashes lld.
+            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.c"
+                 "/* Carries the libOpenCL.so soname; the ICD resolves symbols at load time. */\n")
+            add_library(llamajni_opencl_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.c")
+            set_target_properties(llamajni_opencl_stub PROPERTIES OUTPUT_NAME "OpenCL")
+            set(OpenCL_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so" CACHE FILEPATH "" FORCE)
         else()
             message(WARNING "llamajni: OpenCL headers fetch missed — building without OpenCL")
             set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
@@ -53,6 +55,14 @@ if(LLAMAJNI_ENABLE_VULKAN)
 endif()
 
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
+
+# The OpenCL stub is reached only through FindOpenCL's imported target, which
+# carries no build-order edge; declare it for anything that may link the file.
+foreach(_llamajni_opencl_consumer ggml ggml-opencl)
+    if(TARGET ${_llamajni_opencl_consumer} AND TARGET llamajni_opencl_stub)
+        add_dependencies(${_llamajni_opencl_consumer} llamajni_opencl_stub)
+    endif()
+endforeach()
 
 add_library(llamajni SHARED llama_jni.cpp)
 
