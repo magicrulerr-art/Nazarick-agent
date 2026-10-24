@@ -29,6 +29,15 @@ android {
                     "-DLLAMAJNI_ENABLE_OPENCL=${if (llamaGpu == "opencl") "ON" else "OFF"}",
                     "-DLLAMAJNI_ENABLE_VULKAN=${if (llamaGpu == "vulkan") "ON" else "OFF"}",
                 )
+                // CI installs a SPIRV-Headers CMake package for the Vulkan build (see
+                // .github/workflows/build.yml); the NDK's find-root mode would otherwise
+                // hide it, so package lookups are opened to both sysroot and prefix.
+                System.getenv("SPIRV_HEADERS_PREFIX")?.let {
+                    arguments += listOf(
+                        "-DCMAKE_PREFIX_PATH=$it",
+                        "-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH",
+                    )
+                }
             }
         }
     }

@@ -97,6 +97,17 @@ jobs:
           }
           ccache --version | head -1
 
+      # Scoped to the Vulkan experiment: installs the SPIRV-Headers CMake package
+      # that ggml-vulkan's find_package demands but the NDK sysroot hides. Other
+      # branches pay nothing. Remove this step when the engine branch merges.
+      - name: Install SPIRV-Headers (Vulkan shader dependency)
+        if: github.ref_name == 'feat/engine-vulkan'
+        run: |
+          git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers "$RUNNER_TEMP/spirv-headers"
+          cmake -S "$RUNNER_TEMP/spirv-headers" -B "$RUNNER_TEMP/sv-build" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sv"
+          cmake --install "$RUNNER_TEMP/sv-build"
+          echo "SPIRV_HEADERS_PREFIX=$RUNNER_TEMP/sv" >> "$GITHUB_ENV"
+
       - name: Cache ccache (native build)
         uses: actions/cache@v4
         with:
