@@ -28,6 +28,30 @@ endif()
 if(LLAMAJNI_ENABLE_VULKAN)
     # ggml-vulkan dlopens libvulkan.so at runtime; no extra Android linking needed.
     set(GGML_VULKAN ON CACHE BOOL "" FORCE)
+    # The NDK sysroot carries the C Vulkan headers only, but ggml-vulkan's
+    # sources include <vulkan/vulkan.hpp> — the C++ bindings ship with nothing
+    # Android-side. Fetch a matched Khronos pair (C headers + HPP, same tag)
+    # ahead of the sysroot so vulkan.h and vulkan.hpp agree on header version.
+    if(ANDROID AND NOT LLAMAJNI_VULKAN_HEADERS_READY)
+        include(FetchContent)
+        set(LLAMAJNI_VULKAN_TAG "v1.4.365")
+        FetchContent_Declare(llamajni_vulkan_headers
+            URL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/${LLAMAJNI_VULKAN_TAG}.zip")
+        FetchContent_Declare(llamajni_vulkan_hpp
+            URL "https://github.com/KhronosGroup/Vulkan-Hpp/archive/refs/tags/${LLAMAJNI_VULKAN_TAG}.zip")
+        FetchContent_Populate(llamajni_vulkan_headers)
+        FetchContent_Populate(llamajni_vulkan_hpp)
+        if(EXISTS "${llamajni_vulkan_headers_SOURCE_DIR}/include/vulkan/vulkan.h"
+           AND EXISTS "${llamajni_vulkan_hpp_SOURCE_DIR}/vulkan/vulkan.hpp")
+            set(LLAMAJNI_VULKAN_HEADERS_READY ON CACHE BOOL "" FORCE)
+            include_directories(BEFORE
+                "${llamajni_vulkan_headers_SOURCE_DIR}/include"
+                "${llamajni_vulkan_hpp_SOURCE_DIR}")
+        else()
+            message(WARNING "llamajni: Vulkan headers fetch layout unexpected — building without Vulkan")
+            set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+        endif()
+    endif()
 endif()
 
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
