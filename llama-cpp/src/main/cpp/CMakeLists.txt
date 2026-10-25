@@ -74,14 +74,26 @@ if(TARGET ggml-vulkan)
         else()
             set(_llamajni_abi_triple "${ANDROID_ABI}-linux-android")
         endif()
-        set(_llamajni_vulkan_stub_lib
-            "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${LLAMAJNI_HOST_DIR}/sysroot/usr/lib/${_llamajni_abi_triple}/libvulkan.so")
+        # NDK stores import stubs in per-API dirs; the minSdk-26 one predates
+        # Vulkan 1.1 exports (vkGetPhysicalDeviceFeatures2 et al). Link the
+        # newest stub the NDK carries — real symbol checking, NEEDED=libvulkan.so,
+        # and every phone we support ships a newer loader than that stub.
+        set(_llamajni_vk_stub_dir
+            "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${LLAMAJNI_HOST_DIR}/sysroot/usr/lib/${_llamajni_abi_triple}")
+        file(GLOB _llamajni_vk_api_dirs RELATIVE "${_llamajni_vk_stub_dir}" "${_llamajni_vk_stub_dir}/[0-9]*")
+        if(_llamajni_vk_api_dirs)
+            list(SORT _llamajni_vk_api_dirs COMPARE NATURAL ORDER DESCENDING)
+            list(GET _llamajni_vk_api_dirs 0 _llamajni_vk_api)
+            set(_llamajni_vulkan_stub_lib "${_llamajni_vk_stub_dir}/${_llamajni_vk_api}/libvulkan.so")
+        elseif(EXISTS "${_llamajni_vk_stub_dir}/libvulkan.so")
+            set(_llamajni_vulkan_stub_lib "${_llamajni_vk_stub_dir}/libvulkan.so")
+        endif()
     endif()
-    if(EXISTS "${_llamajni_vulkan_stub_lib}")
+    if(_llamajni_vulkan_stub_lib)
+        message(STATUS "llamajni: linking ggml-vulkan against ${_llamajni_vulkan_stub_lib}")
         target_link_libraries(ggml-vulkan PRIVATE "${_llamajni_vulkan_stub_lib}")
     else()
-        find_library(VULKAN_LIB vulkan REQUIRED)
-        target_link_libraries(ggml-vulkan PRIVATE ${VULKAN_LIB})
+        message(WARNING "llamajni: no NDK libvulkan stub found — expecting FindVulkan's")
     endif()
 endif()
 
