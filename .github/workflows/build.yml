@@ -212,7 +212,7 @@ jobs:
           # tests are flavour-independent and are never reached through :app, so each module is
           # named explicitly. :runtime was extracted in P4 with 19 test files and had been
           # missing from this list since, which left the harness's pure logic ungated.
-          ./gradlew ":app:assemble${F}Release" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
+          ./gradlew ":app:assemble${F}Release" ":app:assemble${F}Debug" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
@@ -227,6 +227,16 @@ jobs:
           name: apk-${{ matrix.flavor }}
           path: app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk
           if-no-files-found: error
+          retention-days: 14
+
+      # diag branch only: a debuggable APK so `run-as` and debuggerd -b work on the
+      # Fold for the stall hunt, and so Logcat shows unshrunk stack frames.
+      - name: Upload ${{ matrix.flavor }} debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ matrix.flavor }}-debug
+          path: app/build/outputs/apk/${{ matrix.flavor }}/debug/*.apk
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Upload unit test report

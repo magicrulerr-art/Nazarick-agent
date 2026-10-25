@@ -2,6 +2,7 @@ package me.rerere.llamacpp
 
 import android.app.ActivityManager
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -150,6 +151,7 @@ class LlamaCppProvider(
     }
 
     private suspend fun ensureModelReady(messages: List<UIMessage>, params: TextGenerationParams) {
+        Log.i("moxw-perf", "diag: ensureModelReady enter msgs=${messages.size} tools=${params.tools.size} availMem=${readAvailableRamBytes() / 1048576}MB")
         val installed = prefs.installedModels(LocalRuntime.LlamaCpp)
         val modelPath = resolveModelPath(installed, params.model.modelId)
         // The load blocks the calling thread on a multi-gigabyte mmap, metadata parse and
@@ -167,6 +169,7 @@ class LlamaCppProvider(
                 availableRamBytes = readAvailableRamBytes(),
                 gpuLayers = gpuLayersOverride(),
             )
+            Log.i("moxw-perf", "diag: ensureLoaded returned")
         }
     }
 
@@ -249,11 +252,15 @@ class LlamaCppProvider(
             gpuLayers: Int = 0,
         ) {
             if (loadedPath.get() == path) {
+                Log.i("moxw-perf", "diag: replan begin tools=${tools.size} sysPromptBytes=$systemPromptBytes")
                 runtime.replan(tools, systemPromptBytes)
+                Log.i("moxw-perf", "diag: replan end")
                 return
             }
             loadedPath.set(null)
+            Log.i("moxw-perf", "diag: load begin path=$path tools=${tools.size} sysPromptBytes=$systemPromptBytes availRamMB=${availableRamBytes / 1048576} gpuLayers=$gpuLayers")
             runtime.load(path, tools, systemPromptBytes, availableRamBytes, gpuLayers = gpuLayers)
+            Log.i("moxw-perf", "diag: load end")
             loadedPath.set(path)
         }
 
@@ -302,10 +309,12 @@ class LlamaCppProvider(
             val reasoningId = "$streamId-reasoning"
             // Trim history to the input half of the planned context before templating, so a
             // long conversation drops its oldest turns instead of overflowing the prompt.
+            Log.i("moxw-perf", "diag: stream begin msgs=${messages.size} inputBudgetBytes=${runtime.inputBudgetBytes()}")
             val trimmedMessages = ChatRequestMapper.trimToBudget(messages, runtime.inputBudgetBytes())
-            val appliedTemplateJson = runtime.applyTemplate(
-                ChatRequestMapper.toRequestJson(trimmedMessages, params.tools)
-            )
+            val requestJson = ChatRequestMapper.toRequestJson(trimmedMessages, params.tools)
+            Log.i("moxw-perf", "diag: request json built bytes=${requestJson.toByteArray(Charsets.UTF_8).size}")
+            val appliedTemplateJson = runtime.applyTemplate(requestJson)
+            Log.i("moxw-perf", "diag: template applied")
             val tracker = ChatDeltaTracker()
             val accumulated = StringBuilder()
             val finished = AtomicBoolean(false)
@@ -352,18 +361,21 @@ class LlamaCppProvider(
             }
 
             val worker = launch(Dispatchers.IO) {
+                Log.i("moxw-perf", "diag: worker launching native generate")
                 try {
                     runtime.generate(appliedTemplateJson, params.maxTokens ?: DEFAULT_MAX_TOKENS) { piece ->
                         accumulated.append(piece)
                         val parsed = runtime.parse(accumulated.toString(), true, appliedTemplateJson)
                         sendDelta(tracker.consume(parsed, isPartial = true), false)
                     }
+                    Log.i("moxw-perf", "diag: native generate returned chars=${accumulated.length}")
 
                     // The final parse is authoritative: it flushes any tool call whose arguments
                     // were still settling when generation stopped (see ChatDeltaTracker.consume).
                     val finalParsed = runtime.parse(accumulated.toString(), false, appliedTemplateJson)
                     sendDelta(tracker.consume(finalParsed, isPartial = false), true)
                     trySend(StreamChunk.Finish())
+                    Log.i("moxw-perf", "diag: stream finish sent")
                 } finally {
                     finished.set(true)
                     close()

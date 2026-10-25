@@ -65,6 +65,12 @@ android {
         // llama.cpp ships its own copies for tooling; keep only ours.
         jniLibs.pickFirsts += "**/libc++_shared.so"
     }
+
+    testOptions {
+        // diag branch only: the provider's moxw-perf breadcrumbs call android.util.Log,
+        // which throws "not mocked" in JVM unit tests against the stub android.jar.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
