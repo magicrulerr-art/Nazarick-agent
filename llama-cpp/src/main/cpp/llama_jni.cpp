@@ -15,6 +15,10 @@
 #include "sampling.h"
 #include <nlohmann/json.hpp>
 
+// JNI_GUARD bodies are macro arguments: commas survive only inside parentheses,
+// and a template's angle brackets are not parentheses — hence the alias.
+using MoxwMs = std::chrono::duration<double, std::milli>;
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
     JNI_GUARD(env, nullptr, {
@@ -613,7 +617,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         bool        stopped = false;
         const auto  tDecode0 = std::chrono::steady_clock::now();
         const double prefillMs =
-                std::chrono::duration<double, std::milli>(tDecode0 - tPrefill0).count();
+                std::chrono::duration_cast<MoxwMs>(tDecode0 - tPrefill0).count();
         jint decoded = 0;
 
         for (jint i = 0; i < maxTokens; i++) {
@@ -687,7 +691,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         // Bench line for the engine A/B (and every perf probe after it): pure prefill/decode
         // wall time from this function's own loops. The sink callbacks ride inside the decode
         // window; they are Kotlin emits, milliseconds at worst against seconds of decode.
-        const double decodeMs = std::chrono::duration<double, std::milli>(
+        const double decodeMs = std::chrono::duration_cast<MoxwMs>(
                 std::chrono::steady_clock::now() - tDecode0).count();
         __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
                 "prefill %d tok %.0f ms (%.1f tok/s) | decode %d tok %.0f ms (%.1f tok/s)",
