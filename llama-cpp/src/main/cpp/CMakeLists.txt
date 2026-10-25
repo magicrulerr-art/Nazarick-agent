@@ -74,6 +74,14 @@ foreach(_llamajni_opencl_consumer ggml ggml-opencl)
     endif()
 endforeach()
 
+# The NDK links shared libs with --no-undefined; our stub deliberately carries
+# no symbols — the vendor ICD supplies cl* at load time. Let them stay lazy.
+if(TARGET ggml-opencl)
+    target_link_options(ggml-opencl PRIVATE
+        "LINKER:--unresolved-symbols=ignore-all"
+        "LINKER:-z,lazy")
+endif()
+
 add_library(llamajni SHARED llama_jni.cpp)
 
 target_include_directories(llamajni PRIVATE
