@@ -62,16 +62,26 @@ endif()
 
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
 
-# ggml-vulkan calls the Vulkan loader directly; this checkout doesn't pull in
-# volk. The NDK sysroot ships the libvulkan.so import stub, and every device
-# we target (API 26+) carries the real loader.
+# ggml's find_package(Vulkan) grabs the runner's HOST libvulkan.so under our
+# relaxed find-root mode — an x86_64 library lld silently ignores, so every
+# vk* symbol goes undefined. Hand it the NDK's ABI-correct import stub by
+# derived path; the device loader (API 26+) provides the real library.
 if(TARGET ggml-vulkan)
-    find_library(VULKAN_LIB vulkan)
-    if(VULKAN_LIB)
-        target_link_libraries(ggml-vulkan PRIVATE ${VULKAN_LIB})
+    if(ANDROID)
+        string(TOLOWER "${CMAKE_HOST_SYSTEM_NAME}-x86_64" LLAMAJNI_HOST_DIR)
+        if(ANDROID_ABI STREQUAL "arm64-v8a")
+            set(_llamajni_abi_triple "aarch64-linux-android")
+        else()
+            set(_llamajni_abi_triple "${ANDROID_ABI}-linux-android")
+        endif()
+        set(_llamajni_vulkan_stub_lib
+            "${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/${LLAMAJNI_HOST_DIR}/sysroot/usr/lib/${_llamajni_abi_triple}/libvulkan.so")
+    endif()
+    if(EXISTS "${_llamajni_vulkan_stub_lib}")
+        target_link_libraries(ggml-vulkan PRIVATE "${_llamajni_vulkan_stub_lib}")
     else()
-        message(WARNING "llamajni: no libvulkan in sysroot — building without Vulkan")
-        set_target_properties(ggml-vulkan PROPERTIES EXCLUDE_FROM_ALL ON)
+        find_library(VULKAN_LIB vulkan REQUIRED)
+        target_link_libraries(ggml-vulkan PRIVATE ${VULKAN_LIB})
     endif()
 endif()
 
