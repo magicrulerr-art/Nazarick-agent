@@ -213,7 +213,7 @@ jobs:
           # tests are flavour-independent and are never reached through :app, so each module is
           # named explicitly. :runtime was extracted in P4 with 19 test files and had been
           # missing from this list since, which left the harness's pure logic ungated.
-          ./gradlew ":app:assemble${F}Release" ":app:assemble${F}Debug" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
+          ./gradlew ":app:assemble${F}Release" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
@@ -239,6 +239,93 @@ jobs:
           path: app/build/outputs/apk/${{ matrix.flavor }}/debug/*.apk
           if-no-files-found: ignore
           retention-days: 14
+
+  # diag branch only: the debug APK gets its own short job. The shared assemble
+  # job lost two runners to infra shutdown signals at 25-65 min with the debug
+  # native build included; alone it should finish in one runner's attention span.
+  debug:
+    name: debug apk (diag)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: github.ref_name == 'feat/stall-diag'
+    concurrency:
+      group: debug-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      ANDROID_USE_CCACHE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      - name: Install ccache
+        run: |
+          sudo apt-get install -y -qq ccache > /dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ccache
+          }
+
+      - name: Install SPIRV-Headers (Vulkan shader dependency)
+        run: |
+          git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers "$RUNNER_TEMP/spirv-headers"
+          cmake -S "$RUNNER_TEMP/spirv-headers" -B "$RUNNER_TEMP/sv-build" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sv"
+          cmake --install "$RUNNER_TEMP/sv-build"
+          echo "SPIRV_HEADERS_PREFIX=$RUNNER_TEMP/sv" >> "$GITHUB_ENV"
+          GLSLC_BIN="$(command -v glslc || true)"
+          if [ -z "$GLSLC_BIN" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y glslang-tools
+            GLSLC_BIN="$(command -v glslc || true)"
+          fi
+          echo "GLSLC=$GLSLC_BIN" >> "$GITHUB_ENV"
+          [ -x "$GLSLC_BIN" ] || { echo "no glslc"; exit 1; }
+
+      - name: Cache ccache (native build)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ hashFiles('llama-cpp/native/llama.cpp/**', 'llama-cpp/src/main/cpp/**', 'workspace/src/main/cpp/**') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Bootstrap web-ui lockfile
+        working-directory: web-ui
+        run: |
+          if [ ! -f bun.lock ]; then bun install; fi
+
+      - name: Assemble moxw debug APK
+        run: ./gradlew :app:assembleMoxwDebug -PskipLintVital --stacktrace
+
+      - name: Upload moxw debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-moxw-debug
+          path: app/build/outputs/apk/moxw/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s || true
 
       - name: Upload unit test report
         if: always()
