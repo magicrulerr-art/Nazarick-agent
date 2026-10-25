@@ -1,6 +1,8 @@
 #include <jni.h>
 #include <algorithm>
+#include <android/log.h>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -578,6 +580,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         // tracks positions itself, so consecutive calls continue the same sequence, and with a
         // null logits array only the final token of each slice is an output.
         const int32_t batchSize = static_cast<int32_t>(llama_n_batch(ctx));
+        const auto tPrefill0 = std::chrono::steady_clock::now();
         for (int32_t start = 0; start < nPrompt; start += batchSize) {
             // Checked before the first decode as well as between slices, so a cancel that
             // lands in the window between tokenizing and decoding is honoured instead of
@@ -608,6 +611,10 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
 
         std::string pending;  // bytes held back because they are mid-character
         bool        stopped = false;
+        const auto  tDecode0 = std::chrono::steady_clock::now();
+        const double prefillMs =
+                std::chrono::duration<double, std::milli>(tDecode0 - tPrefill0).count();
+        jint decoded = 0;
 
         for (jint i = 0; i < maxTokens; i++) {
             const llama_token id = common_sampler_sample(smpl.get(), ctx, -1);
@@ -615,6 +622,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 break;
             }
             common_sampler_accept(smpl.get(), id, /*is_generated*/ true);
+            ++decoded;
 
             appendPiece(vocab, id, pending);
             const size_t hold = incompleteUtf8Tail(pending);
@@ -675,6 +683,16 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 env->DeleteLocalRef(tail);
             }
         }
+
+        // Bench line for the engine A/B (and every perf probe after it): pure prefill/decode
+        // wall time from this function's own loops. The sink callbacks ride inside the decode
+        // window; they are Kotlin emits, milliseconds at worst against seconds of decode.
+        const double decodeMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - tDecode0).count();
+        __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                "prefill %d tok %.0f ms (%.1f tok/s) | decode %d tok %.0f ms (%.1f tok/s)",
+                nPrompt, prefillMs, prefillMs > 0 ? nPrompt * 1000.0 / prefillMs : 0.0,
+                (int)decoded, decodeMs, decodeMs > 0 && decoded > 0 ? decoded * 1000.0 / decodeMs : 0.0);
     })
 }
 

@@ -136,6 +136,19 @@ class LlamaCppProvider(
      *  (a no-op when it is already loaded - see [ensureLoaded]). Shared by [generateText] and
      *  [streamText] so the two agree on exactly one load path; both already hold [loadMutex]
      *  before calling this. */
+    /** Bench hook for the engine A/B lanes: `adb shell setprop debug.moxw.gpu_layers N`.
+     *  Absent (0) keeps the shipped CPU path exactly as before; -1 offloads every layer the
+     *  compiled-in GPU backend can take. Read per load, so a lane switch only needs a model
+     *  reload, never a reinstall. SystemProperties is a hidden API — reflection keeps the
+     *  module free of a compile dependency on it. */
+    private fun gpuLayersOverride(): Int = try {
+        Class.forName("android.os.SystemProperties")
+            .getMethod("getInt", String::class.java, Int::class.javaPrimitiveType)
+            .invoke(null, "debug.moxw.gpu_layers", 0) as Int
+    } catch (_: Throwable) {
+        0
+    }
+
     private suspend fun ensureModelReady(messages: List<UIMessage>, params: TextGenerationParams) {
         val installed = prefs.installedModels(LocalRuntime.LlamaCpp)
         val modelPath = resolveModelPath(installed, params.model.modelId)
@@ -152,6 +165,7 @@ class LlamaCppProvider(
                 tools = ChatRequestMapper.toolDeclarations(params.tools),
                 systemPromptBytes = systemPromptBytesOf(messages),
                 availableRamBytes = readAvailableRamBytes(),
+                gpuLayers = gpuLayersOverride(),
             )
         }
     }
