@@ -102,7 +102,7 @@ jobs:
       # branches pay nothing. Remove this step when the engine branch merges.
       # feat/stall-diag carries the same Vulkan-default engine, so it pays the same toll.
       - name: Install SPIRV-Headers (Vulkan shader dependency)
-        if: github.ref_name == 'feat/engine-vulkan' || github.ref_name == 'feat/stall-diag'
+        if: github.ref_name == 'feat/engine-vulkan' || github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race'
         run: |
           git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers "$RUNNER_TEMP/spirv-headers"
           cmake -S "$RUNNER_TEMP/spirv-headers" -B "$RUNNER_TEMP/sv-build" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sv"
