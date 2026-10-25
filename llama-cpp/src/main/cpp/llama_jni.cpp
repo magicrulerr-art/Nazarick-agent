@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -18,6 +19,16 @@
 // JNI_GUARD bodies are macro arguments: commas survive only inside parentheses,
 // and a template's angle brackets are not parentheses — hence the alias.
 using MoxwMs = std::chrono::duration<double, std::milli>;
+using MoxwLock = std::lock_guard<std::mutex>;
+
+// One GPU, one bus, one very unforgiving driver: the chat context and the embedding
+// context are separate llama_contexts, and when both submit work to the Adreno Vulkan
+// device at once the second submission lands in the driver's fault handler and takes the
+// process down (SIGSEGV in vkGetDeviceFaultInfoEXT under the sched, twice on the Fold:
+// once 1s into a generate while the tool index embedded 16 schemas, once identically).
+// All graph compute is therefore serialised here; load/free stay unlocked because they
+// do not touch the device queue.
+static std::mutex gComputeMutex;
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
@@ -797,6 +808,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeFreeEmbedContext(JNIEnv *env, jobject,
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbedModelInfo(JNIEnv *env, jobject, jlong handle) {
     JNI_GUARD(env, nullptr, {
+        MoxwLock guard(gComputeMutex);
         auto *engine = reinterpret_cast<llamajni::EmbedEngine *>(handle);
         if (engine == nullptr) {
             throwJava(env, "embedding handle is null");
@@ -819,6 +831,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
         JNIEnv *env, jobject, jlong handle, jbyteArray textIn) {
     JNI_GUARD(env, nullptr, {
+        MoxwLock guard(gComputeMutex);
         auto *engine = reinterpret_cast<llamajni::EmbedEngine *>(handle);
         if (engine == nullptr) {
             throwJava(env, "embedding handle is null");
