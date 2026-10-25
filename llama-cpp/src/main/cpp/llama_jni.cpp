@@ -504,6 +504,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
     JNI_GUARD_VOID(env, {
         auto *gen   = reinterpret_cast<GenerationContext *>(ctxHandle);
         auto *model = reinterpret_cast<llama_model *>(modelHandle);
+        __android_log_print(ANDROID_LOG_INFO, "moxw-perf", "gen: begin maxTokens=%d", (int)maxTokens);
         if (gen == nullptr || gen->ctx == nullptr || model == nullptr) {
             throwJava(env, "context or model handle is null");
             return;
@@ -590,6 +591,8 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
             // lands in the window between tokenizing and decoding is honoured instead of
             // being read only after a full prefill has already run.
             if (gen->cancelled.load(std::memory_order_relaxed)) {
+                __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                        "gen: cancelled before prefill slice %d of %d", (int)start, (int)nPrompt);
                 return;
             }
             const int32_t count = std::min(batchSize, nPrompt - start);
@@ -598,6 +601,8 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 // A cancel that lands mid-decode comes back as rc 2 from the abort callback.
                 // That is the caller getting what it asked for, not a failure.
                 if (gen->cancelled.load(std::memory_order_relaxed)) {
+                    __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                            "gen: cancelled mid-prefill decode (rc=%d)", (int)rc);
                     return;
                 }
                 if (rc == 1) {
@@ -619,6 +624,8 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         const double prefillMs =
                 std::chrono::duration_cast<MoxwMs>(tDecode0 - tPrefill0).count();
         jint decoded = 0;
+        __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                "gen: prefill done %d tokens %.0f ms", (int)nPrompt, prefillMs);
 
         for (jint i = 0; i < maxTokens; i++) {
             const llama_token id = common_sampler_sample(smpl.get(), ctx, -1);
@@ -643,15 +650,21 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                     // The sink threw. Its exception is the one the caller should see and no
                     // further JNI call is legal while one is pending, so leave it there and
                     // unwind; the sampler is still freed on the way out.
+                    __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                            "gen: sink threw at decoded=%d", (int)decoded);
                     return;
                 }
                 if (keepGoing == JNI_FALSE) {
+                    __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                            "gen: sink said stop at decoded=%d", (int)decoded);
                     stopped = true;
                     break;
                 }
             }
 
             if (gen->cancelled.load(std::memory_order_relaxed)) {
+                __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                        "gen: cancelled mid-decode at %d tokens", (int)decoded);
                 stopped = true;
                 break;
             }
