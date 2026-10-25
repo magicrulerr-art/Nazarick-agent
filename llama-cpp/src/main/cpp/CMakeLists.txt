@@ -103,6 +103,13 @@ if(TARGET ggml-vulkan)
     else()
         message(WARNING "llamajni: no NDK libvulkan stub found — expecting FindVulkan's")
     endif()
+    # Android's loader (and every ICD behind it) exports the full Vulkan core
+    # the shaders use, but the NDK import stubs omit several 1.1+ entry points
+    # (vkGetPhysicalDeviceFeatures2 & friends). Let them bind lazily at load —
+    # same treatment as the OpenCL lane; NDK's --no-undefined otherwise balks.
+    target_link_options(ggml-vulkan PRIVATE
+        "LINKER:--unresolved-symbols=ignore-all"
+        "LINKER:-z,lazy")
 endif()
 
 add_library(llamajni SHARED llama_jni.cpp)
