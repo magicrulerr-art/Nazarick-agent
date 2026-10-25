@@ -41,9 +41,7 @@ if(LLAMAJNI_ENABLE_OPENCL)
             file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp"
                  "// Carries the libOpenCL.so soname; the ICD resolves symbols at load time.\n")
             add_library(llamajni_opencl_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp")
-            set_target_properties(llamajni_opencl_stub PROPERTIES
-                OUTPUT_NAME "OpenCL"
-                EXCLUDE_FROM_ALL ON)  # link-time only — must not ride in the APK and shadow the driver's lib
+            set_target_properties(llamajni_opencl_stub PROPERTIES OUTPUT_NAME "OpenCL")
             set(OpenCL_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so" CACHE FILEPATH "" FORCE)
         else()
             message(WARNING "llamajni: OpenCL headers fetch missed — building without OpenCL")
@@ -59,9 +57,9 @@ endif()
 
 add_subdirectory(${LLAMA_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/llama.cpp)
 
-# The OpenCL stub is reached only through FindOpenCL's imported target, which
-# carries no build-order edge and may hand the linker -lOpenCL without our
-# output dir on the search path. Wire search path, file, and ordering by hand.
+# ggml links via the ${OpenCL_LIBRARIES} string (full path → -lOpenCL -L…);
+# belt-and-braces the same wiring for anything consuming OpenCL::OpenCL, and
+# an explicit build-order edge for the stub — FindOpenCL gives it none.
 if(TARGET OpenCL::OpenCL AND TARGET llamajni_opencl_stub)
     set_property(TARGET OpenCL::OpenCL PROPERTY IMPORTED_LOCATION
         "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so")

@@ -160,6 +160,9 @@ android {
         jniLibs {
             useLegacyPackaging = true
             pickFirsts += "lib/*/libtermux.so"
+            // llamajni's OpenCL soname stub is link-time bait for libggml-opencl;
+            // packaging it would shadow the vendor's real libOpenCL.so on device.
+            excludes += "lib/*/libOpenCL.so"
         }
     }
     lint {
