@@ -271,7 +271,7 @@ jobs:
     name: debug apk (diag)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    if: github.ref_name == 'feat/stall-diag'
+    if: github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race'
     concurrency:
       group: debug-${{ github.ref }}
       cancel-in-progress: true
