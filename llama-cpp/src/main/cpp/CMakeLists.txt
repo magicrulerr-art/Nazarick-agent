@@ -41,7 +41,9 @@ if(LLAMAJNI_ENABLE_OPENCL)
             file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp"
                  "// Carries the libOpenCL.so soname; the ICD resolves symbols at load time.\n")
             add_library(llamajni_opencl_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp")
-            set_target_properties(llamajni_opencl_stub PROPERTIES OUTPUT_NAME "OpenCL")
+            set_target_properties(llamajni_opencl_stub PROPERTIES
+                OUTPUT_NAME "OpenCL"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
             set(OpenCL_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so" CACHE FILEPATH "" FORCE)
         else()
             message(WARNING "llamajni: OpenCL headers fetch missed — building without OpenCL")
