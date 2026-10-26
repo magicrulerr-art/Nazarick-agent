@@ -30,6 +30,13 @@ using MoxwLock = std::lock_guard<std::mutex>;
 // do not touch the device queue.
 static std::mutex gComputeMutex;
 
+// An empty, NULL-terminated device list. Passing it as llama_model_params::devices pins a
+// model to the CPU: llama_prepare_model_devices takes the explicit-list branch and ends with
+// no device, leaving llama_context to add only the CPU backend (src/llama.cpp). Static rather
+// than a stack array because params only carries the pointer — the storage has to outlive the
+// call that reads it even if a future caller keeps params around.
+static ggml_backend_dev_t gNoDevices[1] = { nullptr };
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
     JNI_GUARD(env, nullptr, {
@@ -52,6 +59,17 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstrin
         // Default params already select mmap; set it explicitly since the field this
         // used to be (a plain use_mmap bool) was replaced by this enum in b10228.
         params.load_mode = LLAMA_LOAD_MODE_MMAP;
+        // Make gpuLayers=0 mean "no GPU at all", not merely "no layers offloaded".
+        // Default device selection binds every GPU it finds even at n_gpu_layers=0, and
+        // the scheduler then routes the non-layer ops — norms, losses, pooling — onto
+        // them. The embedding model loaded with gpuLayers=0 still died in
+        // vkGetDeviceFaultInfoEXT on the Adreno driver with nothing else computing, so
+        // binding it there was the fault, not the concurrency. Callers that want a GPU
+        // ask for it with a positive layer count; the CPU lane gets no device to fault
+        // on.
+        if (nGpuLayersIn == 0) {
+            params.devices = gNoDevices;
+        }
 
         llama_model *model = llama_model_load_from_file(path.c_str(), params);
         if (model == nullptr) {
