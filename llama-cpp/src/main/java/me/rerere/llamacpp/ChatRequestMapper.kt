@@ -18,6 +18,14 @@ import org.json.JSONObject
  */
 object ChatRequestMapper {
 
+    /** Floor for how much system text survives [trimToBudget], even when the input budget is
+     *  already spent on tools. Sized to hold a one-paragraph identity, not a persona library. */
+    private const val MIN_SYSTEM_TEXT_BYTES = 1200
+
+    /** Appended to system text [trimToBudget] cut, so the model can tell a short persona from
+     *  a truncated one. Same wording LiteRtProvider uses. */
+    private const val TRUNCATION_MARKER = "\n…(truncated for local model context)"
+
     fun toRequestJson(messages: List<UIMessage>, tools: List<Tool>): String {
         val root = JSONObject()
         root.put("messages", messagesArray(messages))
@@ -30,13 +38,21 @@ object ChatRequestMapper {
     }
 
     /**
-     * Drops the oldest turns until the rendered conversation fits [budgetBytes].
+     * Drops the oldest turns until the rendered conversation fits [budgetBytes], and, once
+     * no history is left to drop, shortens the system prompt to what remains.
      *
      * The newest non-system turn is always kept, even if it alone exceeds the budget:
      * sending a conversation with no user turn breaks the chat template, and an
-     * overflowing prompt that produces a readable error beats that. System messages are
-     * kept too, since the template needs them and they are already capped by the
-     * planner's budget.
+     * overflowing prompt that produces a readable error beats that.
+     *
+     * System messages are trimmed rather than exempt. They were exempt on the theory that
+     * the planner already capped them, but nothing caps them: an assistant with the bundled
+     * agent-core skill carries ~31 KB of persona prose, which on an 8,192-token local
+     * context is the whole budget by itself, so a "hi" turned into a 10k-token prefill the
+     * engine needed ten minutes to chew through. [MIN_SYSTEM_TEXT_BYTES] keeps the persona
+     * from vanishing entirely when the budget is already spent, mirroring
+     * LiteRtProvider's SYSTEM_MESSAGE_CHAR_BUDGET for the same reason - a small local model
+     * cannot hold thousands of tokens of persona instructions in mind anyway.
      */
     fun trimToBudget(messages: List<UIMessage>, budgetBytes: Int): List<UIMessage> {
         if (messages.isEmpty()) return messages
@@ -56,7 +72,39 @@ object ChatRequestMapper {
             working = working.toMutableList().apply { removeAt(index) }
             droppableCount--
         }
+
+        // History is down to its last turn and the request still does not fit, so the
+        // system prompt is the oversized part. Give it whatever the budget has left after
+        // the surviving turns and cut it there.
+        if (sizeOf(working) > budgetBytes) {
+            val keptBytes = sizeOf(working.filter { it.role != MessageRole.SYSTEM })
+            val allowance = (budgetBytes - keptBytes).coerceAtLeast(MIN_SYSTEM_TEXT_BYTES)
+            working = working.map { message ->
+                if (message.role == MessageRole.SYSTEM) truncateSystemText(message, allowance) else message
+            }
+        }
         return working
+    }
+
+    /** Truncate [message]'s text parts to a combined [allowanceBytes], keeping the head. */
+    private fun truncateSystemText(message: UIMessage, allowanceBytes: Int): UIMessage {
+        if (allowanceBytes <= 0) return message
+        var remaining = allowanceBytes
+        val parts = message.parts.map { part ->
+            if (part !is UIMessagePart.Text) return@map part
+            if (remaining <= 0) return@map part.copy(text = "")
+            val bytes = part.text.toByteArray(Charsets.UTF_8)
+            if (bytes.size <= remaining) {
+                remaining -= bytes.size
+                return@map part
+            }
+            // Cut on a codepoint boundary: a UTF-8 continuation byte (10xxxxxx) at the cut
+            // point would otherwise emit a mojibake character at the truncation seam.
+            var cut = remaining
+            while (cut > 0 && (bytes[cut].toInt() and 0xC0) == 0x80) cut--
+            part.copy(text = bytes.decodeToString(0, cut) + TRUNCATION_MARKER)
+        }
+        return message.copy(parts = parts)
     }
 
     fun toolDeclarations(tools: List<Tool>): List<ToolDeclaration> {

@@ -237,6 +237,19 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
     }
 
     /**
+     * The tools the planner could not fit into the loaded context's input budget.
+     * [LlamaCppProvider] must omit these from the request it renders: [ContextPlanner]
+     * already decided they do not fit, and forwarding them anyway is what let a request the
+     * planner had rejected reach the engine whole (measured on a Z Fold 7: 16 tools and a
+     * 31 KB system prompt against an 8,192-token context arrived as 10,295 tokens, and the
+     * 600 s first-output watchdog killed every attempt mid-prefill).
+     */
+    fun droppedToolNames(): List<String> {
+        val current = plan ?: error("no model is loaded")
+        return current.droppedToolNames
+    }
+
+    /**
      * Re-fits [tools] and [systemPromptBytes] against the model already loaded, without
      * picking a new context size or touching the native context - see [ContextPlanner]'s
      * class doc for why [ContextPlan.nCtx] must never drift from what the engine was

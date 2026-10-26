@@ -310,8 +310,16 @@ class LlamaCppProvider(
             // Trim history to the input half of the planned context before templating, so a
             // long conversation drops its oldest turns instead of overflowing the prompt.
             Log.i("moxw-perf", "diag: stream begin msgs=${messages.size} inputBudgetBytes=${runtime.inputBudgetBytes()}")
+            // The planner fits tools into the context by dropping the ones that do not fit;
+            // honour that here, otherwise the decision exists only in the plan and the
+            // rendered prompt overflows anyway.
+            val dropped = runtime.droppedToolNames().toSet()
+            val keptTools = if (dropped.isEmpty()) params.tools else params.tools.filterNot { it.name in dropped }
+            if (dropped.isNotEmpty()) {
+                Log.i("moxw-perf", "diag: tools dropped for context ${dropped.size}/${params.tools.size}: $dropped")
+            }
             val trimmedMessages = ChatRequestMapper.trimToBudget(messages, runtime.inputBudgetBytes())
-            val requestJson = ChatRequestMapper.toRequestJson(trimmedMessages, params.tools)
+            val requestJson = ChatRequestMapper.toRequestJson(trimmedMessages, keptTools)
             Log.i("moxw-perf", "diag: request json built bytes=${requestJson.toByteArray(Charsets.UTF_8).size}")
             val appliedTemplateJson = runtime.applyTemplate(requestJson)
             Log.i("moxw-perf", "diag: template applied")
