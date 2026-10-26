@@ -19,8 +19,11 @@ import org.json.JSONObject
 object ChatRequestMapper {
 
     /** Floor for how much system text survives [trimToBudget], even when the input budget is
-     *  already spent on tools. Sized to hold a one-paragraph identity, not a persona library. */
-    private const val MIN_SYSTEM_TEXT_BYTES = 1200
+     *  already spent on tools. Sized to hold a one-paragraph identity, not a persona library.
+     *  Shared with [ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES] because that is the figure the
+     *  planner charges a persona against: if the two disagree, the planner reserves space this
+     *  truncation never consumes and drops tools to pay for it. */
+    private const val MIN_SYSTEM_TEXT_BYTES = ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES
 
     /** Appended to system text [trimToBudget] cut, so the model can tell a short persona from
      *  a truncated one. Same wording LiteRtProvider uses. */

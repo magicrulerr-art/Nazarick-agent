@@ -217,12 +217,13 @@ jobs:
           # tests are flavour-independent and are never reached through :app, so each module is
           # named explicitly. :runtime was extracted in P4 with 19 test files and had been
           # missing from this list since, which left the harness's pure logic ungated.
-          # DIAG BRANCH ONLY (fix/embed-gpu-race, 2026-10-26): unit tests cut from this
-          # job's gradle line. The hosted runner has taken a shutdown signal at ~43 min
+          # DIAG BRANCH ONLY (fix/embed-gpu-race, 2026-10-26): unit tests were cut from this
+          # job's gradle line because the hosted runner took a shutdown signal at ~43 min
           # elapsed three runs running, every time in the packaging tail *after* a green
           # 10.5-minute test task; the native diff under diagnosis cannot break JVM tests.
-          # RESTORE the four test tasks before this branch merges anywhere shared.
-          ./gradlew ":app:assemble${F}Release" $FLAGS --stacktrace
+          # Restored here (fix/prompt-fits-context) because this branch's diff is pure JVM
+          # context-planning logic — these four tasks are the only thing that verifies it.
+          ./gradlew ":app:assemble${F}Release" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true

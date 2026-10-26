@@ -24,6 +24,17 @@ object ContextPlanner {
     /** Tokens kept free for conversation history growth. */
     private const val HISTORY_HEADROOM_TOKENS = 750
 
+    /**
+     * What a system prompt is actually charged against the input budget.
+     * [ChatRequestMapper.trimToBudget] truncates a persona that does not fit down to exactly
+     * this floor, so billing a 31 KB persona at 31 KB charged the plan for context the
+     * renderer never spends. Measured on a Z Fold 7 with the bundled agent-core persona:
+     * `inputBudgetBytes=0` and 16/16 tools dropped at n_ctx=8192 *and* at n_ctx=16384, which
+     * produced an agent that could only reply "I can't check your battery". A persona cut to
+     * a paragraph is a real cost; an agent with no tools at all is the larger one.
+     */
+    const val SYSTEM_PROMPT_RESERVE_BYTES = 1200
+
     private const val N_BATCH = 512
     private const val N_UBATCH = 512
 
@@ -137,12 +148,18 @@ object ContextPlanner {
      * cannot be resized once created. Used both when [plan] first sizes a context and by
      * [LlamaCppRuntime.replan] to re-fit a later request's tools/system prompt against an
      * already-loaded model.
+     *
+     * The system prompt is charged at [SYSTEM_PROMPT_RESERVE_BYTES] rather than its full
+     * [systemPromptBytes], because it is the one component [ChatRequestMapper.trimToBudget]
+     * can still shrink after the fact; billing it whole let it crowd out every tool, which
+     * nothing downstream can recover.
      */
     fun replanForRequest(nCtx: Int, tools: List<ToolDeclaration>, systemPromptBytes: Int): RequestPlan {
-        val kept = fitTools(nCtx, tools, systemPromptBytes)
+        val chargedSystemPromptBytes = minOf(systemPromptBytes, SYSTEM_PROMPT_RESERVE_BYTES)
+        val kept = fitTools(nCtx, tools, chargedSystemPromptBytes)
         return RequestPlan(
             droppedToolNames = kept.dropped,
-            reservedInputBytes = systemPromptBytes + kept.keptBytes,
+            reservedInputBytes = chargedSystemPromptBytes + kept.keptBytes,
         )
     }
 

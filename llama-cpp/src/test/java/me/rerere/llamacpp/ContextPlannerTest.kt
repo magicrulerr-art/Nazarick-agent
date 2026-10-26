@@ -163,4 +163,41 @@ class ContextPlannerTest {
         assertEquals(500, request.reservedInputBytes)
         assertTrue(request.droppedToolNames.isEmpty())
     }
+
+    @Test
+    fun `a persona far beyond its reserve does not evict the whole tool set`() {
+        // The Z Fold 7 regression, from real numbers: a 31,084-byte agent-core persona plus
+        // 16 tools totalling 10,000 bytes against n_ctx=8192 (input budget 13,384 bytes).
+        // Billing the persona at its full size left nothing for tools, so all 16 were
+        // dropped and the agent lost the ability to answer anything about the device.
+        // Charged at the truncation floor it actually occupies, every tool fits.
+        val foldTools = tools(16, bytesEach = 625)
+        val request = ContextPlanner.replanForRequest(
+            nCtx = 8192, tools = foldTools, systemPromptBytes = 31_084,
+        )
+        assertTrue(
+            "the persona must not cost the agent its tools, dropped=${request.droppedToolNames}",
+            request.droppedToolNames.isEmpty(),
+        )
+        assertEquals(
+            ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES + 16 * 625,
+            request.reservedInputBytes,
+        )
+        assertTrue(
+            "the reservation must stay inside the input budget",
+            request.reservedInputBytes <= ContextPlanner.inputByteBudget(8192),
+        )
+    }
+
+    @Test
+    fun `a floored persona still drops a tool set that genuinely overflows`() {
+        // Guard against the fix degenerating into "never drop anything": at 4096 the input
+        // budget is 5,192 bytes, so a 1,200-byte persona leaves room for 5 of the 40 tools.
+        val request = ContextPlanner.replanForRequest(nCtx = 4096, tools = tools(40), systemPromptBytes = 31_084)
+        assertEquals(35, request.droppedToolNames.size)
+        assertEquals(
+            ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES + 5 * 700,
+            request.reservedInputBytes,
+        )
+    }
 }
