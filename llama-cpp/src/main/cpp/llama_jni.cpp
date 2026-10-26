@@ -549,6 +549,11 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
 
         llama_context     *ctx   = gen->ctx;
         const llama_vocab *vocab = llama_model_get_vocab(model);
+        // Geometry of the context actually built, not the planner's intent: whether a slow
+        // prefill is small-batch overhead or plain compute depends on these numbers.
+        __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                "gen: ctx n_ctx=%d n_batch=%d n_ubatch=%d",
+                (int)llama_n_ctx(ctx), (int)llama_n_batch(ctx), (int)llama_n_ubatch(ctx));
 
         jclass    sinkCls = env->GetObjectClass(sink);
         jmethodID onToken = env->GetMethodID(sinkCls, "onToken", "([B)Z");
@@ -625,7 +630,13 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 return;
             }
             const int32_t count = std::min(batchSize, nPrompt - start);
+            const auto  tSlice0 = std::chrono::steady_clock::now();
             const int32_t rc = llama_decode(ctx, llama_batch_get_one(tokens.data() + start, count));
+            const double sliceMs =
+                    std::chrono::duration_cast<MoxwMs>(std::chrono::steady_clock::now() - tSlice0).count();
+            __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                    "gen: prefill slice %d/%d tok this %d tok %.0f ms",
+                    (int)(start + count), (int)nPrompt, (int)count, sliceMs);
             if (rc != 0) {
                 // A cancel that lands mid-decode comes back as rc 2 from the abort callback.
                 // That is the caller getting what it asked for, not a failure.
