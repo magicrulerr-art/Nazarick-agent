@@ -37,8 +37,13 @@ data class LoopSettings(
     val streamStallTimeoutSeconds: Int = 120,
 ) {
     companion object {
-        /** Hard ceiling for the stream watchdog, mirrors NetworkSetting.MAX_WATCHDOG_SECONDS. */
-        const val MAX_WATCHDOG_SECONDS = 600
+        /** Hard ceiling for the stream watchdog, mirrors NetworkSetting.MAX_WATCHDOG_SECONDS
+         *  (:app's PreferencesStore) — the module boundary means the mirror is manual, so the
+         *  two MUST move together: run 44 proved a UI-side raise alone is silently coerced
+         *  back to this number, killing a 10.6k-token local prefill at exactly 600 s.
+         *  30 min: an in-process llama.cpp stream has no socket; slowest observed Fold prefill
+         *  is ~1,100 s, and a phone-CPU turn that the ceiling aborts is a turn that never ends. */
+        const val MAX_WATCHDOG_SECONDS = 1800
     }
 }
 
