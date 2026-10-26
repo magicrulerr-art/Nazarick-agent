@@ -1373,10 +1373,15 @@ data class NetworkSetting(
     companion object {
         /**
          * Upper bound for both silence watchdogs. Hand-typed values are clamped to this on the way
-         * in, and the settings screen clamps to it too, so the two agree. Ten minutes matches the
-         * shared OkHttp client's readTimeout: waiting longer than that cannot succeed.
+         * in, and the settings screen clamps to it too, so the two agree. The old bound of 600
+         * matched the shared OkHttp client's readTimeout — but that reasoning only ever applied to
+         * remote HTTP providers: the local llama.cpp engine streams in-process over JNI with no
+         * socket to time out, so the watchdog was the ONLY clock, and a 10.6k-token tool-carrying
+         * prompt measures ~1,100 s of CPU prefill on the Fold (run 43: killed at 597.5 s with a
+         * green planner and an honest prompt). Thirty minutes keeps the remote rationale intact
+         * (a socket that silent is dead no matter the ceiling) and lets a phone-CPU prefill finish.
          */
-        const val MAX_WATCHDOG_SECONDS = 600
+        const val MAX_WATCHDOG_SECONDS = 1800
     }
 }
 
