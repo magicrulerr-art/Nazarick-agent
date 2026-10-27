@@ -893,7 +893,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
 #include <fcntl.h>
 #include <unistd.h>
 
-extern "C" JNIEXPORT jint JNI JNICALL
+extern "C" JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM *vm, void *) {
     if (access("/data/local/tmp/moxw.native_debug", F_OK) == 0) {
         int fd = open("/data/local/tmp/moxw.native.log",
