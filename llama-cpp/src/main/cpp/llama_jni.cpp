@@ -890,35 +890,41 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
 // be read back with adb. Absent the flag file, behaviour is unchanged.
 // ---------------------------------------------------------------------------
 #include <android/log.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-// App-specific external dir: the ONLY place this uid and adb shell can both
-// write/read on an enforcing user build (/data/local/tmp writes are denied to
-// the app domain by SELinux shell_data_file neverallows).
+// Channel for the debug capture. Round-50 forensics: access(F_OK) on a
+// shell-created flag in /data/local/tmp SUCCEEDS from the app domain, but
+// open(O_CREAT) fails — the denial is dir-write, not file access. So visrun
+// pre-creates the log file (shell can write that dir) with mode 666 and we
+// open WITHOUT O_CREAT. Remaining entries are fallbacks; each failed attempt
+// logs its errno so the next round starts informed.
 #define MOXW_EXT_DIR "/storage/emulated/0/Android/data/com.moxw.agent/files"
 
 extern "C" JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM *vm, void *) {
     const char *flag_local = "/data/local/tmp/moxw.native_debug";
-    const char *flag_ext   = MOXW_EXT_DIR "/moxw.native_debug";
-    bool armed = access(flag_local, F_OK) == 0;
-    if (!armed) {
-        mkdir("/storage/emulated/0/Android/data/com.moxw.agent", 0771);
-        mkdir(MOXW_EXT_DIR, 0771);
-        armed = access(flag_ext, F_OK) == 0;
-    }
-    if (armed) {
-        // stderr goes to the external dir when we can create there; else logcat only.
-        const char *log_path = MOXW_EXT_DIR "/moxw.native.log";
-        int fd = open(log_path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-        if (fd < 0) {
-            fd = open("/data/local/tmp/moxw.native.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
-        }
-        if (fd >= 0) {
-            dup2(fd, 2);   // std::cerr + abort messages now land in the file
-            close(fd);
+    if (access(flag_local, F_OK) == 0) {
+        struct Attempt { const char *path; int flags; };
+        const Attempt attempts[] = {
+            { "/data/local/tmp/moxw.native.log", O_WRONLY | O_APPEND },
+            { MOXW_EXT_DIR "/moxw.native.log", O_CREAT | O_WRONLY | O_APPEND },
+            { "/data/user/0/com.moxw.agent/files/moxw.native.log", O_CREAT | O_WRONLY | O_APPEND },
+        };
+        int fd = -1;
+        for (const Attempt &a : attempts) {
+            fd = open(a.path, a.flags, 0666);
+            if (fd >= 0) {
+                dup2(fd, 2);
+                __android_log_print(ANDROID_LOG_INFO, "llamaNative",
+                                    "JNI_OnLoad: stderr captured to %s", a.path);
+                close(fd);
+                break;
+            }
+            __android_log_print(ANDROID_LOG_INFO, "llamaNative",
+                                "JNI_OnLoad: log open %s failed errno=%d", a.path, errno);
         }
         ggml_log_set([](ggml_log_level level, const char *text, void *) {
             __android_log_write(ANDROID_LOG_INFO, "llamaNative", text);
