@@ -3,4 +3,4 @@
 	url = https://github.com/material-foundation/material-color-utilities.git
 [submodule "llama-cpp/native/llama.cpp"]
 	path = llama-cpp/native/llama.cpp
-	url = https://github.com/ggml-org/llama.cpp
+	url = https://github.com/magicrulerr-art/llama.cpp
