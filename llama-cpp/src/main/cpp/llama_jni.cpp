@@ -891,13 +891,31 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
 // ---------------------------------------------------------------------------
 #include <android/log.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+// App-specific external dir: the ONLY place this uid and adb shell can both
+// write/read on an enforcing user build (/data/local/tmp writes are denied to
+// the app domain by SELinux shell_data_file neverallows).
+#define MOXW_EXT_DIR "/storage/emulated/0/Android/data/com.moxw.agent/files"
 
 extern "C" JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM *vm, void *) {
-    if (access("/data/local/tmp/moxw.native_debug", F_OK) == 0) {
-        int fd = open("/data/local/tmp/moxw.native.log",
-                      O_CREAT | O_WRONLY | O_APPEND, 0644);
+    const char *flag_local = "/data/local/tmp/moxw.native_debug";
+    const char *flag_ext   = MOXW_EXT_DIR "/moxw.native_debug";
+    bool armed = access(flag_local, F_OK) == 0;
+    if (!armed) {
+        mkdir("/storage/emulated/0/Android/data/com.moxw.agent", 0771);
+        mkdir(MOXW_EXT_DIR, 0771);
+        armed = access(flag_ext, F_OK) == 0;
+    }
+    if (armed) {
+        // stderr goes to the external dir when we can create there; else logcat only.
+        const char *log_path = MOXW_EXT_DIR "/moxw.native.log";
+        int fd = open(log_path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+        if (fd < 0) {
+            fd = open("/data/local/tmp/moxw.native.log", O_CREAT | O_WRONLY | O_APPEND, 0644);
+        }
         if (fd >= 0) {
             dup2(fd, 2);   // std::cerr + abort messages now land in the file
             close(fd);
@@ -906,7 +924,7 @@ JNI_OnLoad(JavaVM *vm, void *) {
             __android_log_write(ANDROID_LOG_INFO, "llamaNative", text);
         }, nullptr);
         __android_log_print(ANDROID_LOG_INFO, "llamaNative",
-                            "JNI_OnLoad: native debug capture armed");
+                            "JNI_OnLoad: debug capture armed (stderr fd=%d)", fd);
     }
     return JNI_VERSION_1_6;
 }

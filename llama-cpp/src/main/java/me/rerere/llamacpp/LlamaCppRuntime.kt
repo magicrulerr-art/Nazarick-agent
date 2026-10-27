@@ -190,6 +190,9 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
             // ContextPlanner. Chosen file-based because neither am-intent plumbing nor
             // hidden SystemProperties reaches this deep from adb.
             val ubatchOverride = runCatching {
+                java.io.File("/storage/emulated/0/Android/data/com.moxw.agent/files/moxw.ubatch")
+                    .readText().trim().toInt()
+            }.recoverCatching {
                 java.io.File("/data/local/tmp/moxw.ubatch").readText().trim().toInt()
             }.getOrNull()
             if (ubatchOverride != null) {
