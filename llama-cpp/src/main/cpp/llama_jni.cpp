@@ -892,40 +892,51 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
 #include <android/log.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Channel for the debug capture. Round-50 forensics: access(F_OK) on a
-// shell-created flag in /data/local/tmp SUCCEEDS from the app domain, but
-// open(O_CREAT) fails — the denial is dir-write, not file access. So visrun
-// pre-creates the log file (shell can write that dir) with mode 666 and we
-// open WITHOUT O_CREAT. Remaining entries are fallbacks; each failed attempt
-// logs its errno so the next round starts informed.
-#define MOXW_EXT_DIR "/storage/emulated/0/Android/data/com.moxw.agent/files"
+// Channel for the debug capture, final form after two rounds of MAC forensics:
+// /data/local/tmp = errno 13 even on pre-created 666 files (Samsung policy
+// denies appdomain WRITES to shell_data_file outright); FUSE external = errno 2
+// (raw syscalls bypass the app's own mount view). What the app domain always
+// has: TCP. stderr connects to 127.0.0.1:9911, which `adb reverse` lands on
+// the host sink (tools/mob/stderrsink.ps1). Internal files dir kept as a
+// last-ditch fallback; every failure logs its errno.
+#define MOXW_INT_LOG "/data/user/0/com.moxw.agent/files/moxw.native.log"
+
+static int moxw_stderr_fd() {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s >= 0) {
+        sockaddr_in addr {};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(9911);
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (connect(s, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
+            __android_log_print(ANDROID_LOG_INFO, "llamaNative",
+                                "JNI_OnLoad: stderr streaming to 127.0.0.1:9911");
+            return s;
+        }
+        close(s);
+    }
+    __android_log_print(ANDROID_LOG_INFO, "llamaNative",
+                        "JNI_OnLoad: stderr socket failed errno=%d", errno);
+    int fd = open(MOXW_INT_LOG, O_CREAT | O_WRONLY | O_APPEND, 0666);
+    if (fd >= 0) {
+        __android_log_print(ANDROID_LOG_INFO, "llamaNative",
+                            "JNI_OnLoad: stderr captured to %s", MOXW_INT_LOG);
+    }
+    return fd;
+}
 
 extern "C" JNIEXPORT jint JNICALL
 JNI_OnLoad(JavaVM *vm, void *) {
     const char *flag_local = "/data/local/tmp/moxw.native_debug";
     if (access(flag_local, F_OK) == 0) {
-        struct Attempt { const char *path; int flags; };
-        const Attempt attempts[] = {
-            { "/data/local/tmp/moxw.native.log", O_WRONLY | O_APPEND },
-            { MOXW_EXT_DIR "/moxw.native.log", O_CREAT | O_WRONLY | O_APPEND },
-            { "/data/user/0/com.moxw.agent/files/moxw.native.log", O_CREAT | O_WRONLY | O_APPEND },
-        };
-        int fd = -1;
-        for (const Attempt &a : attempts) {
-            fd = open(a.path, a.flags, 0666);
-            if (fd >= 0) {
-                dup2(fd, 2);
-                __android_log_print(ANDROID_LOG_INFO, "llamaNative",
-                                    "JNI_OnLoad: stderr captured to %s", a.path);
-                close(fd);
-                break;
-            }
-            __android_log_print(ANDROID_LOG_INFO, "llamaNative",
-                                "JNI_OnLoad: log open %s failed errno=%d", a.path, errno);
-        }
+        int fd = moxw_stderr_fd();
+        if (fd >= 0) dup2(fd, 2);
         ggml_log_set([](ggml_log_level level, const char *text, void *) {
             __android_log_write(ANDROID_LOG_INFO, "llamaNative", text);
         }, nullptr);
