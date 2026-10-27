@@ -878,3 +878,35 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
         return result;
     })
 }
+
+// ---------------------------------------------------------------------------
+// Debug entry point for the AURA-005 Adreno pipeline hunt (removable).
+//
+// vkQueueSubmit's createComputePipeline:ErrorUnknown carries no pipeline name:
+// ggml-vulkan reports it through std::cerr, which on Android goes nowhere.
+// While /data/local/tmp/moxw.native_debug exists, this redirects the process's
+// stderr to /data/local/tmp/moxw.native.log and mirrors every ggml log event
+// into logcat (tag llamaNative), so the failing pipeline names themselves can
+// be read back with adb. Absent the flag file, behaviour is unchanged.
+// ---------------------------------------------------------------------------
+#include <android/log.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+extern "C" JNIEXPORT jint JNI JNICALL
+JNI_OnLoad(JavaVM *vm, void *) {
+    if (access("/data/local/tmp/moxw.native_debug", F_OK) == 0) {
+        int fd = open("/data/local/tmp/moxw.native.log",
+                      O_CREAT | O_WRONLY | O_APPEND, 0644);
+        if (fd >= 0) {
+            dup2(fd, 2);   // std::cerr + abort messages now land in the file
+            close(fd);
+        }
+        ggml_log_set([](ggml_log_level level, const char *text, void *) {
+            __android_log_write(ANDROID_LOG_INFO, "llamaNative", text);
+        }, nullptr);
+        __android_log_print(ANDROID_LOG_INFO, "llamaNative",
+                            "JNI_OnLoad: native debug capture armed");
+    }
+    return JNI_VERSION_1_6;
+}

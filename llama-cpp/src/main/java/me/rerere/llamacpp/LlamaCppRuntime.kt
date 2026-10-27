@@ -184,8 +184,22 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
         }
 
         val ctx = try {
+            // Debug aid for the AURA-005 Adreno pipeline hunt (removable): while
+            // /data/local/tmp/moxw.ubatch holds an integer, it replaces the planned
+            // n_ubatch so shader-path knobs can be A/B'd on-device without rebuilding
+            // ContextPlanner. Chosen file-based because neither am-intent plumbing nor
+            // hidden SystemProperties reaches this deep from adb.
+            val ubatchOverride = runCatching {
+                java.io.File("/data/local/tmp/moxw.ubatch").readText().trim().toInt()
+            }.getOrNull()
+            if (ubatchOverride != null) {
+                android.util.Log.i(
+                    "LlamaCppRuntime",
+                    "n_ubatch overridden to $ubatchOverride (planned ${plan.nUBatch})",
+                )
+            }
             native.createContext(
-                model, plan.nCtx, plan.nBatch, plan.nUBatch,
+                model, plan.nCtx, plan.nBatch, ubatchOverride ?: plan.nUBatch,
                 plan.cacheTypeK.id, plan.cacheTypeV.id, threads,
             )
         } catch (t: Throwable) {
