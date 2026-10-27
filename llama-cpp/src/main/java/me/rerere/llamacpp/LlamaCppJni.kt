@@ -1,5 +1,7 @@
 package me.rerere.llamacpp
 
+import android.system.Os
+
 /**
  * The entire JNI surface for llama.cpp. Nothing else in the codebase calls native code
  * directly, so every native contract change is visible in this one file.
@@ -7,6 +9,14 @@ package me.rerere.llamacpp
 object LlamaCppJni {
 
     init {
+        // Fold 7 probe 2026-10-26: the Adreno 750 driver's coopmat path fails every ggml
+        // compute pipeline with createComputePipeline ErrorUnknown, killing the GPU lane
+        // at first generate. ggml honors GGML_VK_DISABLE_COOPMAT at device-init time —
+        // well after this init, on first model load — but `wrap.<pkg>` property injection
+        // is SELinux-denied on this device, so the only place left to set it is in-process,
+        // before anything touches a Vulkan device. Drop this line when a driver update
+        // makes coopmat trustworthy.
+        Os.setenv("GGML_VK_DISABLE_COOPMAT", "1", true)
         System.loadLibrary("llamajni")
     }
 
