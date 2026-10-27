@@ -1,6 +1,7 @@
 package me.rerere.llamacpp
 
 import android.system.Os
+import android.util.Log
 
 /**
  * The entire JNI surface for llama.cpp. Nothing else in the codebase calls native code
@@ -9,14 +10,29 @@ import android.system.Os
 object LlamaCppJni {
 
     init {
-        // Fold 7 probe 2026-10-26: the Adreno 750 driver's coopmat path fails every ggml
-        // compute pipeline with createComputePipeline ErrorUnknown, killing the GPU lane
-        // at first generate. ggml honors GGML_VK_DISABLE_COOPMAT at device-init time —
-        // well after this init, on first model load — but `wrap.<pkg>` property injection
-        // is SELinux-denied on this device, so the only place left to set it is in-process,
-        // before anything touches a Vulkan device. Drop this line when a driver update
-        // makes coopmat trustworthy.
-        Os.setenv("GGML_VK_DISABLE_COOPMAT", "1", true)
+        // Fold 7 probe 2026-10-26: the Adreno 750 driver throws createComputePipeline
+        // ErrorUnknown on some ggml pipeline class, killing the GPU lane at first
+        // generate. ggml honors GGML_VK_DISABLE_<FEATURE> env vars at device-init time,
+        // but `wrap.<pkg>` property injection is SELinux-denied on this device, so the
+        // only place left is in-process, before anything touches a Vulkan device.
+        // `debug.moxw.vk_flags` names the disabled set (comma-separated lowercase
+        // feature); absent means none — upstream behavior. Knobs that actually exist at
+        // this pin, per the shipped .so's rodata: DISABLE_{ASYNC,COOPMAT2_DECODE_VECTOR,
+        // DESCRIPTOR_REUSE,DOT2,F16,FUSION,GRAPH_OPTIMIZE,HOST_VISIBLE_VIDMEM,MMVQ,
+        // MULTI_ADD}, FA_SPARSE_DISABLE, SERIALIZE_SUBMISSIONS, PREFER_HOST_MEMORY.
+        val flags = try {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, "debug.moxw.vk_flags", "") as String
+        } catch (_: Throwable) {
+            ""
+        }
+        val applied = flags.split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { "GGML_VK_DISABLE_${it.uppercase()}" }
+        applied.forEach { Os.setenv(it, "1", true) }
+        Log.i("moxw-perf", "jni: env kill-switches applied: ${applied.ifEmpty { listOf("none") }}")
         System.loadLibrary("llamajni")
     }
 
