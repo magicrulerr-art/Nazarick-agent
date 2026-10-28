@@ -9,16 +9,20 @@ import android.util.Log
 object LlamaCppJni {
 
     init {
-        // The OpenCL ggml backend (libggml-opencl.so) is a hard DT_NEEDED of
-        // libllamajni.so in OpenCL-enabled builds, and the app's linker namespace cannot
-        // resolve the vendor's libOpenCL.so by soname alone: on the Fold (RFCY71BMBRE)
-        // the entire JNI load died with UnsatisfiedLinkError, taking even the CPU
-        // fallback down with it. Preloading the vendor library by absolute path
-        // registers its soname in this namespace so the DT_NEEDED resolves. Silently
-        // skipped on devices without a vendor OpenCL ICD — there the backend simply
-        // fails to register at runtime, exactly as before this preload existed.
-        runCatching { System.load("/vendor/lib64/libOpenCL.so") }
-            .onSuccess { Log.i("LlamaCppJni", "preloaded vendor libOpenCL.so") }
+        // The OpenCL ggml backend (libggml-opencl.so) is a hard DT_NEEDED of libllamajni.so
+        // in OpenCL-enabled builds, and the vendor's ICD lives in /vendor/lib64, outside an
+        // app's linker namespace: on the Fold (RFCY71BMBRE) the entire JNI load died with
+        // UnsatisfiedLinkError, taking even the CPU fallback down with it. The app manifest
+        // now declares <uses-native-library android:name="libOpenCL.so">, which is the
+        // sanctioned way in, so loading by soname is the primary path. The absolute-path load
+        // stays underneath as the fallback for any build whose manifest merger dropped the
+        // declaration. Both are caught: a device with no vendor ICD just loses the OpenCL
+        // backend, exactly as before this preload existed.
+        val bySoname = runCatching { System.loadLibrary("OpenCL") }
+        val vendorIcd =
+            if (bySoname.isSuccess) bySoname else runCatching { System.load("/vendor/lib64/libOpenCL.so") }
+        vendorIcd
+            .onSuccess { Log.i("LlamaCppJni", "preloaded vendor OpenCL ICD (by soname: ${bySoname.isSuccess})") }
             .onFailure { Log.w("LlamaCppJni", "no vendor libOpenCL.so; OpenCL backend will be unavailable", it) }
         System.loadLibrary("llamajni")
     }
