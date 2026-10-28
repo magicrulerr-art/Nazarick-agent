@@ -3,12 +3,14 @@
 #include <android/log.h>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "ggml-backend.h"
 #include "llama.h"
 #include "llama_embed.h"
 #include "jni_util.h"
@@ -37,6 +39,44 @@ static std::mutex gComputeMutex;
 // call that reads it even if a future caller keeps params around.
 static ggml_backend_dev_t gNoDevices[1] = { nullptr };
 
+// llama.cpp and ggml write their diagnostics to stderr, and an Android app process's stderr
+// goes nowhere — so the two lines that actually settle a GPU argument ("ggml_opencl:
+// selecting platform", "offloaded 35/35 layers to GPU") were invisible no matter how much
+// logcat we watched. Both loggers are routed here instead, and the registry's device list is
+// printed around every load, so whether libggml-opencl.so registered at all is a fact on
+// screen rather than an inference from speed. Every level is forwarded (debug included:
+// "register_device: registered opencl" is exactly the line this exists to catch) under a tag
+// of its own, which keeps the perf breadcrumbs readable.
+static void jniEngineLog(int level, const char *text, void *) {
+    const int prio = level >= GGML_LOG_LEVEL_ERROR ? ANDROID_LOG_ERROR
+                     : level == GGML_LOG_LEVEL_WARN ? ANDROID_LOG_WARN
+                     : level == GGML_LOG_LEVEL_INFO ? ANDROID_LOG_INFO
+                     : ANDROID_LOG_VERBOSE;
+    // The callback hands over partial lines with no trailing newline guarantee; logcat adds
+    // its own, so the newline and anything after it is dropped.
+    __android_log_print(prio, "moxw-engine", "%.*s", (int) strcspn(text, "\n"), text);
+}
+
+// Names of every ggml device the registry knows about. Empty means no GPU backend got
+// loaded at all, which is the difference between "OpenCL failed" and "OpenCL never arrived".
+static std::string engineDeviceList() {
+    std::string devs;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        const ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        devs += (devs.empty() ? "" : ", ");
+        devs += ggml_backend_dev_name(dev);
+    }
+    return devs;
+}
+
+static void initEngineLogging() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        llama_log_set(jniEngineLog, nullptr);
+        ggml_log_set(jniEngineLog, nullptr);
+    });
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
     JNI_GUARD(env, nullptr, {
@@ -51,6 +91,10 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstrin
     JNI_GUARD(env, 0L, {
         llama_backend_init();
         const std::string path = jstringToUtf8(env, pathIn);
+        initEngineLogging();
+        __android_log_print(ANDROID_LOG_INFO, "moxw-engine",
+                            "load: begin n_gpu_layers=%d devices=[%s]",
+                            (int) nGpuLayersIn, engineDeviceList().c_str());
 
         llama_model_params params = llama_model_default_params();
         // Layer offload is the caller's decision per model: 0 keeps the CPU path, -1 offloads
@@ -76,6 +120,8 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstrin
             throwJava(env, ("failed to load model: " + path).c_str());
             return 0L;
         }
+        __android_log_print(ANDROID_LOG_INFO, "moxw-engine",
+                            "load: ok devices=[%s]", engineDeviceList().c_str());
         return reinterpret_cast<jlong>(model);
     })
 }
