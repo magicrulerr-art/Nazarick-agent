@@ -251,7 +251,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
         const common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
 
         nlohmann::ordered_json out;
-        out["prompt"]             = params.prompt;
+        out["prompt"]             = params.prompt.str();
         out["grammar"]            = params.grammar;
         out["grammar_lazy"]       = params.grammar_lazy;
         out["additional_stops"]   = params.additional_stops;
@@ -267,9 +267,11 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
         // substitutes a content-only parser when that is empty, which returns plausible text
         // with every tool call missing. "format" is still carried because the parse side uses
         // it to pick a mapper for two of the formats, but it is not a substitute for this.
-        // The value is itself a JSON document (common_peg_arena::save dumps one), nested here
-        // as a string exactly as llama.cpp's server carries it between the two halves.
-        out["parser"]             = params.parser;
+        // common_peg_arena::save() yields a JSON document of its own (moxw fork addition —
+        // upstream keeps the arena inside one process and never needed to serialize it).
+        // Reparsed as nlohmann and embedded as an object, so the blob carries one JSON,
+        // not a string-in-a-string; parseChat reparse()s it into common_json on the way in.
+        out["parser"]             = nlohmann::ordered_json::parse(params.parser.save());
 
         // trigger.token (for a COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN trigger) is not carried across:
         // every construction site in common/chat.cpp builds a "word" or "pattern" trigger today,
@@ -781,19 +783,24 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeParseChat(
         common_chat_parser_params params;
         params.format            = formatFromName(applied.at("format").get<std::string>());
         // Prepended to the text before parsing, because most of the parsers the template layer
-        // builds open by matching the generation prompt as a literal.
-        params.generation_prompt = applied.value("generation_prompt", std::string());
+        // builds open by matching the generation prompt as a literal. common_chat_input is the
+        // text-plus-token envelope the new parse API takes; the token vector this ctor builds is
+        // sized to bytes with LLAMA_TOKEN_NULL, and the PEG path only reads .text.
+        params.generation_prompt = common_chat_input(applied.value("generation_prompt", std::string()));
 
-        const std::string parser = applied.value("parser", std::string());
-        if (parser.empty()) {
+        if (!applied.contains("parser")) {
             // common_chat_parse substitutes a content-only parser for an empty one instead of
             // failing, so an applied-template blob that lost this field would keep returning
             // believable text with every tool call quietly gone. Refuse it here instead.
             throw std::runtime_error("applied template carries no parser");
         }
-        params.parser.load(parser);
+        // The blob holds the arena as an embedded JSON object; the arena loads straight from
+        // it. nlohmann and common_json are distinct types here (the latter is llama.cpp's own
+        // pimpl wrapper), so the bridge is dump/parse rather than a conversion.
+        params.parser.load(applied.at("parser").dump());
 
-        const common_chat_msg msg = common_chat_parse(text, isPartial == JNI_TRUE, params);
+        const common_chat_msg msg =
+                common_chat_parse(common_chat_input(text), isPartial == JNI_TRUE, params);
         return utf8ToByteArray(env, msg.to_json_oaicompat().dump());
     })
 }
