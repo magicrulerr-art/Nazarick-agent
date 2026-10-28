@@ -23,6 +23,33 @@ set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 
 if(LLAMAJNI_ENABLE_OPENCL)
     set(GGML_OPENCL ON CACHE BOOL "" FORCE)
+    # NDK r28 sysroots carry neither CL/cl.h nor libOpenCL.so. Fetch Khronos'
+    # official headers at configure time; if the fetch misses, degrade quietly
+    # to CPU (the app discovers backends at runtime and must not die on it).
+    if(ANDROID AND NOT OpenCL_INCLUDE_DIR)
+        include(FetchContent)
+        set(LLAMAJNI_OPENCL_HEADERS_TAG "v2026.05.29")
+        FetchContent_Declare(llamajni_opencl_headers
+            URL "https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/tags/${LLAMAJNI_OPENCL_HEADERS_TAG}.zip")
+        FetchContent_Populate(llamajni_opencl_headers)
+        if(EXISTS "${llamajni_opencl_headers_SOURCE_DIR}/CL/cl.h")
+            set(OpenCL_INCLUDE_DIR "${llamajni_opencl_headers_SOURCE_DIR}" CACHE PATH "" FORCE)
+            # The real libOpenCL.so is provided at runtime by the GPU driver's
+            # ICD. Link against a do-nothing stub library carrying the right
+            # soname instead — a self-referencing linker script crashes lld.
+            # CXX-only project: a .c stub would demand the unenabled C language.
+            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp"
+                 "// Carries the libOpenCL.so soname; the ICD resolves symbols at load time.\n")
+            add_library(llamajni_opencl_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/llamajni_opencl_stub.cpp")
+            set_target_properties(llamajni_opencl_stub PROPERTIES
+                OUTPUT_NAME "OpenCL"
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+            set(OpenCL_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so" CACHE FILEPATH "" FORCE)
+        else()
+            message(WARNING "llamajni: OpenCL headers fetch missed — building without OpenCL")
+            set(GGML_OPENCL OFF CACHE BOOL "" FORCE)
+        endif()
+    endif()
 endif()
 
 if(LLAMAJNI_ENABLE_VULKAN)
@@ -108,6 +135,29 @@ if(TARGET ggml-vulkan)
     # (vkGetPhysicalDeviceFeatures2 & friends). Let them bind lazily at load —
     # same treatment as the OpenCL lane; NDK's --no-undefined otherwise balks.
     target_link_options(ggml-vulkan PRIVATE
+        "LINKER:--unresolved-symbols=ignore-all"
+        "LINKER:-z,lazy")
+endif()
+
+# ggml links via the ${OpenCL_LIBRARIES} string (full path → -lOpenCL -L…);
+# belt-and-braces the same wiring for anything consuming OpenCL::OpenCL, and
+# an explicit build-order edge for the stub — FindOpenCL gives it none.
+if(TARGET OpenCL::OpenCL AND TARGET llamajni_opencl_stub)
+    set_property(TARGET OpenCL::OpenCL PROPERTY IMPORTED_LOCATION
+        "${CMAKE_CURRENT_BINARY_DIR}/libOpenCL.so")
+    set_property(TARGET OpenCL::OpenCL APPEND PROPERTY INTERFACE_LINK_DIRECTORIES
+        "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
+foreach(_llamajni_opencl_consumer ggml ggml-opencl)
+    if(TARGET ${_llamajni_opencl_consumer} AND TARGET llamajni_opencl_stub)
+        add_dependencies(${_llamajni_opencl_consumer} llamajni_opencl_stub)
+    endif()
+endforeach()
+
+# The NDK links shared libs with --no-undefined; our stub deliberately carries
+# no symbols — the vendor ICD supplies cl* at load time. Let them stay lazy.
+if(TARGET ggml-opencl)
+    target_link_options(ggml-opencl PRIVATE
         "LINKER:--unresolved-symbols=ignore-all"
         "LINKER:-z,lazy")
 endif()
