@@ -1,5 +1,7 @@
 package me.rerere.llamacpp
 
+import android.util.Log
+
 /**
  * The entire JNI surface for llama.cpp. Nothing else in the codebase calls native code
  * directly, so every native contract change is visible in this one file.
@@ -7,6 +9,17 @@ package me.rerere.llamacpp
 object LlamaCppJni {
 
     init {
+        // The OpenCL ggml backend (libggml-opencl.so) is a hard DT_NEEDED of
+        // libllamajni.so in OpenCL-enabled builds, and the app's linker namespace cannot
+        // resolve the vendor's libOpenCL.so by soname alone: on the Fold (RFCY71BMBRE)
+        // the entire JNI load died with UnsatisfiedLinkError, taking even the CPU
+        // fallback down with it. Preloading the vendor library by absolute path
+        // registers its soname in this namespace so the DT_NEEDED resolves. Silently
+        // skipped on devices without a vendor OpenCL ICD — there the backend simply
+        // fails to register at runtime, exactly as before this preload existed.
+        runCatching { System.load("/vendor/lib64/libOpenCL.so") }
+            .onSuccess { Log.i("LlamaCppJni", "preloaded vendor libOpenCL.so") }
+            .onFailure { Log.w("LlamaCppJni", "no vendor libOpenCL.so; OpenCL backend will be unavailable", it) }
         System.loadLibrary("llamajni")
     }
 
