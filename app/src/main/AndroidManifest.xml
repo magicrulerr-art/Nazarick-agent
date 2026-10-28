@@ -163,6 +163,27 @@
     <meta-data
       android:name="android.game_mode_config"
       android:resource="@xml/game_mode_config" />
+    <!--
+      OpenCL backend (AURA-006). libggml-opencl.so carries a hard DT_NEEDED on the vendor's
+      libOpenCL.so, and an app's class-loader namespace cannot reach /vendor/lib64 on its own:
+      on the Fold (RFCY71BMBRE, SM8750) the whole JNI died in LlamaCppJni.&lt;clinit&gt; with
+      UnsatisfiedLinkError — "library /vendor/lib64/libOpenCL.so ... not accessible for the
+      namespace [name=clns-9]" — and the CPU fallback went down with it, because a failed
+      DT_NEEDED kills libllamajni.so itself. uses-native-library is Android's sanctioned door.
+      required="false" keeps the APK installable where no vendor ICD exists; there the backend
+      simply fails to register at runtime.
+
+      libOpenCL_adreno.so is declared as well, deliberately: the vendor's libOpenCL.so is the
+      Khronos ICD loader (its strings name it, and it resolves the real driver with a plain
+      dlopen of a bare soname), so that second load happens in *our* namespace too. Declaring
+      only the stub would get us past link time and then strand the driver.
+    -->
+    <uses-native-library
+      android:name="libOpenCL.so"
+      android:required="false" />
+    <uses-native-library
+      android:name="libOpenCL_adreno.so"
+      android:required="false" />
     <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"
