@@ -48,7 +48,12 @@ static ggml_backend_dev_t gNoDevices[1] = { nullptr };
 // screen rather than an inference from speed. Every level is forwarded (debug included:
 // "register_device: registered opencl" is exactly the line this exists to catch) under a tag
 // of its own, which keeps the perf breadcrumbs readable.
-static void jniEngineLog(int level, const char *text, void *) {
+// The parameter type is load-bearing, not ceremony: llama_log_set and ggml_log_set both take
+// ggml_log_callback = void(*)(enum ggml_log_level, const char*, void*), and C++ will not
+// convert a function pointer whose first parameter is int. Declaring it `int` compiles this
+// file happily and then dies at the two calls below ("no matching function for call to
+// 'llama_log_set'" - CI run 64, 2026-10-30).
+static void jniEngineLog(enum ggml_log_level level, const char *text, void *) {
     const int prio = level >= GGML_LOG_LEVEL_ERROR ? ANDROID_LOG_ERROR
                      : level == GGML_LOG_LEVEL_WARN ? ANDROID_LOG_WARN
                      : level == GGML_LOG_LEVEL_INFO ? ANDROID_LOG_INFO
