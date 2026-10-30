@@ -200,4 +200,58 @@ class ContextPlannerTest {
             request.reservedInputBytes,
         )
     }
+
+    // Hybrid (conv + attention) architectures ------------------------------------------
+
+    /**
+     * LFM3-1.7B as the Fold reports it: 24 layers of which 11 are attention, declared as the
+     * per-layer array `n_head_kv = [0, 0, 4, 0, 4, ...]`, a 256-token sliding window, and
+     * 5,610 MB free at load (logcat 2026-10-29). [nHeadKv] is what the JNI layer hands over,
+     * so it is also where a hybrid model can be misread.
+     */
+    private fun hybridModel(nHeadKv: Int) = GgufModelInfo(
+        nLayers = 24,
+        nEmbd = 2048,
+        nHeadKv = nHeadKv,
+        nEmbdHeadK = 128,
+        nEmbdHeadV = 128,
+        nVocab = 128_000,
+        nCtxTrain = 262_144,
+        slidingWindow = 256,
+        weightsBytes = 1_150_000_000L,
+    )
+
+    @Test
+    fun `a hybrid model reports the widest layer and keeps its tools`() {
+        // With head-kv read per layer (max = 4), the KV estimate is honest and the planner
+        // climbs the ladder; at any rung above 8192 the 14 device tool schemas fit, so the
+        // daily driver keeps its tools.
+        val foldRam = 5_610_000_000L
+        val plan = ContextPlanner.plan(hybridModel(nHeadKv = 4), foldRam, tools(14, bytesEach = 1800), 31_776)
+        assertTrue(
+            "a hybrid model must not be stranded on the smallest rung, got nCtx=${plan.nCtx}",
+            plan.nCtx > ContextPlanner.LADDER.first(),
+        )
+        assertTrue(
+            "every tool must survive at the planned context, dropped=${plan.droppedToolNames}",
+            plan.droppedToolNames.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `head_kv read from a conv layer 0 is treated as untrustworthy metadata`() {
+        // The bug this pins: `llama_model_n_head_kv()` returns layer 0, which is a *conv* layer
+        // on a hybrid model, so it reports 0 and the planner falls to the floor - 4096, whose
+        // input budget cannot hold 14 schemas at 1,800 bytes. The JNI layer now substitutes the
+        // widest layer; this asserts how much was riding on that one value.
+        val foldRam = 5_610_000_000L
+        val zeroHeadKv = hybridModel(nHeadKv = 0)
+        assertFalse("nHeadKv = 0 must not be trusted", zeroHeadKv.isComplete)
+        val plan = ContextPlanner.plan(zeroHeadKv, foldRam, tools(14, bytesEach = 1800), 31_776)
+        assertEquals(ContextPlanner.LADDER.first(), plan.nCtx)
+        assertTrue(
+            "the floor cannot hold the tool set, which is the whole complaint",
+            plan.droppedToolNames.isNotEmpty(),
+        )
+    }
 }
