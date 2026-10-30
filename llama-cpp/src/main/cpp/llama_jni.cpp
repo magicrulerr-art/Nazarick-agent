@@ -3,6 +3,7 @@
 #include <android/log.h>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -137,8 +138,9 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeFreeModel(JNIEnv *env, jobject, jlong 
 }
 
 // Reads one integer-valued metadata key, trying the architecture-prefixed name first.
-// Only used for the head dimensions: llama.cpp exposes typed accessors for everything
-// else this file needs (head_count_kv, head_count, sliding window).
+// Used for the head dimensions. llama.cpp has typed accessors for head_count, sliding window
+// and the rest, but the one for head_count_kv answers with layer 0 only - see metaIntMax and
+// the note at nativeModelInfo.
 static int metaInt(const llama_model *model, const std::string &suffix, int fallback) {
     char arch[128] = {0};
     llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch));
@@ -155,6 +157,38 @@ static int metaInt(const llama_model *model, const std::string &suffix, int fall
     return fallback;
 }
 
+// Largest integer an integer metadata key declares, whether it is a scalar ("4") or a
+// per-layer array ("[0, 0, 4, 0, 4, ...]"). metaInt cannot serve arrays: llama.cpp stores
+// every metadata value as a pre-rendered string (model->gguf_kv, filled by gguf_kv_to_str),
+// so std::stoi on an array yields its FIRST element and nothing else.
+static int metaIntMax(const llama_model *model, const std::string &suffix, int fallback) {
+    char arch[128] = {0};
+    llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch));
+
+    // 24 layers of i32 plus separators is ~200 bytes; 1024 leaves room for a 128-layer model.
+    char buf[1024] = {0};
+    const std::string key = std::string(arch) + "." + suffix;
+    if (llama_model_meta_val_str(model, key.c_str(), buf, sizeof(buf)) <= 0) {
+        return fallback;
+    }
+
+    int best = fallback;
+    const char * p = buf;
+    while (*p != '\0') {
+        if ((*p >= '0' && *p <= '9') || (*p == '-' && p[1] >= '0' && p[1] <= '9')) {
+            char * end = nullptr;
+            const long v = std::strtol(p, &end, 10);
+            if (end != p && v > best) {
+                best = (int) v;
+            }
+            p = (end != p) ? end : p + 1;
+        } else {
+            ++p;
+        }
+    }
+    return best;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeModelInfo(JNIEnv *env, jobject, jlong handle) {
     JNI_GUARD(env, nullptr, {
@@ -167,7 +201,21 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeModelInfo(JNIEnv *env, jobject, jlong 
         const int nEmbd     = llama_model_n_embd(model);
         const int nLayers   = llama_model_n_layer(model);
         const int nCtxTrain = llama_model_n_ctx_train(model);
-        const int nHeadKv   = llama_model_n_head_kv(model);
+        // llama_model_n_head_kv() reports hparams.n_head_kv[0] - layer 0 alone. Hybrid
+        // architectures interleave conv and attention layers, and LFM3 declares
+        // lfm3.attention.head_count_kv as the per-layer array [0, 0, 4, 0, 4, ...]: its layer 0
+        // is a conv layer, so the typed accessor returns 0. GgufModelInfo.isComplete reads a 0
+        // as "untrustworthy metadata" and ContextPlanner then refuses to size anything, falling
+        // to LADDER.first() = 4096 - where the conversation-history budget measured 393 bytes
+        // and 12 of 14 tool schemas were dropped, pinned ones included, so the agent could only
+        // answer "I can't check your battery". Take the widest layer's count instead: on a
+        // uniform model that is exactly what the accessor already returned, and on a hybrid one
+        // it bills conv layers as attention, which errs towards a KV cache that is too big
+        // rather than a plan that throws the tools away.
+        int nHeadKv = llama_model_n_head_kv(model);
+        if (nHeadKv <= 0) {
+            nHeadKv = metaIntMax(model, "attention.head_count_kv", 0);
+        }
         const int nHeadCnt  = llama_model_n_head(model);
         const int slidingWindow = llama_model_n_swa(model);
 
