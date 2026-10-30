@@ -172,11 +172,11 @@ static int metaInt(const llama_model *model, const std::string &suffix, int fall
 static int headKvMax(const llama_model *model) {
     const llama_hparams & h = model->hparams;
 
-    // n_head_kv(il) GGML_ABORTs past h.n_layer_all, so clamp the walk to the smaller bound:
-    // a model declaring more layers than the accessor covers is rarer than a crash here.
+    // n_layer() is a method here, not a field: it is n_layer_all minus any trailing next-n
+    // (speculative) layers, so a draft head cannot inflate what we report - and it stays inside
+    // n_layer_all, the bound n_head_kv(il) GGML_ABORTs past.
     int best = 0;
-    const uint32_t n = std::min(h.n_layer, h.n_layer_all);
-    for (uint32_t il = 0; il < n; ++il) {
+    for (uint32_t il = 0; il < h.n_layer(); ++il) {
         best = std::max(best, (int) h.n_head_kv(il));
     }
     return best;
