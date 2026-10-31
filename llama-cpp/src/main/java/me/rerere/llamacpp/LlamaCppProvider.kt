@@ -319,7 +319,11 @@ class LlamaCppProvider(
                 Log.i("moxw-perf", "diag: tools dropped for context ${dropped.size}/${params.tools.size}: $dropped")
             }
             val trimmedMessages = ChatRequestMapper.trimToBudget(messages, runtime.inputBudgetBytes())
-            val requestJson = ChatRequestMapper.toRequestJson(trimmedMessages, keptTools)
+            val requestJson = ChatRequestMapper.toRequestJson(
+                trimmedMessages,
+                keptTools,
+                enableThinking = ContextPlanner.tunables.reasoning,
+            )
             Log.i("moxw-perf", "diag: request json built bytes=${requestJson.toByteArray(Charsets.UTF_8).size}")
             val appliedTemplateJson = runtime.applyTemplate(requestJson)
             Log.i("moxw-perf", "diag: template applied")

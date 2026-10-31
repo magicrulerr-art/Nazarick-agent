@@ -22,20 +22,35 @@ object ChatRequestMapper {
      *  already spent on tools. Sized to hold a one-paragraph identity, not a persona library.
      *  Shared with [ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES] because that is the figure the
      *  planner charges a persona against: if the two disagree, the planner reserves space this
-     *  truncation never consumes and drops tools to pay for it. */
-    private const val MIN_SYSTEM_TEXT_BYTES = ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES
+     *  truncation never consumes and drops tools to pay for it.
+     *
+     *  Was `const` until AURA-008 made that figure a per-load knob; a property rather than a
+     *  constant is what keeps the two halves of one decision from drifting apart again. */
+    private val MIN_SYSTEM_TEXT_BYTES: Int get() = ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES
 
     /** Appended to system text [trimToBudget] cut, so the model can tell a short persona from
      *  a truncated one. Same wording LiteRtProvider uses. */
     private const val TRUNCATION_MARKER = "\n…(truncated for local model context)"
 
-    fun toRequestJson(messages: List<UIMessage>, tools: List<Tool>): String {
+    fun toRequestJson(
+        messages: List<UIMessage>,
+        tools: List<Tool>,
+        enableThinking: Boolean? = null,
+    ): String {
         val root = JSONObject()
         root.put("messages", messagesArray(messages))
         // Absent rather than empty: an empty array makes some templates emit a tool
         // preamble describing no tools at all.
         if (tools.isNotEmpty()) {
             root.put("tools", toolsArray(tools))
+        }
+        // Absent unless the bench asked for something specific. Omitting it is not "let the
+        // template decide" — llama.cpp's chat inputs carry enable_thinking = true and always
+        // bind the variable, so an absent field means thinking. Setting false makes the
+        // template write an empty thinking block and go straight to the answer, which is the
+        // prefill/latency experiment [EngineTunables.reasoning] exists to run.
+        if (enableThinking != null) {
+            root.put("enable_thinking", enableThinking)
         }
         return root.toString()
     }

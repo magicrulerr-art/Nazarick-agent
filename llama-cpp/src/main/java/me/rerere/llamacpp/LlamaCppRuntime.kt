@@ -146,6 +146,12 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
     ): ContextPlan = mutex.withLock {
         unloadLocked()
 
+        // Read the knob set per load rather than once per process: the tuning loop is
+        // setprop → force-stop → rerun, and an echo line here is what makes a bench run
+        // reproducible from its own logcat. Installed before planning because every value
+        // below is read by ContextPlanner.
+        ContextPlanner.tunables = EngineTunables.fromSystemProperties()
+
         val model = native.loadModel(path, gpuLayers)
         val plan = try {
             val info = parseModelInfo(native.modelInfo(model))

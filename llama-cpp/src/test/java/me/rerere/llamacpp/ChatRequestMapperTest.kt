@@ -123,4 +123,31 @@ class ChatRequestMapperTest {
         assertFalse("pending tool call must not appear in the wire format", json.contains("tool_calls"))
         assertFalse("pending tool call must not appear as a tool result", json.contains("\"role\":\"tool\""))
     }
+
+    // enable_thinking — the AURA-008 reasoning knob ------------------------------------
+
+    @Test
+    fun `thinking is left out of the request unless the bench asks for otherwise`() {
+        // Absent is not neutral: llama.cpp binds enable_thinking to true whether the template
+        // wants it or not, so omitting the field *is* thinking. The mapper must never invent the
+        // field on its own, or a model's documented default stops meaning anything.
+        val json = JSONObject(
+            ChatRequestMapper.toRequestJson(listOf(UIMessage.user("hi")), emptyList()),
+        )
+        assertFalse("enable_thinking must be absent by default", json.has("enable_thinking"))
+    }
+
+    @Test
+    fun `a tuned reasoning value reaches the wire as a boolean`() {
+        for (value in listOf(true, false)) {
+            val json = JSONObject(
+                ChatRequestMapper.toRequestJson(
+                    listOf(UIMessage.user("hi")),
+                    emptyList(),
+                    enableThinking = value,
+                ),
+            )
+            assertEquals(value, json.getBoolean("enable_thinking"))
+        }
+    }
 }

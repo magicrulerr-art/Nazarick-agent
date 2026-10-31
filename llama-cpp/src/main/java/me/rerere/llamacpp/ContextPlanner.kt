@@ -18,11 +18,22 @@ object ContextPlanner {
     /** Rough bytes of prompt text per token. JSON tool schemas run denser than prose. */
     const val BYTES_PER_TOKEN = 4
 
+    /**
+     * The knob set in force for this process, installed per model load by
+     * `LlamaCppRuntime.loadInstance` from `debug.moxw.tune` — see [EngineTunables] for why the
+     * planner gets configured at load time instead of at build time.
+     *
+     * Volatile: the planner is a singleton called from the load thread. Tests that set it must
+     * restore [EngineTunables.DEFAULT] afterwards so a tuned case cannot leak into the next.
+     */
+    @Volatile
+    var tunables: EngineTunables = EngineTunables.DEFAULT
+
     /** Fraction of the context reserved for the response. */
-    private const val RESPONSE_RESERVE = 0.5
+    private val RESPONSE_RESERVE: Double get() = tunables.responseReserve
 
     /** Tokens kept free for conversation history growth. */
-    private const val HISTORY_HEADROOM_TOKENS = 750
+    private val HISTORY_HEADROOM_TOKENS: Int get() = tunables.historyHeadroomTokens
 
     /**
      * What a system prompt is actually charged against the input budget.
@@ -32,18 +43,21 @@ object ContextPlanner {
      * `inputBudgetBytes=0` and 16/16 tools dropped at n_ctx=8192 *and* at n_ctx=16384, which
      * produced an agent that could only reply "I can't check your battery". A persona cut to
      * a paragraph is a real cost; an agent with no tools at all is the larger one.
+     *
+     * Was `const` until AURA-008. Still public and still the single number both this planner
+     * and ChatRequestMapper's floor read, so the two cannot drift apart.
      */
-    const val SYSTEM_PROMPT_RESERVE_BYTES = 1200
+    val SYSTEM_PROMPT_RESERVE_BYTES: Int get() = tunables.systemPromptReserveBytes
 
-    private const val N_BATCH = 512
-    private const val N_UBATCH = 512
+    private val N_BATCH: Int get() = tunables.nBatch
+    private val N_UBATCH: Int get() = tunables.nUBatch
 
     /** Multiplier over the computed total, for allocator overhead. */
-    private const val HEADROOM_WITH_METADATA = 1.1
-    private const val HEADROOM_WITHOUT_METADATA = 1.2
+    private val HEADROOM_WITH_METADATA: Double get() = tunables.headroomWithMetadata
+    private val HEADROOM_WITHOUT_METADATA: Double get() = tunables.headroomWithoutMetadata
 
     /** Never plan to use more than this share of what the device has free. */
-    private const val RAM_SAFETY_FRACTION = 0.8
+    private val RAM_SAFETY_FRACTION: Double get() = tunables.ramSafetyFraction
 
     fun plan(
         info: GgufModelInfo,
@@ -70,7 +84,16 @@ object ContextPlanner {
             )
         }
 
-        val rungs = LADDER.filter { it <= info.nCtxTrain }.ifEmpty { listOf(info.nCtxTrain) }
+        // ctx_max caps the ladder; ctx_force skips it outright, because measuring prefill at one
+        // exact window is the whole reason that knob exists. Both are inert by default, so the
+        // shipped behaviour is unchanged on an untuned device. The !isComplete branch above keeps
+        // ignoring them: with untrustworthy metadata there is no KV estimate to size against.
+        val ceiling = if (tunables.ctxMax > 0) minOf(info.nCtxTrain, tunables.ctxMax) else info.nCtxTrain
+        val rungs = if (tunables.ctxForce > 0) {
+            listOf(tunables.ctxForce)
+        } else {
+            LADDER.filter { it <= ceiling }.ifEmpty { listOf(ceiling) }
+        }
 
         // Prefer a bigger context over a higher-precision cache: quantising the cache
         // costs a little quality, while a context too small to hold the tools costs the
