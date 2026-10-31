@@ -20,7 +20,7 @@ object ContextPlanner {
 
     /**
      * The knob set in force for this process, installed per model load by
-     * `LlamaCppRuntime.loadInstance` from `debug.moxw.tune` — see [EngineTunables] for why the
+     * [LlamaCppRuntime.load] from `debug.moxw.tune` — see [EngineTunables] for why the
      * planner gets configured at load time instead of at build time.
      *
      * Volatile: the planner is a singleton called from the load thread. Tests that set it must
