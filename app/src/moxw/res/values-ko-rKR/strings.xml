@@ -4,7 +4,7 @@
      main resources stay 100% untouched so the `pure` flavor is unaffected.
      Keep in sync when the base wording changes. -->
 <resources>
-  <string name="setting_page_share_text">Moxw Agent - 오픈소스 Android AI 어시스턴트\n\n프로젝트: https://github.com/wuyhong715/rikkahub-agent-pure</string>
+  <string name="setting_page_share_text">Moxw Agent - 오픈소스 Android AI 어시스턴트\n\n프로젝트: https://github.com/magicrulerr-art/Nazarick-agent</string>
   <string name="setting_page_web_server_desc">웹을 통해 Moxw에 접근할 수 있도록 허용</string>
   <string name="accessibility_service_summary">LLM이 화면 자동화 도구를 사용할 때 Moxw가 탭, 스와이프, 스크롤, 화면 내용 읽기, 스크린샷 촬영을 할 수 있도록 합니다.</string>
   <string name="assistant_page_local_tools_workflows_hint_message">워크플로가 활성화되었습니다. 일부 트리거 유형은 토글이 요청할 수 없는 권한이 필요합니다:\n\n• 지오펜스(어딘가에 도착): 설정 → 앱 → Moxw → 권한 → 위치 → 항상 허용.\n• 알림 도착: 설정 → 앱 → 특수 액세스 → 알림 액세스 → Moxw 활성화.\n• 앱 실행/종료: 설정 → 접근성 → Moxw 활성화.\n• Bluetooth 연결/해제: 시스템이 물어볼 때 BLUETOOTH_CONNECT 부여.\n\n일정, WiFi, 헤드폰, 전원, 화면 켜짐/꺼짐, 배터리 트리거는 바로 작동합니다. 추가 설정이 필요한 워크플로를 작성하는 순간 어시스턴트가 알려줍니다.</string>

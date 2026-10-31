@@ -4,7 +4,7 @@
      main resources stay 100% untouched so the `pure` flavor is unaffected.
      Keep in sync when the base wording changes. -->
 <resources>
-  <string name="setting_page_share_text">Moxw Agent - 開源安卓AI助手\n\n專案位址: https://github.com/wuyhong715/rikkahub-agent-pure</string>
+  <string name="setting_page_share_text">Moxw Agent - 開源安卓AI助手\n\n專案位址: https://github.com/magicrulerr-art/Nazarick-agent</string>
   <string name="setting_page_web_server_desc">允許您透過網頁存取 Moxw</string>
   <string name="accessibility_service_summary">當大型語言模型使用螢幕自動化工具時，允許 Moxw 點選、滑動、捲動、讀取螢幕內容和截圖。</string>
   <string name="assistant_page_local_tools_workflows_hint_message">工作流程已啟用。某些觸發器類型需要開關無法請求的權限：\n\n• 地理圍欄（你到達某地）：設定 → 應用程式 → Moxw → 權限 → 位置 → 一律允許。\n• 通知到達：設定 → 應用程式 → 特殊存取權限 → 通知存取權 → 啟用 Moxw。\n• 應用程式啟動/關閉：設定 → 無障礙 → 啟用 Moxw。\n• 藍牙連接/中斷：在系統詢問時授予 BLUETOOTH_CONNECT。\n\n排程、WiFi、耳機、電源、螢幕開/關和電池觸發器開箱即用。當你建立需要額外設定的工作流程時，助理會即時提示。</string>

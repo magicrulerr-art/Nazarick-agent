@@ -74,6 +74,7 @@ This is not a downstream branch holding its breath for a pull request. There is 
 | **Donor** | `master`, frozen at upstream `2.5.5-pure.3`. We **port** from it deliberately; 136 non-merge commits on that side have never been taken, and that is a choice, not an accident. A quarry, not a parent. |
 | **Version line** | `v0.01` and up, ours. The inherited `v2.5.x-pure.N` tags were swept from this repository — the history they name belongs to the donor. |
 | **Engine** | our own llama.cpp fork, pinned by SHA: the one dependency we have to repair rather than update. |
+| **In-app links** | The share text in seven locales, and the thirteen featured-skill `source_url`s the installer fetches from, used to name the donor repository — the skills literally installed off its `master`. They name this one now, off `main`. |
 
 The trade, stated plainly rather than glossed: upstream fixes no longer arrive for free — each one is a deliberate port, and any UI polish we skip stays skipped. What that buys is the freedom to break the world where we please. The context planner, the GPU lane, and the version line now answer to nothing except the device in hand.
 
