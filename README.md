@@ -64,6 +64,21 @@ Four hands, four different questions:
 
 ---
 
+## Standing alone
+
+This is not a downstream branch holding its breath for a pull request. There is **no `upstream` remote** — nothing to fetch, nothing to merge forward, nobody's release schedule but ours.
+
+| | |
+|---|---|
+| **Trunk** | `main` — the shipping line, and the branch `v0.01` was tagged from. |
+| **Donor** | `master`, frozen at upstream `2.5.5-pure.3`. We **port** from it deliberately; 136 non-merge commits on that side have never been taken, and that is a choice, not an accident. A quarry, not a parent. |
+| **Version line** | `v0.01` and up, ours. The inherited `v2.5.x-pure.N` tags were swept from this repository — the history they name belongs to the donor. |
+| **Engine** | our own llama.cpp fork, pinned by SHA: the one dependency we have to repair rather than update. |
+
+The trade, stated plainly rather than glossed: upstream fixes no longer arrive for free — each one is a deliberate port, and any UI polish we skip stays skipped. What that buys is the freedom to break the world where we please. The context planner, the GPU lane, and the version line now answer to nothing except the device in hand.
+
+---
+
 ## The Labours
 
 Eleven things had to happen between "a nice chat client" and "an agent that survives its own phone". Each is listed with the reason it exists — none of them were roadmap items, all of them were *extracted* from a failure. Ticket IDs (`AURA-nnn`) are the floor records; commit hashes are in this repo.

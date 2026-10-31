@@ -68,10 +68,10 @@ android {
             buildConfigField("String", "VERSION_NAME", "\"0.7.0\"")
             buildConfigField("String", "VERSION_CODE", "\"9\"")
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
-            // Moxw ships from its own branch; this repo's /releases/latest still points at
-            // the Pure line (vX.Y.Z-pure.N). Without this guard a Moxw build fetches that
-            // Pure release, compares it against versionName 0.2.0, and wrongly offers a
-            // Pure APK as an update.
+            // Update checks stay off, for a newer reason than the one originally written
+            // here: /releases/latest is now *our* line (v0.01+), but this flavour carries
+            // its own versionName (0.7.0), so the two numbering systems still disagree --
+            // a check would read v0.01 as a downgrade and offer to walk the build backwards.
             buildConfigField("boolean", "UPDATE_CHECK_ENABLED", "false")
         }
     }
