@@ -2346,6 +2346,12 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="setting_sub_agents_profile_burst">高并发</string>
   <string name="setting_sub_agents_profile_unleashed">全派发</string>
   <string name="setting_sub_agents_page_title">子智能体配置</string>
+  <string name="guardians_pack_title">九位楼层守护者 — 精简人格</string>
+  <string name="guardians_pack_subtitle">九位楼层守护者的精简人格，各管一摊：迪米乌哥斯统辖全局，雅儿贝德负责研究与合规，夏提雅负责外部事务与自动化，科塞特斯掌管安全与更新，塞巴斯打理内务与维护，维克提姆负责说服与社交，马雷制作媒体内容，亚乌菈写代码，潘多拉·亚克特扮演与主持。每位都会作为独立的子智能体配置安装，并拥有各自的记忆。</string>
+  <string name="guardians_pack_install">安装九位</string>
+  <string name="guardians_pack_overwrite">重新安装</string>
+  <string name="guardians_pack_result">已安装 %1$d · 已更新 %2$d · 保留 %3$d</string>
+  <string name="guardians_pack_failed">安装包被拒绝：%1$s</string>
   <string name="setting_sub_agents_page_empty">暂无子智能体配置</string>
   <string name="setting_sub_agents_page_empty_hint">添加一个配置，以便助手可以按名称向其派发子智能体。</string>
   <string name="setting_sub_agents_page_add">添加配置</string>

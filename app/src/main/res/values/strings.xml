@@ -2506,6 +2506,12 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="setting_sub_agents_profile_burst">Burst</string>
   <string name="setting_sub_agents_profile_unleashed">All-out</string>
   <string name="setting_sub_agents_page_title">Sub-agent profiles</string>
+  <string name="guardians_pack_title">The Nine — floor guardians</string>
+  <string name="guardians_pack_subtitle">Nine minified personalities, one per duty: Demiurge oversees, Albedo researches and audits, Shalltear runs the outside, Cocytus guards security and updates, Sebas keeps the house, Victim persuades, Mare makes media, Aura writes code, Pandora\'s Actor runs the game. Each installs as a sub-agent profile with its own memory.</string>
+  <string name="guardians_pack_install">Install the Nine</string>
+  <string name="guardians_pack_overwrite">Re-install</string>
+  <string name="guardians_pack_result">%1$d installed · %2$d updated · %3$d left alone</string>
+  <string name="guardians_pack_failed">Pack refused: %1$s</string>
   <string name="setting_sub_agents_page_empty">No sub-agent profiles yet</string>
   <string name="setting_sub_agents_page_empty_hint">Add one so the assistant can dispatch a sub-agent to it by name.</string>
   <string name="setting_sub_agents_page_add">Add profile</string>

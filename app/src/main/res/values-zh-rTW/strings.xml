@@ -2146,6 +2146,12 @@
   <string name="setting_page_sub_agents">子代理設定檔</string>
   <string name="setting_page_sub_agents_desc">具名的模型 + 系統提示詞預設，subagent_dispatch 可依名稱派發到這些預設。</string>
   <string name="setting_sub_agents_page_title">子代理設定檔</string>
+  <string name="guardians_pack_title">九位樓層守護者 — 精簡人格</string>
+  <string name="guardians_pack_subtitle">九位樓層守護者的精簡人格，各管一攤：迪米烏哥斯統轄全域，雅兒貝德負責研究與合規，夏提雅負責對外事務與自動化，科塞特斯掌管安全與更新，塞巴斯打理內務與維護，維克提姆負責說服與社交，馬雷製作媒體內容，亞烏菈寫程式，潘朵拉·亞克特扮演與主持。每位都會以獨立的子代理設定檔安裝，並擁有各自的記憶。</string>
+  <string name="guardians_pack_install">安裝九位</string>
+  <string name="guardians_pack_overwrite">重新安裝</string>
+  <string name="guardians_pack_result">已安裝 %1$d · 已更新 %2$d · 保留 %3$d</string>
+  <string name="guardians_pack_failed">安裝包被拒絕：%1$s</string>
   <string name="setting_sub_agents_page_empty">尚無子代理設定檔</string>
   <string name="setting_sub_agents_page_empty_hint">新增一個設定檔，以便助理可以依名稱向其派發子代理。</string>
   <string name="setting_sub_agents_page_add">新增設定檔</string>
