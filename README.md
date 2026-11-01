@@ -190,7 +190,7 @@ adb logcat -s moxw-tune:I moxw-perf:I moxw-engine:I
 ### Install
 Grab the APK from **[Releases](https://github.com/magicrulerr-art/Nazarick-agent/releases/latest)** and `adb install -r -d` it (or tap it). Package is **`com.nazarick.agent`**, so it installs **beside** an upstream RikkaHub rather than fighting it — and beside the older `com.moxw.agent` build too, because a package rename is a *different app* to Android: nothing migrates, and every release since is signed by our own key (see [Standing alone](#standing-alone)).
 
-The CI artifact is named `…-release-unsigned.apk` and does install (Gradle falls back to the debug keystore). For a stable upgrade path, put a real keystore in `local.properties` — `storeFile`, `storePassword`, `keyAlias`, `keyPassword` — which `app/build.gradle.kts` already reads.
+The workflow **signs the release itself**: it decodes `NAZARICK_KEYSTORE_B64` into `$RUNNER_TEMP`, and the artifact out of CI is the shipping APK — `app-moxw-arm64-v8a-release.apk`, no `-unsigned` suffix, verified in the job log by `apksigner verify --print-certs`. Building locally, drop the same four keys (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) in `local.properties`, or export the four `NAZARICK_*` variables; either way `app/build.gradle.kts` picks them up. With neither, the release still builds unsigned on purpose — a fork with no secrets should not go red.
 
 ### Build from source
 **JDK 17**, the Android SDK, and **bun** + **pnpm** on `PATH` (they build the in-app web UI). Clone recursively: the llama.cpp submodule points at **our fork** (labour **vii**), and building against upstream will silently lose the peg-parser fix.
