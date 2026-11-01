@@ -21,17 +21,37 @@ plugins {
 // runs the full report locally.
 val skipLintVital = providers.gradleProperty("skipLintVital").isPresent
 
-// The release keystore must never be a hard requirement to *build* — CI has no
-// local.properties, and published APKs are re-signed on the VPS. Only attach
-// the signing config when the material is actually present, otherwise
-// `validateSigning<Flavor>Release` fails on the CI runner.
-val hasReleaseSigning: Boolean = rootProject.file("local.properties").let { f ->
-    if (!f.exists()) false
-    else Properties().apply { FileInputStream(f).use { load(it) } }.let { p ->
-        listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
-            .all { !p.getProperty(it).isNullOrBlank() }
-    }
+// Release signing material, resolved from two sources in precedence order:
+//
+//   1. Environment (CI)  -- NAZARICK_KEYSTORE / NAZARICK_STORE_PASSWORD /
+//                            NAZARICK_KEY_ALIAS / NAZARICK_KEY_PASSWORD. The workflow
+//                            decodes the base64 Actions secret into $RUNNER_TEMP and
+//                            exports the rest, so nothing secret lives in the tree.
+//   2. local.properties  -- storeFile / storePassword / keyAlias / keyPassword, the
+//                            original scheme, for a developer machine.
+//
+// Signing is still never a hard requirement to *build*: with none of the above present
+// the release variant comes out unsigned and `validateSigning<Flavor>Release` stays
+// quiet, which is what a feature branch (or a fork without secrets) wants. When it IS
+// present the artifact is `app-<flavor>-release.apk` -- signed here, by us, with no
+// second pass on a VPS afterwards.
+val localPropertiesForSigning = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
 }
+
+fun signingValue(envName: String, propertyName: String): String? =
+    System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: localPropertiesForSigning.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+
+val releaseSigning: Map<String, String?> = listOf(
+    "storeFile" to "NAZARICK_KEYSTORE",
+    "storePassword" to "NAZARICK_STORE_PASSWORD",
+    "keyAlias" to "NAZARICK_KEY_ALIAS",
+    "keyPassword" to "NAZARICK_KEY_PASSWORD",
+).associate { (propertyName, envName) -> propertyName to signingValue(envName, propertyName) }
+
+val hasReleaseSigning: Boolean = releaseSigning.values.all { it != null }
 
 android {
     namespace = "me.rerere.rikkahub"
@@ -55,11 +75,21 @@ android {
     //
     //  · moxw — Moxw Agent. A standalone brand, with its own applicationId and an
     //    independent version line (0.x), see cold-memory M21.
+    //
+    // The installation identity is `com.nazarick.agent` as of 2026-10-31: this project is
+    // no longer a downstream of anything, so the package follows the project rather than
+    // the old product brand. Two consequences, both accepted knowingly: an existing
+    // `com.moxw.agent` install does NOT upgrade onto this — Android reads a package name
+    // change as a different app, so the old one stays on the device until it is removed —
+    // and the flavour is still *named* `moxw`, because renaming that would move source
+    // sets, the CI matrix and every artifact name, which is a ticket of its own.
+    // The Kotlin namespace stays `me.rerere.rikkahub` for the same reason: thousands of
+    // files, plus exported intent actions that external automation addresses by name.
     flavorDimensions += "brand"
     productFlavors {
         create("moxw") {
             dimension = "brand"
-            applicationId = "com.moxw.agent"
+            applicationId = "com.nazarick.agent"
             versionCode = 9
             versionName = "0.7.0"
             resValue("string", "app_name", "Moxw Agent")
@@ -90,36 +120,18 @@ android {
 
     signingConfigs {
         create("release") {
-            val localProperties = Properties()
-            val localPropertiesFile = rootProject.file("local.properties")
-
-            if (localPropertiesFile.exists()) {
-                localProperties.load(FileInputStream(localPropertiesFile))
-
-                val storeFilePath = localProperties.getProperty("storeFile")
-                val storePasswordValue = localProperties.getProperty("storePassword")
-                val keyAliasValue = localProperties.getProperty("keyAlias")
-                val keyPasswordValue = localProperties.getProperty("keyPassword")
-
-                if (storeFilePath != null && storePasswordValue != null &&
-                    keyAliasValue != null && keyPasswordValue != null
-                ) {
-                    storeFile = file(storeFilePath)
-                    storePassword = storePasswordValue
-                    keyAlias = keyAliasValue
-                    keyPassword = keyPasswordValue
-                } else {
-                    val missing = buildList {
-                        if (storeFilePath == null) add("storeFile")
-                        if (storePasswordValue == null) add("storePassword")
-                        if (keyAliasValue == null) add("keyAlias")
-                        if (keyPasswordValue == null) add("keyPassword")
-                    }
-                    logger.warn("Signing config: local.properties is missing $missing, release build will be unsigned")
-                }
-            } else {
-                logger.warn("Signing config: local.properties not found, release build will be unsigned")
-            }
+            // Only consulted when hasReleaseSigning is true, so the !! below is a
+            // statement about that check, not a hope.
+            val storePath = releaseSigning.getValue("storeFile")!!
+            storeFile = file(storePath)
+            storePassword = releaseSigning.getValue("storePassword")
+            keyAlias = releaseSigning.getValue("keyAlias")
+            keyPassword = releaseSigning.getValue("keyPassword")
+            // AGP's default store type is JKS. Feeding it a PKCS12 container under that
+            // name fails with the deeply misleading "Keystore was tampered with, or
+            // password was incorrect". Derive the type from the file it was handed.
+            storeType = if (storePath.endsWith(".jks")) "JKS" else "PKCS12"
+            logger.lifecycle("Signing release build with key '$keyAlias' from $storePath")
         }
     }
 

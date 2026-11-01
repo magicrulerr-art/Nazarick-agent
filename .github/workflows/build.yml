@@ -187,14 +187,46 @@ jobs:
             bun install
           fi
 
+      # Release signing. The keystore is a base64 Actions secret rather than a file in
+      # the tree, so nothing secret gets committed and a fork with no secrets still
+      # builds (unsigned, by design -- hence the early exit instead of a failure).
+      # Decoding it here and exporting NAZARICK_* is all app/build.gradle.kts needs to
+      # sign the release variant itself.
+      - name: Provision release keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.NAZARICK_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.NAZARICK_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NAZARICK_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${STORE_PASSWORD:-}" ]; then
+            echo "::notice::No keystore secret configured - release variant ships unsigned"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_B64}" | base64 -d > "$RUNNER_TEMP/nazarick-release.p12"
+          echo "keystore: $(wc -c < "$RUNNER_TEMP/nazarick-release.p12") bytes, sha256 $(sha256sum "$RUNNER_TEMP/nazarick-release.p12" | cut -d' ' -f1 | cut -c1-16)"
+          {
+            echo "NAZARICK_KEYSTORE=$RUNNER_TEMP/nazarick-release.p12"
+            echo "NAZARICK_STORE_PASSWORD=${STORE_PASSWORD}"
+            echo "NAZARICK_KEY_PASSWORD=${KEY_PASSWORD}"
+            echo "NAZARICK_KEY_ALIAS=nazarick"
+          } >> "$GITHUB_ENV"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
       # Single Gradle invocation: one daemon, one configuration phase. Build the
       # shipping variant of the matrix flavor (R8 + optimized resource shrinking,
       # keep rules in src/main/keepRules) and run the JVM unit tests against that
       # same variant. The old debug build is gone on purpose: it compiled every
       # library subproject a second time and rebuilt the llama.cpp native libs a
-      # second time, for an artifact nothing shipped. The published APK is
-      # `app-<flavor>-release-unsigned.apk`, re-signed on the VPS with p2.keystore
-      # (dl2.sh apk-moxw).
+      # second time, for an artifact nothing shipped.
+      #
+      # The published APK used to be `app-<flavor>-release-unsigned.apk`, finished off
+      # by a re-sign on the VPS (dl2.sh apk-moxw, p2.keystore). Since 2026-10-31 the
+      # workflow signs with our own key (step above), so the artifact IS the release.
+      # If anyone still runs that VPS pass it will REPLACE our seal with p2's, and
+      # upgrades then require p2's key forever -- stop running it, or do it on purpose.
       #
       # :ai:testDebugUnitTest is listed explicitly: the app's own unit-test task
       # does not run the library modules' tests, so the provider request-shape
@@ -238,6 +270,24 @@ jobs:
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
+
+      # An artifact nobody can identify is a rumour. Print the signing certificate into
+      # the run log so every release carries its own proof: the SHA-256 below must equal
+      # the fingerprint recorded when the key was minted (AURA-010, e8bda377...). On a
+      # fork with no secrets the step is skipped rather than failed, matching the
+      # unsigned-but-green promise of the provisioning step.
+      - name: Verify release signature
+        if: steps.keystore.outputs.present == 'true'
+        run: |
+          set -eu
+          APK="$(ls app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk | head -n 1)"
+          echo "artifact: $APK"
+          AS="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner 2>/dev/null | sort | tail -n 1)"
+          if [ -z "$AS" ]; then
+            echo "::warning::apksigner not found under \$ANDROID_HOME/build-tools"
+            exit 0
+          fi
+          "$AS" verify --print-certs "$APK"
 
       - name: Show ccache stats
         if: always()

@@ -47,7 +47,7 @@ rikkahub/rikkahub                     the original native Android LLM chat clien
         └─ wuyhong715/rikkahub-agent-pure    the "Pure" hardening pass: long runs made survivable,
              │                             metered and capped (standalone since 2026-10-07)
              └─ magicrulerr-art/Nazarick-agent   ★ THIS REPO — renamed 2026-10-25 (AURA-003)
-                  └─ flavour `moxw`    the only shipping product: applicationId com.moxw.agent,
+                  └─ flavour `moxw`    the only shipping product: applicationId com.nazarick.agent,
                                        its own icon, strings, version line, and local engine
 ```
 
@@ -74,7 +74,7 @@ This is not a downstream branch holding its breath for a pull request. There is 
 | **Donor** | `master`, frozen at upstream `2.5.5-pure.3`. We **port** from it deliberately; 136 non-merge commits on that side have never been taken, and that is a choice, not an accident. A quarry, not a parent. |
 | **Version line** | `v0.01` and up, ours. The inherited `v2.5.x-pure.N` tags were swept from this repository — the history they name belongs to the donor. |
 | **Engine** | our own llama.cpp fork, pinned by SHA: the one dependency we have to repair rather than update. |
-| **In-app links** | The share text in seven locales, and the thirteen featured-skill `source_url`s the installer fetches from, used to name the donor repository — the skills literally installed off its `master`. They name this one now, off `main`. |
+| **Seal** | Signed by our own release key since 2026-10-31 — RSA-4096, certificate SHA-256 `e8bda377…028f8fa8`, valid to 2054. The workflow signs during the build, so the artifact in Releases *is* the release; nothing re-signs it afterwards. |
 
 The trade, stated plainly rather than glossed: upstream fixes no longer arrive for free — each one is a deliberate port, and any UI polish we skip stays skipped. What that buys is the freedom to break the world where we please. The context planner, the GPU lane, and the version line now answer to nothing except the device in hand.
 
@@ -88,7 +88,7 @@ Eleven things had to happen between "a nice chat client" and "an agent that surv
 `c928ecd0` split shipping into `pure`/`moxw` flavours · `b3b28294` made the product name flavour-scoped · `fe20eaf2` gave Moxw a launcher icon · `a66e31db` seeded bundled skills under the brand · `e17ff3b8` collapsed it to **one product, one flavour** · `36c35ae7` disabled the upstream update check.
 
 **Why:** the two lines were one product wearing two names. Worse, Moxw builds were fetching the *Pure* line's `/releases/latest` and offering a stranger's APK as an update. A device you carry should not greet you with somebody else's icon.
-**Proof:** `applicationId com.moxw.agent`, `BRAND_ID moxw`, `UPDATE_CHECK_ENABLED=false` in `app/build.gradle.kts:62-75`.
+**Proof:** `applicationId com.nazarick.agent`, `BRAND_ID moxw`, `UPDATE_CHECK_ENABLED=false` in `app/build.gradle.kts:92-105`.
 
 ### ii · A local engine that earns the word "local"
 `de1a4bcc` on-device text embeddings on llama.cpp with EmbeddingGemma 2 · `fb4bd6f2` makes the embedding model a *declared prerequisite the app states out loud* · `2468a5a9` adds a multimodal rung with the LiteRT engine behind it.
@@ -168,7 +168,7 @@ Everything the engine decides about *size* can be overridden at runtime. No rebu
 
 ```bat
 adb shell setprop debug.moxw.tune "ctx_force=8192;response_reserve=0.25;reasoning=false"
-adb shell am force-stop com.moxw.agent
+adb shell am force-stop com.nazarick.agent
 adb logcat -s moxw-tune:I moxw-perf:I moxw-engine:I
 ```
 
@@ -188,7 +188,7 @@ adb logcat -s moxw-tune:I moxw-perf:I moxw-engine:I
 ## Raise it
 
 ### Install
-Grab the APK from **[Releases](https://github.com/magicrulerr-art/Nazarick-agent/releases/latest)** and `adb install -r -d` it (or tap it). Package is **`com.moxw.agent`**, so it installs **beside** an upstream RikkaHub rather than fighting it.
+Grab the APK from **[Releases](https://github.com/magicrulerr-art/Nazarick-agent/releases/latest)** and `adb install -r -d` it (or tap it). Package is **`com.nazarick.agent`**, so it installs **beside** an upstream RikkaHub rather than fighting it — and beside the older `com.moxw.agent` build too, because a package rename is a *different app* to Android: nothing migrates, and every release since is signed by our own key (see [Standing alone](#standing-alone)).
 
 The CI artifact is named `…-release-unsigned.apk` and does install (Gradle falls back to the debug keystore). For a stable upgrade path, put a real keystore in `local.properties` — `storeFile`, `storePassword`, `keyAlias`, `keyPassword` — which `app/build.gradle.kts` already reads.
 

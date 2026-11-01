@@ -9,7 +9,7 @@ class AppEnvironmentPromptTest {
 
     private fun baseInfo() = AppEnvironmentPrompt.Info(
         appName = "Moxw",
-        privateFilesDir = "/data/user/0/com.moxw.agent/files",
+        privateFilesDir = "/data/user/0/com.nazarick.agent/files",
     )
 
     @Test
@@ -20,7 +20,7 @@ class AppEnvironmentPromptTest {
         assertTrue(out.contains("/sdcard/Documents/Moxw/"))
         assertTrue(out.contains("/sdcard/Pictures/Moxw/"))
         assertTrue(out.contains("/sdcard/Download/Moxw/"))
-        assertTrue(out.contains("App-private storage: /data/user/0/com.moxw.agent/files"))
+        assertTrue(out.contains("App-private storage: /data/user/0/com.nazarick.agent/files"))
         assertTrue(out.contains("Semantic search: NOT ready"))
         assertTrue(out.contains("Shell privilege: Shizuku is not running"))
     }
