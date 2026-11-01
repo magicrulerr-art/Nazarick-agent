@@ -4,3 +4,6 @@
 [submodule "llama-cpp/native/llama.cpp"]
 	path = llama-cpp/native/llama.cpp
 	url = https://github.com/magicrulerr-art/llama.cpp
+[submodule "sd-cpp/native/sd.cpp"]
+	path = sd-cpp/native/sd.cpp
+	url = https://github.com/leejet/stable-diffusion.cpp
