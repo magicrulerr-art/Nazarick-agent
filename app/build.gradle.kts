@@ -131,6 +131,13 @@ android {
             // name fails with the deeply misleading "Keystore was tampered with, or
             // password was incorrect". Derive the type from the file it was handed.
             storeType = if (storePath.endsWith(".jks")) "JKS" else "PKCS12"
+            // AGP enables v3 only when minSdk >= 28; ours is 26, so the default build
+            // ships v2-only (measured on-device as apkSigningVersion=2). v3 is what lets
+            // Android 9+ accept a ROTATED signing key without every install being
+            // uninstalled — free to turn on now, expensive to retrofit once the app is
+            // on phones. v4 (incremental install) stays off: it needs the matching
+            // `.apk.id.sig` shipped alongside, and nothing here installs incrementally.
+            enableV3Signing = true
             logger.lifecycle("Signing release build with key '$keyAlias' from $storePath")
         }
     }

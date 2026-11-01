@@ -273,9 +273,10 @@ jobs:
 
       # An artifact nobody can identify is a rumour. Print the signing certificate into
       # the run log so every release carries its own proof: the SHA-256 below must equal
-      # the fingerprint recorded when the key was minted (AURA-010, e8bda377...). On a
-      # fork with no secrets the step is skipped rather than failed, matching the
-      # unsigned-but-green promise of the provisioning step.
+      # the minted key's certificate digest (AURA-010, a26fbb04a3717785...aebda7d --
+      # `python tools/mob/keystore_check.py` prints it from the .p12). On a fork with no
+      # secrets the step is skipped rather than failed, matching the unsigned-but-green
+      # promise of the provisioning step.
       - name: Verify release signature
         if: steps.keystore.outputs.present == 'true'
         run: |
