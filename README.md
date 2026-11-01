@@ -10,7 +10,7 @@
 
 <p>
   <a href="https://github.com/magicrulerr-art/Nazarick-agent/actions/workflows/build.yml"><img src="https://github.com/magicrulerr-art/Nazarick-agent/actions/workflows/build.yml/badge.svg" alt="Build" /></a>
-  <img src="https://img.shields.io/badge/release-v0.01-8B0000?style=flat-square" alt="v0.01" />
+  <img src="https://img.shields.io/badge/release-v0.02-8B0000?style=flat-square" alt="v0.02" />
   <img src="https://img.shields.io/badge/platform-Android%208%2B-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android 8+" />
   <img src="https://img.shields.io/badge/engine-llama.cpp%20fork%2033ebcff-00B0F0?style=flat-square" alt="llama.cpp" />
   <img src="https://img.shields.io/badge/GPU-OpenCL%20on%20Adreno-FF6F00?style=flat-square" alt="OpenCL" />
@@ -70,7 +70,7 @@ This is not a downstream branch holding its breath for a pull request. There is 
 
 | | |
 |---|---|
-| **Trunk** | `main` — the shipping line, and the branch `v0.01` was tagged from. |
+| **Trunk** | `main` — the shipping line. `v0.02` is tagged at a commit on it; `v0.01` was cut from the branch that later became it. |
 | **Donor** | `master`, frozen at upstream `2.5.5-pure.3`. We **port** from it deliberately; 136 non-merge commits on that side have never been taken, and that is a choice, not an accident. A quarry, not a parent. |
 | **Version line** | `v0.01` and up, ours. The inherited `v2.5.x-pure.N` tags were swept from this repository — the history they name belongs to the donor. |
 | **Engine** | our own llama.cpp fork, pinned by SHA: the one dependency we have to repair rather than update. |
@@ -190,7 +190,7 @@ adb logcat -s moxw-tune:I moxw-perf:I moxw-engine:I
 ### Install
 Grab the APK from **[Releases](https://github.com/magicrulerr-art/Nazarick-agent/releases/latest)** and `adb install -r -d` it (or tap it). Package is **`com.nazarick.agent`**, so it installs **beside** an upstream RikkaHub rather than fighting it — and beside the older `com.moxw.agent` build too, because a package rename is a *different app* to Android: nothing migrates, and every release since is signed by our own key (see [Standing alone](#standing-alone)).
 
-The workflow **signs the release itself**: it decodes `NAZARICK_KEYSTORE_B64` into `$RUNNER_TEMP`, and the artifact out of CI is the shipping APK — `app-moxw-arm64-v8a-release.apk`, no `-unsigned` suffix, verified in the job log by `apksigner verify --print-certs`. Building locally, drop the same four keys (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) in `local.properties`, or export the four `NAZARICK_*` variables; either way `app/build.gradle.kts` picks them up. With neither, the release still builds unsigned on purpose — a fork with no secrets should not go red.
+The workflow **signs the release itself**: it decodes `NAZARICK_KEYSTORE_B64` into `$RUNNER_TEMP`, and the artifact out of CI is the shipping APK — `app-moxw-arm64-v8a-release.apk`, no `-unsigned` suffix, verified in the job log by `apksigner verify --print-certs`. Releases publish that file as `Nazarick-agent-<tag>-<abi>.apk` plus `SHA256SUMS.txt`; the seal is v3 only, because AGP stops emitting a v2 signature above `minSdk` 24. Building locally, drop the same four keys (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) in `local.properties`, or export the four `NAZARICK_*` variables; either way `app/build.gradle.kts` picks them up. With neither, the release still builds unsigned on purpose — a fork with no secrets should not go red.
 
 ### Build from source
 **JDK 17**, the Android SDK, and **bun** + **pnpm** on `PATH` (they build the in-app web UI). Clone recursively: the llama.cpp submodule points at **our fork** (labour **vii**), and building against upstream will silently lose the peg-parser fix.
@@ -207,7 +207,7 @@ cd Nazarick-agent
 
 | | |
 |---|---|
-| **Release** | **v0.01** — the Nazarick line starts here |
+| **Release** | **v0.02** — signed in CI and published from `main`, with `SHA256SUMS.txt` beside the APKs. **v0.01** opened the line. |
 | **Flavour version** | `0.7.0` (versionCode 9) — the Moxw *product's* own lineage continues underneath; the GitHub release line is what resets |
 | **Requirements** | Android 8.0+ (API 26), arm64-v8a or x86_64 |
 | **Stack** | Kotlin · Jetpack Compose · Room · llama.cpp (forked, pinned) · OpenCL/Vulkan |
