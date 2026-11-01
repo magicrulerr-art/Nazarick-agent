@@ -28,7 +28,12 @@ set(SD_OPENCL OFF CACHE BOOL "" FORCE)
 set(SD_SYCL OFF CACHE BOOL "" FORCE)
 set(SD_MUSA OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(native/sd.cpp)
+# Three levels up from src/main/cpp/, i.e. the module root -- same shape :llama-cpp uses.
+# Spelling it "native/sd.cpp" resolves against this file's directory and CI says, quite
+# correctly, that no such directory exists.
+set(SD_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../native/sd.cpp)
+
+add_subdirectory(${SD_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/sd.cpp)
 
 add_library(sdcpp_jni SHARED
         sdcpp_jni.cpp
