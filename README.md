@@ -207,8 +207,8 @@ cd Nazarick-agent
 
 | | |
 |---|---|
-| **Release** | **v0.02** — signed in CI and published from `main`, with `SHA256SUMS.txt` beside the APKs. **v0.01** opened the line. |
-| **Flavour version** | `0.7.0` (versionCode 9) — the Moxw *product's* own lineage continues underneath; the GitHub release line is what resets |
+| **Release** | **v0.03** — signed in CI and published from `main`, with `SHA256SUMS.txt` beside the APKs. **v0.02** and **v0.01** opened the line. |
+| **Flavour version** | `0.0.3` (versionCode 10) — aligned with the tag as of v0.03; before that the flavour carried the donor's `0.7.x`, so an APK labelled 0.7.0 shipped out of a release called v0.02 |
 | **Requirements** | Android 8.0+ (API 26), arm64-v8a or x86_64 |
 | **Stack** | Kotlin · Jetpack Compose · Room · llama.cpp (forked, pinned) · OpenCL/Vulkan |
 | **Entry point** | `me.rerere.rikkahub.RouteActivity` (not `MainActivity` — a detail that has cost real hours) |

@@ -90,18 +90,18 @@ android {
         create("moxw") {
             dimension = "brand"
             applicationId = "com.nazarick.agent"
-            versionCode = 9
-            versionName = "0.7.0"
+            versionCode = 10
+            versionName = "0.0.3"
             resValue("string", "app_name", "Moxw Agent")
             buildConfigField("String", "BRAND_NAME", "\"Moxw\"")
             buildConfigField("String", "BRAND_ID", "\"moxw\"")
-            buildConfigField("String", "VERSION_NAME", "\"0.7.0\"")
-            buildConfigField("String", "VERSION_CODE", "\"9\"")
+            buildConfigField("String", "VERSION_NAME", "\"0.0.3\"")
+            buildConfigField("String", "VERSION_CODE", "\"10\"")
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
-            // Update checks stay off, for a newer reason than the one originally written
-            // here: /releases/latest is now *our* line (v0.01+), but this flavour carries
-            // its own versionName (0.7.0), so the two numbering systems still disagree --
-            // a check would read v0.01 as a downgrade and offer to walk the build backwards.
+            // The version line now matches the tags (v0.03 == 0.0.3), which it did not: this
+            // flavour used to carry the donor's 0.7.x, so an APK labelled 0.7.0 shipped out of a
+            // release called v0.02. Update checks stay off regardless — comparing a "v0.03" tag
+            // against a "0.0.3" name needs a stated rule, and that is a ticket of its own.
             buildConfigField("boolean", "UPDATE_CHECK_ENABLED", "false")
         }
     }
