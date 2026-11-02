@@ -70,6 +70,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -78,6 +79,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -155,6 +157,15 @@ fun SettingSubAgentsPage(
     val scope = rememberCoroutineScope()
     var expanded by rememberSaveable { mutableStateOf(true) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    // AURA-012b — the Nine face their rows. Portraits are declared by the bundled pack and looked
+    // up by slug, which keeps a column off AgentDefinition: that table lives in its own .db file
+    // precisely so Room's identity hash stops moving, and art is not worth a migration.
+    val portraitContext = LocalContext.current
+    var guardianPortraits by remember { mutableStateOf(emptyMap<String, String>()) }
+    LaunchedEffect(portraitContext) {
+        guardianPortraits = withContext(Dispatchers.IO) { loadGuardianPortraits(portraitContext) }
+    }
+
     val editState = useEditState<AgentDefinitionDraft> { draft ->
         // A create and an update differ only in whether the row already exists. `update` refuses to
         // insert (a stale id must not resurrect a deleted expert), so the branch is explicit.
@@ -310,11 +321,25 @@ fun SettingSubAgentsPage(
                         colors = CustomColors.cardColorsOnSurfaceContainer,
                     ) {
                         Column(Modifier.padding(12.dp)) {
-                            Text(
-                                text = stringResource(R.string.guardians_pack_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
+                            // Mare's mini-Ainz (borrowed from his dashboard sprite set) fronts the
+                            // pack: this card hands you the Tomb's staff, so the Tomb's master
+                            // should be standing on it.
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                AsyncImage(
+                                    model = "file:///android_asset/guardians/ainz.png",
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.size(44.dp),
+                                )
+                                Text(
+                                    text = stringResource(R.string.guardians_pack_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 text = stringResource(R.string.guardians_pack_subtitle),
@@ -417,6 +442,7 @@ fun SettingSubAgentsPage(
                     items(definitions, key = { it.id }) { definition ->
                         AgentDefinitionCard(
                             definition = definition,
+                            portrait = definition.slug?.let { guardianPortraits[it] },
                             onEdit = { editState.open(AgentDefinitionDraft.of(definition)) },
                             onDelete = { scope.launch { agentDefinitionRepository.delete(definition.id) } },
                         )
@@ -572,6 +598,7 @@ private fun subAgentRunStatusRes(status: SubAgentStatus): Int = when (status) {
 @Composable
 private fun AgentDefinitionCard(
     definition: AgentDefinition,
+    portrait: String? = null,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -651,7 +678,16 @@ private fun AgentDefinitionCard(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
+                    // A guardian with art wears it; everything else keeps the robot tile. The tile
+                    // is already clipped to a circle, so the portrait needs no clipping of its own.
+                    if (portrait != null) {
+                        AsyncImage(
+                            model = "file:///android_asset/$portrait",
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else Icon(
                         imageVector = HugeIcons.Robot01,
                         contentDescription = null,
                         tint = if (definition.enabled) {
@@ -1513,6 +1549,19 @@ private fun GlobalConcurrencyItem(settings: Settings) {
  * when the pack fails validation — so the failure path a user can actually hit is the text in
  * the card, not a half-populated library.
  */
+/**
+ * The pack's art, keyed by slug. Read off disk off the main thread and never again: the file is
+ * bundled, so it cannot change under a running app. A pack that will not parse costs the
+ * portraits only — the library itself is Room's, and the install card reports parse failures in
+ * its own right.
+ */
+private fun loadGuardianPortraits(context: Context): Map<String, String> = try {
+    val text = context.assets.open(FloorGuardians.ASSET_PATH).bufferedReader().use { it.readText() }
+    FloorGuardians.portraitsOf(FloorGuardians.parse(text))
+} catch (_: Exception) {
+    emptyMap()
+}
+
 private suspend fun installGuardianPack(
     context: Context,
     repo: AgentDefinitionRepository,

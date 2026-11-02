@@ -50,6 +50,16 @@ data class GuardianSpec(
      * [me.rerere.rikkahub.data.ai.tools.LenientLocalToolListSerializer] at storage time.
      */
     val tools: List<String>? = null,
+
+    /**
+     * Asset path to a canon portrait, resolved by Coil's asset fetcher at render time.
+     *
+     * Deliberately **not** a column on [AgentDefinition]: that table lives in its own database
+     * file precisely so its Room identity hash stops moving, and a portrait is not worth a
+     * migration. The pack owns its art, so art and persona install together and a hand-made
+     * expert is unaffected. Null = the row renders its initial, as it did before art existed.
+     */
+    val portrait: String? = null,
 )
 
 @Serializable
@@ -99,6 +109,20 @@ object FloorGuardians {
 
     /** @throws SerializationException when the asset does not match [GuardianPack]. */
     fun parse(text: String): GuardianPack = json.decodeFromString(GuardianPack.serializer(), text)
+
+    /**
+     * slug -> bundled portrait path.
+     *
+     * The library renders [AgentDefinition] rows, which come from Room and carry no art; this is
+     * how a row finds its face. The pack remains the single declaration of who the Nine are, so
+     * adding a tenth guardian means adding one JSON entry and one JPEG — no schema, no UI edit.
+     */
+    fun portraitsOf(pack: GuardianPack): Map<String, String> =
+        pack.guardians.mapNotNull { g ->
+            val slug = g.slug ?: return@mapNotNull null
+            val portrait = g.portrait ?: return@mapNotNull null
+            slug to portrait
+        }.toMap()
 
     /**
      * Resolves a tool name through the very serializer that stores it — the sealed-class

@@ -96,6 +96,20 @@ class FloorGuardiansTest {
     // ── codec strictness ───────────────────────────────────────────────────────────────────
 
     @Test
+    fun `every guardian declares a portrait and the declared file ships`() {
+        // A portrait path with no file behind it is an asset bug, not a rendering detail: Coil
+        // would hand back an empty tile and nobody would notice until someone asked why Demiurge
+        // has no face. So the declaration and the disk are checked together, here.
+        val portraits = FloorGuardians.portraitsOf(bundledPack())
+        assertEquals("every guardian must declare art", 9, portraits.size)
+        val dir = packFile().parentFile
+        val absent = portraits.filterNot { (_, path) ->
+            File(dir, path.replace("/", File.separator)).isFile
+        }
+        assertTrue("portraits declared without a file: $absent", absent.isEmpty())
+    }
+
+    @Test
     fun `a mistyped key is refused rather than silently ignored`() {
         val json = """
             {"version":1,"guardians":[{"name":"X","promt":"oops"}]}
