@@ -82,7 +82,11 @@ JNIEXPORT jlong JNICALL Java_me_rerere_sdcpp_SdCppJni_nativeLoadModel(JNIEnv *en
                                                                       jobject progress_sink) {
     const char *path = env->GetStringUTFChars(model_path, nullptr);
 
-    sd_ctx_params_t params = sd_ctx_params_init();
+    // Out-parameter C init, not a factory: this header declares `void sd_ctx_params_init(sd_ctx_params_t*)`.
+    // The braces zero the whole struct -- including nested structs this initializer does not touch --
+    // before the library fills in its defaults, so nothing downstream reads uninitialised memory.
+    sd_ctx_params_t params{};
+    sd_ctx_params_init(&params);
     params.model_path = path;
     params.n_threads = n_threads > 0 ? n_threads : -1;  // -1 = let ggml read the machine
     params.enable_mmap = enable_mmap == JNI_TRUE;
@@ -137,7 +141,8 @@ JNIEXPORT jobject JNICALL Java_me_rerere_sdcpp_SdCppJni_nativeGenerate(
     const char *prompt_chars = env->GetStringUTFChars(prompt, nullptr);
     const char *negative_chars = env->GetStringUTFChars(negative_prompt, nullptr);
 
-    sd_img_gen_params_t params = sd_img_gen_params_init();
+    sd_img_gen_params_t params{};
+    sd_img_gen_params_init(&params);
     params.prompt = prompt_chars;
     params.negative_prompt = negative_chars;
     params.width = width;
