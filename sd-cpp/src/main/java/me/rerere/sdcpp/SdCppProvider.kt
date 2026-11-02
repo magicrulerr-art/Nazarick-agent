@@ -1,8 +1,6 @@
 package me.rerere.sdcpp
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.util.Base64
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import me.rerere.ai.core.TokenUsage
@@ -40,14 +38,13 @@ class SdCppProvider(
     private val engine: SdCppEngine = SdCppEngine(),
 ) : Provider<ProviderSetting> {
 
+    /**
+     * The settings-owned list, like every other local provider: models arrive when the pane
+     * installs a file and are registered through [SdModelInstaller], so there is no remote
+     * catalogue to re-fetch at generation time.
+     */
     override suspend fun listModels(providerSetting: ProviderSetting): List<Model> =
-        SdCppCatalog.models.map { entry ->
-            Model(
-                id = entry.id,
-                name = entry.displayName,
-                providerId = SdCppCatalog.PROVIDER_ID,
-            )
-        }
+        providerSetting.models
 
     override suspend fun generateText(
         providerSetting: ProviderSetting,
@@ -85,10 +82,34 @@ class SdCppProvider(
     /** Ask [engine] to stop; the imggen page's cancel button ends up here via coroutine cancel. */
     fun cancelGeneration() = engine.cancel()
 
+    /**
+     * A model row names its weights through [Model.modelId] — the same contract llama.cpp uses,
+     * where modelId is the GGUF's file name. Catalog id is accepted too, because the curated
+     * picker creates rows with it.
+     */
     private fun resolveEntry(model: Model): SdModelEntry =
-        SdCppCatalog.entryById(model.id)
-            ?: SdCppCatalog.entryFor(model.id)
+        SdCppCatalog.entryFor(model.modelId)
+            ?: SdCppCatalog.entryById(model.modelId)
+            ?: installedEntryOrNull(model)
             ?: SdCppCatalog.models.first()
+
+    /** A hand-copied GGUF outside the catalogue still has a file on disk; use it by name. */
+    private fun installedEntryOrNull(model: Model): SdModelEntry? {
+        val fileName = model.modelId.substringAfterLast('/')
+        val file = File(ModelInstall.localModelsDir(context), "${SdCppCatalog.RUNTIME_DIRNAME}/$fileName")
+        return if (file.isFile) {
+            SdModelEntry(
+                id = fileName,
+                displayName = model.displayName.ifBlank { fileName },
+                fileName = fileName,
+                url = "",
+                sizeBytes = file.length(),
+                baseSize = 512,
+                defaultSteps = 20,
+                defaultCfg = 7.0f,
+            )
+        } else null
+    }
 
     /** Where a catalog file lives: `local-models/sdcpp/<fileName>`, beside every other runtime. */
     private fun modelFile(entry: SdModelEntry): File =
@@ -101,11 +122,6 @@ class SdCppProvider(
     }
 }
 
-/** RGBA out of the engine, PNG out of the platform's own encoder. */
-internal fun SdRaster.toPngBase64(): String {
-    val bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
-    val out = ByteArrayOutputStream()
-    check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) { "PNG compression failed" }
-    bitmap.recycle()
-    return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-}
+/** RGBA out of the engine, PNG out of [PngEncoder] — see why that is not Bitmap's job. */
+internal fun SdRaster.toPngBase64(): String =
+    java.util.Base64.getEncoder().encodeToString(PngEncoder.encode(pixels, width, height, channel))

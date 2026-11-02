@@ -67,6 +67,7 @@ internal fun providerKind(provider: ProviderSetting): String = when (provider) {
     is ProviderSetting.AICore -> "aicore"
     is ProviderSetting.LiteRtLocal -> "local_litert"
     is ProviderSetting.LlamaCppLocal -> "local_llamacpp"
+    is ProviderSetting.SdCppLocal -> "local_sdcpp"
     is ProviderSetting.Codex -> "codex"
     is ProviderSetting.Grok -> "grok"
     is ProviderSetting.GeminiOAuth -> "gemini_oauth"

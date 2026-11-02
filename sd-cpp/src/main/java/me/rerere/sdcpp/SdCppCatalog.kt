@@ -76,4 +76,20 @@ object SdCppCatalog {
     fun entryFor(fileName: String): SdModelEntry? = models.firstOrNull { it.fileName == fileName }
 
     fun entryById(id: String): SdModelEntry? = models.firstOrNull { it.id == id }
+
+    /**
+     * The [Model] row a successful install registers on the provider.
+     *
+     * `modelId` is the **file name**, which is the contract every local engine in this app
+     * follows: the provider resolves a row by finding that file under `local-models/<runtime>/`.
+     * `type = IMAGE` with an IMAGE output modality is what puts it in the image-generation
+     * picker and keeps it out of the chat one — [ModelList] filters on exactly those two.
+     */
+    fun modelFor(entry: SdModelEntry): me.rerere.ai.provider.Model =
+        me.rerere.ai.provider.Model(
+            modelId = entry.fileName,
+            displayName = entry.displayName,
+            type = me.rerere.ai.provider.ModelType.IMAGE,
+            outputModalities = listOf(me.rerere.ai.provider.Modality.IMAGE),
+        )
 }

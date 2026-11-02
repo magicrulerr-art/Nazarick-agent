@@ -1359,6 +1359,11 @@
   <string name="local_llm_install_url_hint">HuggingFace /blob/ 或 /resolve/ 網址皆可。</string>
   <string name="local_llm_install_url_label">或貼上一個 HuggingFace 網址（/blob/ 或 /resolve/ 皆可）</string>
   <string name="local_llm_installed_models_count">已安裝 %1$d 個模型。在「模型」分頁中管理它們。</string>
+  <!-- sd.cpp —— 裝置端影像生成 -->
+  <string name="sd_cpp_catalog_title">精選擴散模型</string>
+  <string name="sd_cpp_catalog_subtitle">權重下載至 local-models/sdcpp，推理全程不離開裝置。每個模型約 1.5 GB。</string>
+  <string name="sd_cpp_install_action">安裝</string>
+  <string name="sd_cpp_delete_action">刪除</string>
   <string name="local_llm_insufficient_memory_format">需要約 %1$d MB 的可用記憶體（模型 %2$d MB 加上執行階段餘量），但只有 %3$d MB 可用。請關閉其他應用程式或選擇更小的模型。</string>
   <string name="local_llm_invalid_url">無效網址：必須是 https 且格式正確</string>
   <string name="local_llm_litert_name">本機 · LiteRT</string>

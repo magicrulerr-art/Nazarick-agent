@@ -753,6 +753,21 @@ class SettingsStore(
                                 .let { if (it >= 0) it + 1 else providers.indexOfFirst { p -> p is ProviderSetting.AICore } + 1 }
                             providers.add(insertAt, defaultProvider.copyProvider())
                         }
+                        is ProviderSetting.SdCppLocal -> {
+                            // Fourth member of the on-device group: sits directly after
+                            // LlamaCppLocal so the four local tiles stay contiguous at the top.
+                            // Falls back through LlamaCpp → LiteRT → AICore → 0, mirroring the
+                            // absent-index handling above for users who deleted one of them.
+                            val after = providers.indexOfFirst { it is ProviderSetting.LlamaCppLocal }
+                                .let {
+                                    when {
+                                        it >= 0 -> it + 1
+                                        else -> providers.indexOfFirst { p -> p is ProviderSetting.LiteRtLocal }
+                                            .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
+                                    }
+                                }
+                            providers.add(after, defaultProvider.copyProvider())
+                        }
                         else -> providers.add(defaultProvider.copyProvider())
                     }
                 }
@@ -865,6 +880,10 @@ class SettingsStore(
                         )
 
                         is ProviderSetting.LlamaCppLocal -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
+
+                        is ProviderSetting.SdCppLocal -> provider.copy(
                             models = provider.models.distinctBy { model -> model.id }
                         )
 

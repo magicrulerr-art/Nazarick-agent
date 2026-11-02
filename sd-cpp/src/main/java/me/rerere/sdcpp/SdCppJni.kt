@@ -5,8 +5,10 @@ import android.util.Log
 /**
  * A decoded raster straight out of the engine: raw RGBA, no container.
  *
- * Encoding to PNG happens in Kotlin with [android.graphics.Bitmap], because the C++ side would
- * need an encoder dependency of its own and Android already has a hardware one.
+ * Encoding to PNG happens in Kotlin via [PngEncoder] rather than through
+ * [android.graphics.Bitmap] — this module compiles without the framework's graphics classes,
+ * and a `ByteArray` has no honest route into `Bitmap.createBitmap` anyway. See that file for
+ * why the byte order is worth stating out loud.
  */
 class SdRaster(
     val width: Int,

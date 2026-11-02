@@ -1516,6 +1516,11 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="local_llm_install_url_hint">HuggingFace /blob/ 或 /resolve/ 网址均可。</string>
   <string name="local_llm_install_url_label">或粘贴一个 HuggingFace 网址（/blob/ 或 /resolve/ 均可）</string>
   <string name="local_llm_installed_models_count">已安装 %1$d 个模型。在“模型”标签页中管理它们。</string>
+  <!-- sd.cpp —— 端侧图像生成 -->
+  <string name="sd_cpp_catalog_title">精选扩散模型</string>
+  <string name="sd_cpp_catalog_subtitle">权重下载至 local-models/sdcpp，推理全程不离开设备。每个模型约 1.5 GB。</string>
+  <string name="sd_cpp_install_action">安装</string>
+  <string name="sd_cpp_delete_action">删除</string>
   <string name="local_llm_insufficient_memory_format">需要约 %1$d MB 的可用内存（模型 %2$d MB 加上运行时余量），但只有 %3$d MB 可用。请关闭其他应用或选择更小的模型。</string>
   <string name="local_llm_invalid_url">无效网址：必须是 https 且格式正确</string>
   <string name="local_llm_litert_name">本地 · LiteRT</string>

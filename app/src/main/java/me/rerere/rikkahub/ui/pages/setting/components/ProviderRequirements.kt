@@ -44,6 +44,12 @@ data class ProviderRequirement(
                     severity = TagType.INFO,
                 ),
             )
+            is ProviderSetting.SdCppLocal -> listOf(
+                ProviderRequirement(
+                    label = "On-device · images · ~2 GB weights",
+                    severity = TagType.INFO,
+                ),
+            )
             else -> emptyList()
         }
     }

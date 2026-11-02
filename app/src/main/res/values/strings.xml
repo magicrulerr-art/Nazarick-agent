@@ -2120,6 +2120,11 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="local_llm_install_url_hint">HuggingFace /blob/ or /resolve/ URLs both work.</string>
   <string name="local_llm_download_default">Download default model</string>
   <string name="local_llm_installed_models_count">%1$d model(s) installed. Manage them in the Models tab.</string>
+  <!-- sd.cpp — on-device image generation -->
+  <string name="sd_cpp_catalog_title">Curated diffusion models</string>
+  <string name="sd_cpp_catalog_subtitle">Weights land in local-models/sdcpp and inference never leaves the device. Plan on ~1.5 GB per model.</string>
+  <string name="sd_cpp_install_action">Install</string>
+  <string name="sd_cpp_delete_action">Delete</string>
   <string name="local_llm_accelerator_label">Accelerator: %1$s</string>
   <string name="local_llm_test_model">Test</string>
   <string name="local_llm_manage_files_title">Installed model files</string>

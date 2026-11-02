@@ -791,6 +791,15 @@ val dataSourceModule = module {
                     prefs = get(),
                 ),
             )
+            // sd.cpp is registered lazily: the library's System.loadLibrary runs when the
+            // engine is first touched, not here, so a device missing the native bits still
+            // starts and only fails when an image is actually requested.
+            pm.registerProvider(
+                "local_sdcpp",
+                me.rerere.sdcpp.SdCppProvider(
+                    context = get(),
+                ),
+            )
             pm.registerProvider(
                 "codex",
                 CodexProvider(
