@@ -228,6 +228,37 @@ androidComponents {
             ?.get(HostTestBuilder.UNIT_TEST_TYPE)
             ?.let { it.enable = true }
     }
+
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            // AGP names every output `app-<flavour>-<abi>-<buildType>.apk`, so the file a
+            // user downloads said "moxw" — the internal brand id and source-set directory
+            // name — while everything they can actually see (package, repo, release) says
+            // Nazarick.
+            //
+            // Rewrite the token rather than rebuild the name from filters, so AGP keeps
+            // ownership of arm64 / x86_64 / universal. The catch, learned from run
+            // 41433989045: `outputFileName.set(outputFileName.map { … })` compiles happily
+            // and then dies during dependency resolution of :app:packageMoxwRelease with
+            //   Circular evaluation detected: property(java.lang.String, map(…))
+            // because a property's new value was derived from that same property. So read
+            // AGP's default eagerly and assign a plain String — a value, not a mapping.
+            //
+            // Guarded, and deliberately not using output.filters to rebuild the name: AGP
+            // 9.3 is young enough that the filter API is the one thing here not already
+            // proven by this file. A failed read means the old filename ships and the log
+            // says so, which beats a build that cannot configure itself.
+            val default = runCatching { output.outputFileName.orNull }.getOrNull()
+            if (default != null) {
+                output.outputFileName.set(default.replaceFirst("app-moxw", "app-nazarick"))
+            } else {
+                logger.lifecycle(
+                    "nazarick: could not read AGP's default outputFileName for ${variant.name}" +
+                        " — its artifact keeps the flavour name; fix the rename, do not rename it here",
+                )
+            }
+        }
+    }
 }
 
 composeCompiler {
