@@ -228,6 +228,20 @@ androidComponents {
             ?.get(HostTestBuilder.UNIT_TEST_TYPE)
             ?.let { it.enable = true }
     }
+
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            // AGP names every output `app-<flavour>-<abi>-<buildType>.apk`, so the file a
+            // user downloads said "moxw" — the internal brand id and source-set directory
+            // name — while everything they can actually see (package, repo, release) says
+            // Nazarick. Rewriting just that token, instead of rebuilding the name from the
+            // ABI filter, leaves AGP's own arm64/x86_64/"universal" logic in charge and
+            // survives an upgrade that renames the filter API.
+            output.outputFileName.set(
+                output.outputFileName.map { it.replaceFirst("app-moxw", "app-nazarick") },
+            )
+        }
+    }
 }
 
 composeCompiler {
