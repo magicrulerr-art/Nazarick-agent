@@ -53,8 +53,11 @@ class SdModelInstaller(
 
     /** Delete a model's weights. The caller owns removing it from the provider's model list. */
     suspend fun delete(entry: SdModelEntry): Boolean = withContext(Dispatchers.IO) {
+        // No bare `return` in here: withContext's block is crossinline, which forbids a
+        // non-local return (CI: "'return' is prohibited here"). The last expression is the
+        // result; a missing file counts as deleted, which is what the caller's idempotency needs.
         val file = fileFor(entry)
-        return !file.exists() || file.delete()
+        !file.exists() || file.delete()
     }
 
     /**
