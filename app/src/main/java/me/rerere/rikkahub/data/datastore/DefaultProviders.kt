@@ -72,6 +72,20 @@ val DEFAULT_PROVIDERS = listOf(
             Text("On-device - llama.cpp")
         },
     ),
+    ProviderSetting.SdCppLocal(
+        // sd.cpp — the fourth on-device tile, and the first that draws instead of talking.
+        // Disabled by default like its siblings: nothing downloads and no engine loads until
+        // the user opens the tile and picks a diffusion model, because those weights are
+        // ~1.5 GB and this is a phone.
+        enabled = false,
+        builtIn = true,
+        description = {
+            Text("Generates images on-device via sd.cpp (Stable Diffusion GGUF). No API key, no network once the weights are downloaded.")
+        },
+        shortDescription = {
+            Text("On-device - images")
+        },
+    ),
     // All built-in providers ship DISABLED by default. New installs start with zero
     // network-egress paths so a freshly-installed app can never make an LLM call (or
     // bill any account) until the user explicitly enables a provider AND adds an API

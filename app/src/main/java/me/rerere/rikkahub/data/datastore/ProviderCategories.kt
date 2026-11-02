@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.datastore
 import androidx.annotation.StringRes
 import me.rerere.ai.provider.AICORE_PROVIDER_ID
 import me.rerere.ai.provider.LLAMACPP_PROVIDER_ID
+import me.rerere.ai.provider.SDCPP_PROVIDER_ID
 import me.rerere.ai.provider.LITERT_PROVIDER_ID
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.R
@@ -34,6 +35,9 @@ private val BUILT_IN_PROVIDER_CATEGORY: Map<Uuid, ProviderCategory> = buildMap {
     put(AICORE_PROVIDER_ID, ProviderCategory.LOCAL)
     put(LITERT_PROVIDER_ID, ProviderCategory.LOCAL)
     put(LLAMACPP_PROVIDER_ID, ProviderCategory.LOCAL)
+    // sd.cpp is on-device too, and categorically a peer of llama.cpp — the fact that its
+    // weights make pictures instead of words is not the axis this map sorts on.
+    put(SDCPP_PROVIDER_ID, ProviderCategory.LOCAL)
 
     // 国模
     put(Uuid.parse("56a94d29-c88b-41c5-8e09-38a7612d6cf8"), ProviderCategory.DOMESTIC) // 硅基流动

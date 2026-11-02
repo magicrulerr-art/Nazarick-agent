@@ -34,9 +34,11 @@ import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.background
 import androidx.compose.ui.Alignment
@@ -73,8 +75,10 @@ import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.pages.setting.locallm.SettingLocalLlmViewModel
+import me.rerere.rikkahub.ui.pages.setting.locallm.registerInstalledModel
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -134,6 +138,10 @@ fun ProviderConfigure(
                 ProviderConfigureLlamaCpp(provider, onEdit)
             }
 
+            is ProviderSetting.SdCppLocal -> {
+                ProviderConfigureSdCpp(provider, onEdit)
+            }
+
             is ProviderSetting.Codex -> Unit
             is ProviderSetting.Grok -> Unit
             is ProviderSetting.GeminiOAuth -> Unit
@@ -151,6 +159,7 @@ fun ProviderSetting.convertTo(type: KClass<out ProviderSetting>): ProviderSettin
         is ProviderSetting.AICore -> "" // on-device, no API key
         is ProviderSetting.LiteRtLocal -> "" // on-device, no API key
         is ProviderSetting.LlamaCppLocal -> "" // on-device, no API key
+        is ProviderSetting.SdCppLocal -> "" // on-device, no API key
         is ProviderSetting.Codex -> "" // OAuth, no API key
         is ProviderSetting.Grok -> "" // OAuth, no API key
         is ProviderSetting.GeminiOAuth -> "" // OAuth, no API key
@@ -162,6 +171,7 @@ fun ProviderSetting.convertTo(type: KClass<out ProviderSetting>): ProviderSettin
         is ProviderSetting.AICore -> "" // on-device, no base URL
         is ProviderSetting.LiteRtLocal -> "" // on-device, no base URL
         is ProviderSetting.LlamaCppLocal -> "" // on-device, no base URL
+        is ProviderSetting.SdCppLocal -> "" // on-device, no base URL
         is ProviderSetting.Codex -> "" // OAuth, no base URL
         is ProviderSetting.Grok -> "" // OAuth, no base URL
         is ProviderSetting.GeminiOAuth -> "" // OAuth, no base URL
@@ -220,6 +230,7 @@ internal fun ProviderSetting.defaultBaseUrlForReset(): String {
             is ProviderSetting.AICore -> return "" // on-device, no base URL
             is ProviderSetting.LiteRtLocal -> return "" // on-device, no base URL
             is ProviderSetting.LlamaCppLocal -> return "" // on-device, no base URL
+            is ProviderSetting.SdCppLocal -> return "" // on-device, no base URL
             is ProviderSetting.Codex -> return "" // OAuth, no base URL
             is ProviderSetting.Grok -> return "" // OAuth, no base URL
             is ProviderSetting.GeminiOAuth -> return "" // OAuth, no base URL
@@ -232,6 +243,7 @@ internal fun ProviderSetting.defaultBaseUrlForReset(): String {
         is ProviderSetting.AICore -> ""
         is ProviderSetting.LiteRtLocal -> ""
         is ProviderSetting.LlamaCppLocal -> ""
+        is ProviderSetting.SdCppLocal -> ""
         is ProviderSetting.Codex -> ""
         is ProviderSetting.Grok -> ""
         is ProviderSetting.GeminiOAuth -> ""
@@ -247,6 +259,7 @@ internal fun ProviderSetting.resetBaseUrlToDefault(): ProviderSetting {
         is ProviderSetting.AICore -> this // no base URL to reset
         is ProviderSetting.LiteRtLocal -> this // no base URL to reset
         is ProviderSetting.LlamaCppLocal -> this // no base URL to reset
+        is ProviderSetting.SdCppLocal -> this // no base URL to reset
         is ProviderSetting.Codex -> this // no base URL to reset
         is ProviderSetting.Grok -> this // no base URL to reset
         is ProviderSetting.GeminiOAuth -> this // no base URL to reset
@@ -261,6 +274,7 @@ internal fun ProviderSetting.isUsingDefaultBaseUrl(): Boolean {
         is ProviderSetting.AICore -> return true // no base URL concept
         is ProviderSetting.LiteRtLocal -> return true // no base URL concept
         is ProviderSetting.LlamaCppLocal -> return true // no base URL concept
+        is ProviderSetting.SdCppLocal -> return true // no base URL concept
         is ProviderSetting.Codex -> return true // no base URL concept
         is ProviderSetting.Grok -> return true // no base URL concept
         is ProviderSetting.GeminiOAuth -> return true // no base URL concept
@@ -1136,6 +1150,154 @@ private fun ColumnScope.ProviderConfigureLiteRT(
                             text = stringResource(R.string.local_llm_delete_model) +
                                 if (provider.models.size > 1) " ${model.modelId}" else "",
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * sd.cpp — the image engine's settings tile.
+ *
+ * Structured like [ProviderConfigureLlamaCpp] and deliberately not built on
+ * `SettingLocalLlmViewModel`: that VM is keyed on [LocalRuntime], whose
+ * `runtimeForExtension("gguf")` already answers "llama.cpp" and cannot answer twice. So this
+ * tile drives [SdModelInstaller] directly — same directory (`local-models/`), same
+ * download-then-register flow, one less enum pretending two engines are the same thing.
+ */
+@Composable
+private fun ColumnScope.ProviderConfigureSdCpp(
+    provider: ProviderSetting.SdCppLocal,
+    onEdit: (ProviderSetting.SdCppLocal) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installer = remember { me.rerere.sdcpp.SdModelInstaller(context) }
+
+    // Progress and errors are tile-local state: only one download can be in flight from here,
+    // and nothing outside this screen has any business reading it.
+    var progress by remember { mutableStateOf<Pair<String, Float>?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    var installed by remember { mutableStateOf(installer.installedEntries().map { it.id }.toSet()) }
+    var refresh by remember { mutableStateOf(0) }
+    LaunchedEffect(refresh) { installed = installer.installedEntries().map { it.id }.toSet() }
+
+    provider.description()
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            stringResource(id = R.string.setting_provider_page_enable),
+            modifier = Modifier.weight(1f),
+        )
+        Checkbox(checked = provider.enabled, onCheckedChange = { onEdit(provider.copy(enabled = it)) })
+    }
+
+    OutlinedTextField(
+        value = provider.name,
+        onValueChange = { onEdit(provider.copy(name = it.trim())) },
+        label = { Text(stringResource(id = R.string.setting_provider_page_name)) },
+        modifier = Modifier.fillMaxWidth(),
+        maxLines = 3,
+    )
+
+    Text(
+        text = stringResource(R.string.sd_cpp_catalog_subtitle),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    SdModelEntryRow(
+        title = stringResource(R.string.sd_cpp_catalog_title),
+        entries = me.rerere.sdcpp.SdCppCatalog.models,
+        installed = installed,
+        progress = progress,
+        onInstall = { entry ->
+            failure = null
+            scope.launch {
+                runCatching {
+                    installer.install(entry) { done, total ->
+                        progress = entry.id to (if (total > 0) done.toFloat() / total else 0f)
+                    }
+                }.onSuccess {
+                    progress = null
+                    refresh++
+                    // Registering the row is what makes the model selectable in the image
+                    // picker; a file on disk that no Model points at is invisible to a chat.
+                    onEdit(
+                        registerInstalledModel(
+                            provider,
+                            me.rerere.sdcpp.SdCppCatalog.modelFor(entry),
+                        ) as ProviderSetting.SdCppLocal,
+                    )
+                }.onFailure { e ->
+                    progress = null
+                    failure = e.message ?: e.javaClass.simpleName
+                }
+            }
+        },
+        onDelete = { entry ->
+            scope.launch {
+                if (installer.delete(entry)) {
+                    refresh++
+                    onEdit(
+                        provider.copy(
+                            models = provider.models.filterNot { it.modelId == entry.fileName },
+                        ),
+                    )
+                } else {
+                    failure = "Could not delete ${entry.fileName} — is it in use?"
+                }
+            }
+        },
+    )
+
+    failure?.let { message ->
+        Text(
+            text = message,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun SdModelEntryRow(
+    title: String,
+    entries: List<me.rerere.sdcpp.SdModelEntry>,
+    installed: Set<String>,
+    progress: Pair<String, Float>?,
+    onInstall: (me.rerere.sdcpp.SdModelEntry) -> Unit,
+    onDelete: (me.rerere.sdcpp.SdModelEntry) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        entries.forEach { entry ->
+            val isInstalled = entry.id in installed
+            val busy = progress?.first == entry.id
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(entry.displayName, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "${entry.baseSize}px · ${(entry.sizeBytes / (1024 * 1024)).let { "%,d".format(it) }} MB" +
+                            if (entry.note.isNotBlank()) " · ${entry.note}" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (busy) {
+                        LinearProgressIndicator(
+                            progress = { progress.second },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        )
+                    }
+                }
+                if (isInstalled) {
+                    OutlinedButton(onClick = { onDelete(entry) }, enabled = progress == null) {
+                        Text(stringResource(R.string.sd_cpp_delete_action))
+                    }
+                } else {
+                    Button(onClick = { onInstall(entry) }, enabled = progress == null) {
+                        Text(stringResource(R.string.sd_cpp_install_action))
                     }
                 }
             }

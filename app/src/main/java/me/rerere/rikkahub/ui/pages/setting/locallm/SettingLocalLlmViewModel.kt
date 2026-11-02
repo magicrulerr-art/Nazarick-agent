@@ -631,6 +631,7 @@ class SettingLocalLlmViewModel(
 internal fun enableAfterFirstDownload(provider: ProviderSetting): ProviderSetting = when (provider) {
     is ProviderSetting.LiteRtLocal -> provider.copy(enabled = true)
     is ProviderSetting.LlamaCppLocal -> provider.copy(enabled = true)
+    is ProviderSetting.SdCppLocal -> provider.copy(enabled = true)
     else -> provider
 }
 

@@ -415,6 +415,7 @@ dependencies {
     implementation(project(":runtime"))
     implementation(project(":local-llm"))
     implementation(project(":llama-cpp"))
+    implementation(project(":sd-cpp"))
     implementation(project(":web"))
     implementation(project(":document"))
     implementation(project(":highlight"))

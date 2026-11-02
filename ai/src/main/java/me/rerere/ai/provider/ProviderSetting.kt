@@ -390,6 +390,53 @@ sealed class ProviderSetting {
         )
     }
 
+    /**
+     * On-device image generation through sd.cpp. Built-in and **disabled** by default, like the
+     * other local providers: nothing is downloaded and no engine is loaded until the user asks
+     * for it, because the weights are hundreds of megabytes.
+     *
+     * The model list is filled by [SdCppCatalog] on the app side — the `ai` module cannot see
+     * that class (dependency direction), which is why models arrive empty here rather than as a
+     * compiled-in default like [AICORE_DEFAULT_MODELS].
+     */
+    @Serializable
+    @SerialName("local_sdcpp")
+    data class SdCppLocal(
+        override var id: Uuid = SDCPP_PROVIDER_ID,
+        override var enabled: Boolean = false,
+        override var name: String = "Local · sd.cpp",
+        override var models: List<Model> = emptyList(),
+        override val balanceOption: BalanceOption = BalanceOption(),
+        override val customHeaders: List<CustomHeader> = emptyList(),
+        @Transient override val builtIn: Boolean = true,
+        @Transient override val description: @Composable (() -> Unit) = {},
+        @Transient override val shortDescription: @Composable (() -> Unit) = {},
+    ) : ProviderSetting() {
+        override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
+        override fun editModel(model: Model): ProviderSetting =
+            copy(models = models.map { if (it.id == model.id) model else it })
+        override fun delModel(model: Model): ProviderSetting =
+            copy(models = models.filter { it.id != model.id })
+        override fun moveMove(from: Int, to: Int): ProviderSetting =
+            copy(models = models.toMutableList().apply { add(to, removeAt(from)) })
+        override fun copyProvider(
+            id: Uuid,
+            enabled: Boolean,
+            name: String,
+            models: List<Model>,
+            balanceOption: BalanceOption,
+            customHeaders: List<CustomHeader>,
+            builtIn: Boolean,
+            description: @Composable (() -> Unit),
+            shortDescription: @Composable (() -> Unit),
+        ): ProviderSetting = copy(
+            id = id, enabled = enabled, name = name, models = models,
+            builtIn = builtIn, description = description, shortDescription = shortDescription,
+            balanceOption = balanceOption,
+            customHeaders = customHeaders,
+        )
+    }
+
     @Serializable
     @SerialName("codex")
     data class Codex(
@@ -577,6 +624,14 @@ enum class AICoreReleaseStage { STABLE, PREVIEW }
 val AICORE_PROVIDER_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000001")
 val LITERT_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000002")
 val LLAMACPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000003")
+
+/**
+ * On-device **image** generation (sd.cpp / Stable Diffusion GGUF). Fourth member of the local
+ * family, and the first one that is not a language model — which is why it needs its own
+ * variant rather than a flag on [LlamaCppLocal]: the two engines share a directory convention
+ * and nothing else.
+ */
+val SDCPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000004")
 private val AICORE_NANO_FAST_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000002")
 private val AICORE_NANO_FULL_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000003")
 
