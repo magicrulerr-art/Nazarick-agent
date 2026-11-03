@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.guardians
 
+import java.io.File
 import me.rerere.rikkahub.data.agentdef.AgentDefinition
 import me.rerere.rikkahub.data.agentdef.AgentNamespace
 import org.junit.Assert.assertEquals
