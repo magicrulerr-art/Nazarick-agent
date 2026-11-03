@@ -477,6 +477,31 @@ jobs:
         run: |
           if [ ! -f bun.lock ]; then bun install; fi
 
+      # The release variant's signingConfigs block resolves storeFile eagerly at
+      # configuration time (the "only consulted when hasReleaseSigning" comment in
+      # app/build.gradle.kts holds only while the create() block runs with the env
+      # present — run 91 proved a unit-test-only job without it dies on a bare NPE).
+      # Same provisioning step the assemble job uses; testMoxwReleaseUnitTest builds
+      # the release variant and therefore pays the same contract.
+      - name: Provision release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.NAZARICK_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.NAZARICK_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NAZARICK_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${STORE_PASSWORD:-}" ]; then
+            echo "::notice::No keystore secret configured - release variant ships unsigned"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_B64}" | base64 -d > "$RUNNER_TEMP/nazarick-release.p12"
+          {
+            echo "NAZARICK_KEYSTORE=$RUNNER_TEMP/nazarick-release.p12"
+            echo "NAZARICK_STORE_PASSWORD=${STORE_PASSWORD}"
+            echo "NAZARICK_KEY_PASSWORD=${KEY_PASSWORD}"
+            echo "NAZARICK_KEY_ALIAS=nazarick"
+          } >> "$GITHUB_ENV"
+
       - name: Run scoped app unit tests
         run: >
           ./gradlew :app:testMoxwReleaseUnitTest --stacktrace
