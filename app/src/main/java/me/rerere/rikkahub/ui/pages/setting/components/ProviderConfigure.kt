@@ -1200,7 +1200,7 @@ private fun ColumnScope.ProviderConfigureSdCpp(
     // internalProvider, and the draft dies on back-navigation unless the user presses
     // Save. A heal that lives in a draft is no heal at all; it must persist on its own.
     // onEdit is still called so the visible draft agrees with the store immediately.
-    val settingsStore = org.koin.compose.koinInject<me.rerere.rikkahub.data.settings.SettingsStore>()
+    val settingsStore = org.koin.compose.koinInject<me.rerere.rikkahub.data.datastore.SettingsStore>()
     LaunchedEffect(refresh, provider.models, provider.enabled) {
         val diskNames = withContext(Dispatchers.IO) {
             installer.libraryEntries().map { it.fileName }.toSet()
