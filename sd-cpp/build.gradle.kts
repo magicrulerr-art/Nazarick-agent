@@ -11,6 +11,10 @@ android {
         minSdk = 26
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // The JNI contract for SdRaster; see consumer-rules.pro for why R8's
+        // release shrink otherwise deletes the ctor the native side caches.
+        consumerProguardFiles("consumer-rules.pro")
+
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
