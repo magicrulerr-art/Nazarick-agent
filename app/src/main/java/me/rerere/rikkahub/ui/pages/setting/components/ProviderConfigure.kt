@@ -75,10 +75,13 @@ import me.rerere.hugeicons.stroke.View
 import me.rerere.hugeicons.stroke.ViewOff
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.pages.setting.locallm.SettingLocalLlmViewModel
+import me.rerere.rikkahub.ui.pages.setting.locallm.enableAfterFirstDownload
 import me.rerere.rikkahub.ui.pages.setting.locallm.registerInstalledModel
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -1183,6 +1186,35 @@ private fun ColumnScope.ProviderConfigureSdCpp(
     var refresh by remember { mutableStateOf(0) }
     LaunchedEffect(refresh) { installed = installer.installedEntries().map { it.id }.toSet() }
 
+    // AURA-014 bug #1 — self-healing for installs the download flow left behind: the v0.03
+    // ship registered the model row only in the download button's onSuccess and shipped the
+    // provider disabled, so a killed app or a lost write left a whole GGUF on disk that no
+    // Model pointed at — invisible to a picker that lists Models, not files. Disk truth wins:
+    // every catalog file in the runtime directory gets its row, and a provider carrying
+    // models stops being disabled behind the user's back only in the sense that the repair
+    // does what the enable-on-download should always have done. The plan is pure
+    // (reconcileSdLibrary, unit-tested); an already-consistent provider changes nothing.
+    LaunchedEffect(refresh, provider.models, provider.enabled) {
+        val diskNames = withContext(Dispatchers.IO) {
+            installer.libraryEntries().map { it.fileName }.toSet()
+        }
+        val repair = me.rerere.sdcpp.reconcileSdLibrary(
+            registeredModelIds = provider.models.map { it.modelId }.toSet(),
+            diskFileNames = diskNames,
+            enabled = provider.enabled,
+        )
+        if (repair.changed) {
+            var updated: ProviderSetting = provider
+            repair.register.forEach { entry ->
+                updated = registerInstalledModel(updated, me.rerere.sdcpp.SdCppCatalog.modelFor(entry))
+            }
+            if (repair.enable && updated is ProviderSetting.SdCppLocal) {
+                updated = updated.copy(enabled = true)
+            }
+            onEdit(updated as ProviderSetting.SdCppLocal)
+        }
+    }
+
     provider.description()
 
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1224,10 +1256,15 @@ private fun ColumnScope.ProviderConfigureSdCpp(
                     refresh++
                     // Registering the row is what makes the model selectable in the image
                     // picker; a file on disk that no Model points at is invisible to a chat.
+                    // enableAfterFirstDownload closes the other half of AURA-014 bug #1 — a
+                    // registered model under a disabled provider still fails the picker's
+                    // filteredProviders, which is why "downloaded" used to mean "unselectable".
                     onEdit(
-                        registerInstalledModel(
-                            provider,
-                            me.rerere.sdcpp.SdCppCatalog.modelFor(entry),
+                        enableAfterFirstDownload(
+                            registerInstalledModel(
+                                provider,
+                                me.rerere.sdcpp.SdCppCatalog.modelFor(entry),
+                            ),
                         ) as ProviderSetting.SdCppLocal,
                     )
                 }.onFailure { e ->

@@ -94,7 +94,9 @@ val DEFAULT_PROVIDERS = listOf(
     // not enabled (same pattern as the AICore default-off comment above).
     ProviderSetting.OpenAI(
         id = Uuid.parse("a8d2d463-e8c0-41f2-b89e-f5eb8e716cce"),
-        name = "RikkaHub",
+        // AURA-014 bug #4 — display renamed for the Nazarick re-brand; the endpoint is
+        // genuinely upstream-hosted (api.rikka-ai.com) and the detail page still shows it.
+        name = "Nazarick Hub",
         baseUrl = "https://api.rikka-ai.com/v1",
         apiKey = "",
         enabled = false,

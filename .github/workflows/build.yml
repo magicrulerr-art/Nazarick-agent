@@ -266,7 +266,9 @@ jobs:
           # ContextPlanner or ChatRequestMapper, so on a JVM-logic branch it is 11.5 minutes of
           # upstream coverage that cannot fail for this diff. It deserves its own job with
           # maxParallelForks, tracked as a follow-up rather than smuggled into this ticket.
-          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
+          # (:sd-cpp added by AURA-014: its catalog/PNG/repair suites shipped with AURA-012 and
+          # nothing ever ran them — an orphaned suite gates nothing.)
+          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest :sd-cpp:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
@@ -430,3 +432,62 @@ jobs:
       - name: Show ccache stats
         if: always()
         run: ccache -s || true
+
+  # AURA-014 — the "the app's own suite deserves its own job" follow-up build.yml has
+  # promised since run 42. Scoped deliberately: the classes that gate the shipped seed
+  # logic (GuardianSeedTest) and the Settings/Preferences-key persistence invariant
+  # (SettingsPersistenceCoverageTest — it fails when a Settings field is added without
+  # its key, exactly the trap that bit autoEnabledDefaultSkills). Compiling the test
+  # source set is most of the cost either way; what the separate job buys is a wall of
+  # its own, instead of pushing the shipping assemble job past the runner ceiling.
+  # Widen the filter here toward the full suite over time.
+  app-unit-tests:
+    name: app unit tests (scoped)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: app-tests-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Bootstrap web-ui lockfile
+        working-directory: web-ui
+        run: |
+          if [ ! -f bun.lock ]; then bun install; fi
+
+      - name: Run scoped app unit tests
+        run: >
+          ./gradlew :app:testMoxwReleaseUnitTest --stacktrace
+          --tests "me.rerere.rikkahub.data.guardians.GuardianSeedTest"
+          --tests "me.rerere.rikkahub.data.datastore.SettingsPersistenceCoverageTest"
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-unit-test-report
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14

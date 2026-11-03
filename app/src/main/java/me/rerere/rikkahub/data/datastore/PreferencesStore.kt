@@ -238,6 +238,7 @@ class SettingsStore(
         val ALLOW_MODEL_MISSION_CREATION = booleanPreferencesKey("allow_model_mission_creation")
         /** One-shot marker for the capability/prompt upgrade applied to built-in assistants. */
         val AGENT_DEFAULTS_VERSION = intPreferencesKey("agent_defaults_version")
+        val GUARDIANS_SEED_VERSION = intPreferencesKey("guardians_seed_version")
         val AUTO_COMPACTION_THRESHOLD_MODE = stringPreferencesKey("auto_compaction_threshold_mode")
         val AUTO_COMPACTION_THRESHOLD_PERCENT = intPreferencesKey("auto_compaction_threshold_percent")
         val AUTO_COMPACTION_THRESHOLD_TOKENS_K = intPreferencesKey("auto_compaction_threshold_tokens_k")
@@ -382,6 +383,7 @@ class SettingsStore(
                     JsonInstant.encodeToString(settings.enabledSystemInjections)
                 preferences[ALLOW_MODEL_MISSION_CREATION] = settings.allowModelMissionCreation
                 preferences[AGENT_DEFAULTS_VERSION] = settings.agentDefaultsVersion
+                preferences[GUARDIANS_SEED_VERSION] = settings.guardiansSeedVersion
                 preferences[AUTO_COMPACTION_THRESHOLD_MODE] = settings.autoCompactionThresholdMode.name
                 preferences[AUTO_COMPACTION_THRESHOLD_PERCENT] =
                     settings.autoCompactionThresholdPercent.coerceIn(5, 95)
@@ -519,6 +521,7 @@ class SettingsStore(
                 } ?: SystemInjections.DEFAULT_IDS,
                 allowModelMissionCreation = preferences[ALLOW_MODEL_MISSION_CREATION] != false,
                 agentDefaultsVersion = preferences[AGENT_DEFAULTS_VERSION] ?: 0,
+                guardiansSeedVersion = preferences[GUARDIANS_SEED_VERSION] ?: 0,
                 autoCompactionThresholdMode = preferences[AUTO_COMPACTION_THRESHOLD_MODE]
                     ?.let { value -> runCatching { AutoCompactionThresholdMode.valueOf(value) }.getOrNull() }
                     ?: AutoCompactionThresholdMode.PERCENT,
@@ -1146,6 +1149,14 @@ data class Settings(
      * Kept so a user who later turns any of those off is not re-opted-in on the next launch.
      */
     val agentDefaultsVersion: Int = 0,
+    /**
+     * AURA-014 — one-shot marker for seeding the Floor Guardians as chat assistants at
+     * first boot (see `GuardianSeed`). Same shape as [agentDefaultsVersion] and
+     * [autoEnabledDefaultSkills]: the seed runs once per [GuardianSeed.SEED_VERSION], so
+     * deleting a guardian sticks until the bundled pack itself changes enough to bump
+     * the version. 0 = never seeded (every install upgrading from <= v0.03).
+     */
+    val guardiansSeedVersion: Int = 0,
     val autoCompactionThresholdMode: AutoCompactionThresholdMode = AutoCompactionThresholdMode.PERCENT,
     val autoCompactionThresholdPercent: Int = 80,
     val autoCompactionThresholdTokensK: Int = 8,

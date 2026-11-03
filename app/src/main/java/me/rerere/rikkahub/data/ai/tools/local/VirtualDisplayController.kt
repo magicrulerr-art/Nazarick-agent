@@ -57,7 +57,7 @@ object VirtualDisplayController {
         // Align to 16 (avoids IllegalArgumentException on some GPU/SurfaceFlinger paths).
         val alignedW = (width + 15) and 15.inv()
         val alignedH = (height + 15) and 15.inv()
-        val name = "RikkaHub-VD-${System.currentTimeMillis()}"
+        val name = "${me.rerere.rikkahub.Brand.NAME}-VD-${System.currentTimeMillis()}"
         return try {
             val dm = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
             val imageReader = ImageReader.newInstance(alignedW, alignedH, 0x2 /* PixelFormat.RGBA_8888 */, 2)

@@ -183,6 +183,11 @@ class RikkaHubApp : Application() {
         // is a one-time install — user edits / deletes are respected on subsequent launches.
         seedDefaultSkillsIfNeeded()
 
+        // AURA-014 — the Floor Guardians as chat assistants, once per GuardianSeed.SEED_VERSION.
+        // Boot-time rather than a DEFAULT_ASSISTANTS read-path merge on purpose: defaults
+        // reappear on every settings read, a seeded guardian stays deleted when deleted.
+        seedGuardians()
+
         // Increment launch count
         incrementLaunchCount()
 
@@ -439,6 +444,26 @@ class RikkaHubApp : Application() {
                 Log.i(TAG, "incrementLaunchCount: $count")
             }.onFailure {
                 Log.e(TAG, "incrementLaunchCount failed", it)
+            }
+        }
+    }
+
+    /**
+     * AURA-014 — seed the bundled guardian pack into the assistant list (see `GuardianSeed`
+     * for the version marker and why). The asset read and the write are both IO; a corrupt
+     * pack costs a log line and a retry on next boot, never a stuck startup.
+     */
+    private fun seedGuardians() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                val text = assets.open(me.rerere.rikkahub.data.guardians.FloorGuardians.ASSET_PATH)
+                    .bufferedReader().use { it.readText() }
+                val inserted = me.rerere.rikkahub.data.guardians.seedGuardianAssistants(
+                    get<SettingsStore>(), text,
+                )
+                Log.i(TAG, "seedGuardians: inserted=$inserted")
+            }.onFailure {
+                Log.e(TAG, "seedGuardians failed", it)
             }
         }
     }

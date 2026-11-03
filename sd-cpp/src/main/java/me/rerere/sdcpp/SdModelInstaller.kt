@@ -51,6 +51,19 @@ class SdModelInstaller(
 
     fun installedEntries(): List<SdModelEntry> = SdCppCatalog.models.filter { isInstalled(it) }
 
+    /**
+     * Catalog entries found by *scanning* the runtime directory rather than by probing the
+     * catalog's own file names — a GGUF the user pushed in with adb counts, as does one the
+     * download completed but whose registration write never landed (AURA-014, bug #1).
+     * Zero-length and `.part` files are skipped: they are interrupted transfers, not models.
+     */
+    fun libraryEntries(): List<SdModelEntry> =
+        runtimeDir()
+            .listFiles { f -> f.isFile && f.length() > 0 && f.name.endsWith(".gguf", ignoreCase = true) }
+            ?.mapNotNull { SdCppCatalog.entryFor(it.name) }
+            ?.sortedBy { it.id }
+            ?: emptyList()
+
     /** Delete a model's weights. The caller owns removing it from the provider's model list. */
     suspend fun delete(entry: SdModelEntry): Boolean = withContext(Dispatchers.IO) {
         // No bare `return` in here: withContext's block is crossinline, which forbids a
