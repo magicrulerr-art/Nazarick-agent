@@ -30,4 +30,5 @@
   <string name="doctor_detail_app_build">Nazarick-agent %1$s (%2$s) — debug=%3$s</string>
   <string name="doctor_detail_termux_run_command_granted">Granted — Nazarick can dispatch shell commands to Termux.</string>
   <string name="doctor_clipboard_label">Nazarick diagnostic report</string>
+    <string name="app_name">Nazarick Agent</string>
 </resources>
