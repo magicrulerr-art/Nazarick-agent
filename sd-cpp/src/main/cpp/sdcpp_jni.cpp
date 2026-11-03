@@ -12,6 +12,7 @@
 
 #define TAG "SdCpp"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 
 namespace {
 
@@ -54,6 +55,26 @@ jstring to_jstring(JNIEnv *env, const char *text) {
     return env->NewStringUTF(text == nullptr ? "" : text);
 }
 
+// ExceptionDescribe writes to stderr, and stderr is /dev/null for most Android processes —
+// so the pending Throwable is stringified through Java and written to logcat ourselves.
+// Call only when ExceptionCheck() is true; leaves no exception pending.
+void log_pending_exception(JNIEnv *env, const char *where) {
+    jthrowable exc = env->ExceptionOccurred();
+    if (exc == nullptr) {
+        env->ExceptionClear();
+        return;
+    }
+    env->ExceptionClear();
+    jclass exc_class = env->GetObjectClass(exc);
+    jmethodID to_string = env->GetMethodID(exc_class, "toString", "()Ljava/lang/String;");
+    auto text = reinterpret_cast<jstring>(env->CallObjectMethod(exc, to_string));
+    const char *utf = text != nullptr ? env->GetStringUTFChars(text, nullptr) : "<null>";
+    LOGE("%s: pending %s", where, utf);
+    if (text != nullptr) {
+        env->ReleaseStringUTFChars(text, utf);
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -62,18 +83,24 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
     JNIEnv *env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        LOGE("JNI_OnLoad: GetEnv(JNI_VERSION_1_6) failed");
         return JNI_ERR;
     }
     jclass raster = env->FindClass("me/rerere/sdcpp/SdRaster");
     if (raster == nullptr) {
+        LOGE("JNI_OnLoad: FindClass(me/rerere/sdcpp/SdRaster) returned null");
+        log_pending_exception(env, "JNI_OnLoad.FindClass");
         return JNI_ERR;
     }
     g_raster_class = reinterpret_cast<jclass>(env->NewGlobalRef(raster));
     g_raster_ctor = env->GetMethodID(g_raster_class, "<init>", "(III[B)V");
     if (g_raster_ctor == nullptr) {
+        LOGE("JNI_OnLoad: GetMethodID(<init>, (III[B)V) returned null");
+        log_pending_exception(env, "JNI_OnLoad.GetMethodID");
         return JNI_ERR;
     }
     sd_set_log_callback(sd_log_bridge, nullptr);
+    LOGI("JNI_OnLoad: ok (SdRaster cached, log bridge installed)");
     return JNI_VERSION_1_6;
 }
 
