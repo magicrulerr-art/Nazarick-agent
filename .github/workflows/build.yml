@@ -469,6 +469,14 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
+      # :web:buildWebUi shells out to pnpm (web/build.gradle.kts) — the assemble job
+      # sets both bun and pnpm; a job that builds any :app variant needs pnpm too
+      # (run 92: Cannot run program "pnpm" ... No such file or directory).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
