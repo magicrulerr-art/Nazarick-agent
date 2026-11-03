@@ -98,6 +98,6 @@ class SdRenderPlanTest {
     fun `eta is unknown before the first measured step`() {
         assertEquals(null, SdRenderPlan.estimateSeconds(20, null))
         assertEquals(null, SdRenderPlan.estimateSeconds(20, 0L))
-        assertEquals(30.0, SdRenderPlan.estimateSeconds(20, 1500L), 0.001)
+        assertEquals(30.0, SdRenderPlan.estimateSeconds(20, 1500L)!!, 0.001)
     }
 }
