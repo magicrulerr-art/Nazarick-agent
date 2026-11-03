@@ -2,16 +2,21 @@ package me.rerere.sdcpp
 
 import java.io.ByteArrayInputStream
 import java.util.zip.InflaterInputStream
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 /**
  * [PngEncoder] gets checked against the container spec rather than against a picture: the
  * interesting failures are a wrong CRC, a missing per-scanline filter byte, or an IHDR that
  * disagrees with the pixel format — all invisible to "does it look right" and all fatal to a
  * viewer that is stricter than Android's.
+ *
+ * Written against JUnit4 like every other module's suite: the file originally imported
+ * kotlin.test, but nothing ever compiled it (:sd-cpp tests were wired into CI for the first
+ * time by AURA-014), and plain `kotlin("test")` on an Android module does not deliver the
+ * kotlin.test framework bindings — the house style costs no dependency at all.
  */
 class PngEncoderTest {
 
@@ -25,11 +30,11 @@ class PngEncoderTest {
     fun `output starts with the PNG signature`() {
         val png = PngEncoder.encode(pixels, 2, 2, 4)
         val expected = byteArrayOf(-119, 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 13, 10, 26, 10)
-        assertTrue(png.size > expected.size, "output is shorter than a PNG could be")
+        assertTrue("output is shorter than a PNG could be", png.size > expected.size)
         assertEquals(
+            "PNG signature missing — no decoder will touch this",
             expected.toList(),
             png.take(expected.size).toList(),
-            "PNG signature missing — no decoder will touch this",
         )
     }
 
@@ -37,11 +42,11 @@ class PngEncoderTest {
     fun `IHDR carries the geometry and the RGBA colour type`() {
         val png = PngEncoder.encode(pixels, 2, 2, 4)
         val ihdr = chunk(png, "IHDR")
-        assertEquals(13, ihdr.size, "IHDR payload must be 13 bytes")
-        assertEquals(2, beInt(ihdr, 0), "width")
-        assertEquals(2, beInt(ihdr, 4), "height")
-        assertEquals(8, ihdr[8].toInt(), "bit depth")
-        assertEquals(6, ihdr[9].toInt(), "colour type 6 = RGBA (2 would drop alpha)")
+        assertEquals("IHDR payload must be 13 bytes", 13, ihdr.size)
+        assertEquals("width", 2, beInt(ihdr, 0))
+        assertEquals("height", 2, beInt(ihdr, 4))
+        assertEquals("bit depth", 8, ihdr[8].toInt())
+        assertEquals("colour type 6 = RGBA (2 would drop alpha)", 6, ihdr[9].toInt())
     }
 
     @Test
@@ -49,18 +54,18 @@ class PngEncoderTest {
         val png = PngEncoder.encode(pixels, 2, 2, 4)
         val raw = InflaterInputStream(ByteArrayInputStream(chunk(png, "IDAT"))).readBytes()
         // Two rows, each prefixed with filter byte 0, then 2 pixels x 4 channels.
-        assertEquals(2 * (1 + 2 * 4), raw.size, "raw scanline stream is the wrong length")
-        assertEquals(0, raw[0].toInt(), "row 1 filter byte")
-        assertEquals(0, raw[9].toInt(), "row 2 filter byte")
+        assertEquals("raw scanline stream is the wrong length", 2 * (1 + 2 * 4), raw.size)
+        assertEquals("row 1 filter byte", 0, raw[0].toInt())
+        assertEquals("row 2 filter byte", 0, raw[9].toInt())
         assertEquals(
+            "row 1 pixels came back changed",
             pixels.take(8).toList(),
             raw.drop(1).take(8).toList(),
-            "row 1 pixels came back changed",
         )
         assertEquals(
+            "row 2 pixels came back changed",
             pixels.drop(8).toList(),
             raw.drop(10).take(8).toList(),
-            "row 2 pixels came back changed",
         )
     }
 
@@ -72,7 +77,7 @@ class PngEncoderTest {
                 update(type.toByteArray(Charsets.ISO_8859_1))
                 update(data)
             }.value.toInt()
-            assertEquals(crc, computed, "CRC mismatch on $type")
+            assertEquals("CRC mismatch on $type", crc, computed)
         }
     }
 
@@ -80,15 +85,15 @@ class PngEncoderTest {
     fun `a raster whose length disagrees with its geometry is refused`() {
         // Half a buffer otherwise becomes a half picture, which reads as a broken model
         // rather than as a broken transfer.
-        assertFailsWith<IllegalArgumentException> { PngEncoder.encode(pixels, 2, 3, 4) }
-        assertFailsWith<IllegalArgumentException> { PngEncoder.encode(pixels, 2, 2, 2) }
+        assertThrows(IllegalArgumentException::class.java) { PngEncoder.encode(pixels, 2, 3, 4) }
+        assertThrows(IllegalArgumentException::class.java) { PngEncoder.encode(pixels, 2, 2, 2) }
     }
 
     @Test
     fun `an RGB raster is encoded with colour type 2`() {
         val rgb = byteArrayOf(-1, 0, 0, 0, -1, 0)
         val ihdr = chunk(PngEncoder.encode(rgb, 2, 1, 3), "IHDR")
-        assertEquals(2, ihdr[9].toInt(), "colour type 2 = RGB when the engine reports 3 channels")
+        assertEquals("colour type 2 = RGB when the engine reports 3 channels", 2, ihdr[9].toInt())
     }
 
     // --- minimal chunk reader (the encoder's mirror image, deliberately written differently) ---

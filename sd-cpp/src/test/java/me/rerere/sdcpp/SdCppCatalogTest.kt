@@ -91,7 +91,7 @@ class SdRenderPlanTest {
     fun `an unsnaped base rounds down to the grid rather than up`() {
         assertEquals(512, SdRenderPlan.snap(550))
         assertEquals(64, SdRenderPlan.snap(64))
-        assertEquals(64, SdRenderPlan.snap(1), "never smaller than one cell")
+        assertEquals("never smaller than one cell", 64, SdRenderPlan.snap(1))
     }
 
     @Test

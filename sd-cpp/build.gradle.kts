@@ -58,9 +58,4 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
-    // PngEncoderTest is written in kotlin.test style (assertFailsWith). The suite existed
-    // and compiled NEVER — nothing in CI ran :sd-cpp tests until AURA-014 wired
-    // testDebugUnitTest — so the missing dependency sat invisible. Declared now, not the
-    // test rewritten: kotlin("test") coexists with JUnit4 on the classpath.
-    testImplementation(kotlin("test"))
 }
