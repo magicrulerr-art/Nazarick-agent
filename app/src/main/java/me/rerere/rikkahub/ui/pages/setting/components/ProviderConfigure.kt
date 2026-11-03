@@ -1194,6 +1194,13 @@ private fun ColumnScope.ProviderConfigureSdCpp(
     // models stops being disabled behind the user's back only in the sense that the repair
     // does what the enable-on-download should always have done. The plan is pure
     // (reconcileSdLibrary, unit-tested); an already-consistent provider changes nothing.
+    //
+    // The write goes through SettingsStore, NOT just the onEdit callback: this pane is a
+    // draft — every onEdit here (the Enable checkbox included) only mutates
+    // internalProvider, and the draft dies on back-navigation unless the user presses
+    // Save. A heal that lives in a draft is no heal at all; it must persist on its own.
+    // onEdit is still called so the visible draft agrees with the store immediately.
+    val settingsStore = org.koin.compose.koinInject<me.rerere.rikkahub.data.settings.SettingsStore>()
     LaunchedEffect(refresh, provider.models, provider.enabled) {
         val diskNames = withContext(Dispatchers.IO) {
             installer.libraryEntries().map { it.fileName }.toSet()
@@ -1211,7 +1218,13 @@ private fun ColumnScope.ProviderConfigureSdCpp(
             if (repair.enable && updated is ProviderSetting.SdCppLocal) {
                 updated = updated.copy(enabled = true)
             }
-            onEdit(updated as ProviderSetting.SdCppLocal)
+            val healed = updated as ProviderSetting.SdCppLocal
+            settingsStore.update { s ->
+                s.copy(providers = s.providers.map { p ->
+                    if (p is ProviderSetting.SdCppLocal && p.id == healed.id) healed else p
+                })
+            }
+            onEdit(healed)
         }
     }
 
