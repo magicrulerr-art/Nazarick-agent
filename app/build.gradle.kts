@@ -90,6 +90,16 @@ android {
         create("moxw") {
             dimension = "brand"
             applicationId = "com.nazarick.agent"
+            // Play Store listing (owner directive, 2026-11-04): the Play build ships
+            // under `com.nazarick.agent.beta` so it coexists with direct installs on
+            // the same device — same signing key, same versionCode/versionName, same
+            // label; the package name is the only difference. Property unset = the
+            // exact prior artifact (house rule: new knobs default to old behavior).
+            // Authorities in the manifest are all `${applicationId}`-scoped, so the
+            // two installs cannot collide on a provider.
+            if (providers.gradleProperty("PLAY_BETA").isPresent) {
+                applicationId = "com.nazarick.agent.beta"
+            }
             versionCode = 11
             versionName = "0.0.4"
             // Renamed for v0.04 — the launcher still read "Moxw Agent" after the

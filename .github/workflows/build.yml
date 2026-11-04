@@ -304,6 +304,58 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Play Store beta (owner directive, 2026-11-04): same code, same key, one
+      # different identity — -PPLAY_BETA re-points the moxw flavor at
+      # com.nazarick.agent.beta (app/build.gradle.kts) so the Play listing can
+      # live beside direct installs on the same device. Runs AFTER the main APK
+      # upload because it reuses (and first clears) the variant's output dir.
+      # The AAB is the Play-native format (bundleMoxwRelease signs with the same
+      # release key); the APK is uploaded so the exact beta bytes can be
+      # installed and verified on the Fold before anyone uploads.
+      - name: Assemble Play beta (com.nazarick.agent.beta)
+        env:
+          SKIP_LINT: ${{ github.event_name == 'push' && github.ref != 'refs/heads/master' }}
+          FLAVOR: ${{ matrix.flavor }}
+        run: |
+          set -eu
+          F="${FLAVOR^}"
+          FLAGS=""
+          if [ "$SKIP_LINT" = "true" ]; then
+            echo "fast lane: -PskipLintVital"
+            FLAGS="-PskipLintVital"
+          fi
+          rm -f app/build/outputs/apk/${FLAVOR}/release/*.apk
+          ./gradlew ":app:assemble${F}Release" ":app:bundle${F}Release" -PPLAY_BETA $FLAGS --stacktrace
+
+      - name: Verify Play beta signature
+        if: steps.keystore.outputs.present == 'true'
+        run: |
+          set -eu
+          APK="$(ls app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk | head -n 1)"
+          echo "artifact: $APK"
+          AS="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner 2>/dev/null | sort | tail -n 1)"
+          if [ -z "$AS" ]; then
+            echo "::warning::apksigner not found under \$ANDROID_HOME/build-tools"
+            exit 0
+          fi
+          "$AS" verify --print-certs "$APK"
+
+      - name: Upload Play beta APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-play-beta
+          path: app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Play beta AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab-play-beta
+          path: app/build/outputs/bundle/${{ matrix.flavor }}Release/*.aab
+          if-no-files-found: error
+          retention-days: 14
+
       # diag branch only: a debuggable APK so `run-as` and debuggerd -b work on the
       # Fold for the stall hunt, and so Logcat shows unshrunk stack frames.
       - name: Upload ${{ matrix.flavor }} debug APK
