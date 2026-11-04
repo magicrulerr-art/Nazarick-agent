@@ -210,10 +210,10 @@
   <string name="assistant_page_tool_surface_mode">Progressive MCP tool catalog</string>
   <string name="assistant_page_tool_surface_mode_desc">Replaces the MCP tools in each request with a tool_search / tool_open pair, so only the schemas the model opens are sent. Cuts the first-turn tool tokens, but the tool list changes between turns, which can cost prompt-cache hits. Local tools are never catalogued. Off by default.</string>
   <string name="assistant_page_tool_surface_no_model">Semantic tool search is off</string>
-  <string name="assistant_page_tool_surface_no_model_desc">No embedding model is installed, so this request carries no tools at all — Moxw has no keyword fallback to fall back on.</string>
+  <string name="assistant_page_tool_surface_no_model_desc">No embedding model is installed, so this request carries no tools at all — Nazarick has no keyword fallback to fall back on.</string>
   <string name="embedding_gate_later">Later</string>
   <string name="embedding_gate_action">Install</string>
-  <string name="embedding_gate_desc">Moxw searches your memory, files, past conversations and tools by meaning, and all of it runs on a local embedding model. Install one to turn those features on.</string>
+  <string name="embedding_gate_desc">Nazarick searches your memory, files, past conversations and tools by meaning, and all of it runs on a local embedding model. Install one to turn those features on.</string>
   <string name="embedding_gate_title">An embedding model is required</string>
   <string name="assistant_page_tool_surface_no_model_action">Install</string>
   <string name="assistant_page_local_tools_pin">Pin</string>
@@ -3117,13 +3117,13 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <!-- Getting started (first-run guide) -->
   <string name="getting_started_title">Getting started</string>
   <string name="getting_started_intro_title">Before your first chat</string>
-  <string name="getting_started_intro_desc">Moxw needs two things before it works: a chat model to reply, and an on-device embedding model that memory, file search, past-chat search and the tool catalogue all run on. Set those up, then add the optional extras.</string>
+  <string name="getting_started_intro_desc">Nazarick needs two things before it works: a chat model to reply, and an on-device embedding model that memory, file search, past-chat search and the tool catalogue all run on. Set those up, then add the optional extras.</string>
   <string name="getting_started_progress">Required %1$d of %2$d</string>
   <string name="getting_started_optional">Optional</string>
   <string name="getting_started_step_model_title">Add a chat model</string>
   <string name="getting_started_step_model_desc">Open a provider and paste an API key (OpenRouter, or any OpenAI-compatible endpoint). Without a chat model nothing can reply.</string>
   <string name="getting_started_step_embedding_title">Install the embedding model</string>
-  <string name="getting_started_step_embedding_desc">Every search in Moxw — memory, files, past chats and the tool catalogue — runs on the on-device embedding model. Without it the assistant has no tools and remembers nothing, so pick one small model to start.</string>
+  <string name="getting_started_step_embedding_desc">Every search in Nazarick — memory, files, past chats and the tool catalogue — runs on the on-device embedding model. Without it the assistant has no tools and remembers nothing, so pick one small model to start.</string>
   <string name="getting_started_step_tools_title">Switch on extra capabilities</string>
   <string name="getting_started_step_tools_desc">The tool catalogue is always on and chosen by meaning, so there is nothing to turn on for it. Here you enable the system-level ones that need something only you can provide: screen control, Shizuku, Termux and the like.</string>
   <string name="getting_started_step_permissions_title">Grant permissions</string>

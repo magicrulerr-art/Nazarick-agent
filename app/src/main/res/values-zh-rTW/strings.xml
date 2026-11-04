@@ -587,7 +587,7 @@
   <string name="search_page_placeholder">描述你要找的那則訊息…</string>
   <string name="search_page_needs_model">語義搜尋需要嵌入模型。請到助手的「記憶」頁安裝向量模型，然後再搜尋。</string>
   <string name="embedding_gate_title">需要向量模型</string>
-  <string name="embedding_gate_desc">Moxw 的記憶、檔案庫、歷史對話與工具都按「含義」檢索，全部依賴端側向量模型。安裝後這些功能才會開啟。</string>
+  <string name="embedding_gate_desc">Nazarick 的記憶、檔案庫、歷史對話與工具都按「含義」檢索，全部依賴端側向量模型。安裝後這些功能才會開啟。</string>
   <string name="embedding_gate_action">去安裝</string>
   <string name="embedding_gate_later">稍後</string>
   <string name="search_page_rebuild_button">重建索引</string>

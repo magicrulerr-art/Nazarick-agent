@@ -2775,7 +2775,7 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="assistant_page_tool_surface_no_model_desc">还没有安装向量模型，本次请求不会附带任何工具——本产品不提供关键词回退。</string>
   <string name="embedding_gate_later">稍后</string>
   <string name="embedding_gate_action">去安装</string>
-  <string name="embedding_gate_desc">Moxw 的记忆、文件库、历史对话和工具都按「含义」检索，全部依赖端侧向量模型。装好它，这些功能才会开启。</string>
+  <string name="embedding_gate_desc">Nazarick 的记忆、文件库、历史对话和工具都按「含义」检索，全部依赖端侧向量模型。装好它，这些功能才会开启。</string>
   <string name="embedding_gate_title">需要向量模型</string>
   <string name="assistant_page_tool_surface_no_model_action">去安装</string>
   <string name="assistant_page_local_tools_pin">常驻</string>
@@ -2832,13 +2832,13 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <!-- 快速上手（首次运行引导） -->
   <string name="getting_started_title">快速上手</string>
   <string name="getting_started_intro_title">开始聊天之前</string>
-  <string name="getting_started_intro_desc">Moxw 要能干活，先得备齐两件事：一个回话用的对话模型，和一个端侧向量模型——记忆、文件库、历史对话、工具检索全都跑在它上面。装好这两样，再按需开启可选能力。</string>
+  <string name="getting_started_intro_desc">Nazarick 要能干活，先得备齐两件事：一个回话用的对话模型，和一个端侧向量模型——记忆、文件库、历史对话、工具检索全都跑在它上面。装好这两样，再按需开启可选能力。</string>
   <string name="getting_started_progress">必做 %1$d/%2$d</string>
   <string name="getting_started_optional">可选</string>
   <string name="getting_started_step_model_title">添加对话模型</string>
   <string name="getting_started_step_model_desc">进入「模型提供商」，选一个并填入 API Key（OpenRouter，或任何 OpenAI 兼容接口）。没有对话模型，消息发不出去。</string>
   <string name="getting_started_step_embedding_title">安装向量模型</string>
-  <string name="getting_started_step_embedding_desc">Moxw 里的检索——记忆、文件、历史对话、工具目录——全部依赖端侧向量模型。没装它，助手既没有工具、也记不住东西；先装一个小号的即可。</string>
+  <string name="getting_started_step_embedding_desc">Nazarick 里的检索——记忆、文件、历史对话、工具目录——全部依赖端侧向量模型。没装它，助手既没有工具、也记不住东西；先装一个小号的即可。</string>
   <string name="getting_started_step_tools_title">开启额外能力</string>
   <string name="getting_started_step_tools_desc">工具目录始终开启、按语义自动挑选，不需要手动打开。这里开启的是需要你亲自提供前提的系统级能力：屏幕操控、Shizuku、Termux 等。</string>
   <string name="getting_started_step_permissions_title">授予权限</string>

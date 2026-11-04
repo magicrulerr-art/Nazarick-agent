@@ -326,6 +326,17 @@ jobs:
           fi
           rm -f app/build/outputs/apk/${FLAVOR}/release/*.apk
           ./gradlew ":app:assemble${F}Release" ":app:bundle${F}Release" -PPLAY_BETA $FLAGS --stacktrace
+          # Rename the Play artifact the same way app/build.gradle.kts renames the APKs:
+          # AGP names the bundle `app-<flavor>-release.aab` and that property governs only
+          # the APK outputFileName, so the flavour token "moxw" leaked onto the file Ainz-sama
+          # downloads for the Console. Rewrite the token in place; the upload glob is *.aab.
+          AAB="app/build/outputs/bundle/${FLAVOR}Release/app-${FLAVOR}-release.aab"
+          if [ -f "$AAB" ]; then
+            mv -f "$AAB" "app/build/outputs/bundle/${FLAVOR}Release/app-nazarick-release.aab"
+            echo "renamed bundle -> app-nazarick-release.aab"
+          else
+            echo "::warning::bundle not at $AAB — Play artifact keeps the flavour name"
+          fi
 
       - name: Verify Play beta signature
         if: steps.keystore.outputs.present == 'true'
