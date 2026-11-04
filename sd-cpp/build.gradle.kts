@@ -22,7 +22,22 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-fexceptions", "-frtti")
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                // GPU offload for image generation (owner directive, 2026-11-04:
+                // "images should go to npu, like the off-grid repo"). sd.cpp's pinned
+                // tree has no QNN backend — the Adreno GPU is the tier this engine can
+                // reach today, and the house doctrine says measure the flag-flip tier
+                // before paying for an NPU port. OpenCL, not Vulkan: llama-cpp's lane
+                // learned on THIS Fold that the Adreno driver faults on Vulkan
+                // (llama-cpp/build.gradle.kts:23) while OpenCL ran 25/25 layers at
+                // 376 tok/s prefill. The wiring (Khronos headers + soname stub, and
+                // why the dial is SDCPP_ENABLE_OPENCL rather than SD_OPENCL, which
+                // this module's CMakeLists FORCEs) lives in src/main/cpp/CMakeLists.txt.
+                // Escape hatch: -Psd.gpu=cpu.
+                val sdGpu = providers.gradleProperty("sd.gpu").getOrElse("opencl")
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    "-DSDCPP_ENABLE_OPENCL=${if (sdGpu == "opencl") "ON" else "OFF"}",
+                )
             }
         }
     }
