@@ -198,12 +198,32 @@ JNIEXPORT jobject JNICALL Java_me_rerere_sdcpp_SdCppJni_nativeGenerate(
     jobject raster = nullptr;
     if (ok && result != nullptr && result->count > 0) {
         const sd_image_t &image = result->items[0].image;
-        const jsize bytes = static_cast<jsize>(image.width * image.height * image.channel);
+        // The engine's VAE emits 3-channel RGB for SD1.5 (proved on-device: sampling and
+        // decode finished, then Kotlin's isConsistent() rejected the raster). SdRaster's
+        // contract is RGBA — promote here, at the copy we already pay for, so every Kotlin
+        // consumer (PngEncoder included) sees one format. 4 comes through untouched;
+        // anything else is a shape we cannot name, so it fails the same contract check.
+        const int out_channel = image.channel == 4 ? 4 : (image.channel == 3 ? 4 : image.channel);
+        const size_t src_px = static_cast<size_t>(image.width) * image.height;
+        const jsize bytes = static_cast<jsize>(src_px * out_channel);
         jbyteArray pixels = env->NewByteArray(bytes);
         if (pixels != nullptr) {
-            env->SetByteArrayRegion(pixels, 0, bytes, reinterpret_cast<const jbyte *>(image.data));
+            if (image.channel == 3) {
+                // RGB -> RGBA in a staging buffer; SetByteArrayRegion wants contiguous source.
+                std::vector<uint8_t> rgba(src_px * 4);
+                const uint8_t *rgb = reinterpret_cast<const uint8_t *>(image.data);
+                for (size_t px = 0; px < src_px; ++px) {
+                    rgba[px * 4 + 0] = rgb[px * 3 + 0];
+                    rgba[px * 4 + 1] = rgb[px * 3 + 1];
+                    rgba[px * 4 + 2] = rgb[px * 3 + 2];
+                    rgba[px * 4 + 3] = 0xFF;
+                }
+                env->SetByteArrayRegion(pixels, 0, bytes, reinterpret_cast<const jbyte *>(rgba.data()));
+            } else {
+                env->SetByteArrayRegion(pixels, 0, bytes, reinterpret_cast<const jbyte *>(image.data));
+            }
             raster = env->NewObject(g_raster_class, g_raster_ctor, static_cast<jint>(image.width),
-                                    static_cast<jint>(image.height), static_cast<jint>(image.channel), pixels);
+                                    static_cast<jint>(image.height), static_cast<jint>(out_channel), pixels);
             env->DeleteLocalRef(pixels);
         }
     } else {
