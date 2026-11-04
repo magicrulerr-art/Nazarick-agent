@@ -89,12 +89,9 @@ if(SDCPP_ENABLE_OPENCL AND TARGET sdcpp_opencl_stub)
     # layer down (as llamajni does for its separate libggml-opencl.so) does not
     # reach the leaf: ld.lld listed every cl* there. The leaf must carry it, and
     # link the stub explicitly so libOpenCL.so lands in DT_NEEDED and the vendor
-    # ICD is what the loader resolves at dlopen time.
-    target_link_options(sdcpp_jni PRIVATE
-        "LINKER:--unresolved-symbols=ignore-all"
-        "LINKER:-z,lazy")
-    target_link_libraries(sdcpp_jni PRIVATE ${OpenCL_LIBRARIES})
-    add_dependencies(sdcpp_jni sdcpp_opencl_stub)
+    # ICD is what the loader resolves at dlopen time. (Applied after add_library
+    # below — run 106 named the ordering: a target does not exist before its
+    # add_library call, and CMake is merciless about foreknowledge.)
 endif()
 
 add_library(sdcpp_jni SHARED
@@ -105,6 +102,14 @@ target_link_libraries(sdcpp_jni PRIVATE
         stable-diffusion
         log
 )
+
+if(SDCPP_ENABLE_OPENCL AND TARGET sdcpp_opencl_stub)
+    target_link_options(sdcpp_jni PRIVATE
+        "LINKER:--unresolved-symbols=ignore-all"
+        "LINKER:-z,lazy")
+    target_link_libraries(sdcpp_jni PRIVATE ${OpenCL_LIBRARIES})
+    add_dependencies(sdcpp_jni sdcpp_opencl_stub)
+endif()
 
 # Two ggml's live in this APK: llama.cpp's inside libllamajni.so, sd.cpp's patched fork inside
 # libsdcpp_jni.so. They are different builds with different headers, and Android's linker
