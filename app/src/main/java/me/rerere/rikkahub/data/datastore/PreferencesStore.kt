@@ -979,7 +979,21 @@ class SettingsStore(
 
     suspend fun update(fn: (Settings) -> Settings) {
         transformLock.withLock {
-            updateInternal(fn(settingsFlow.value))
+            val current = settingsFlow.value
+            // Same dummy rule as update(Settings): settingsFlow is seeded with
+            // Settings.dummy() until the disk read lands, so fn over a dummy would
+            // persist "defaults + caller's delta" as the user's whole settings —
+            // the store's own comment names this wipe. Boot hooks (seedGuardians,
+            // repairSdLibrary) hit exactly this on RikkaHubApp.onCreate: the write
+            // beat the load and blew away providers on every launch (Fold, v0.0.4).
+            // Skip like the sibling overload; callers that must not lose the delta
+            // should await settingsFlow (distinctUntilChanged delivers the real
+            // settings) before writing.
+            if (current.init) {
+                Log.w(TAG, "Cannot update from dummy settings (disk load pending)")
+                return
+            }
+            updateInternal(fn(current))
         }
     }
 

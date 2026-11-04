@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.common.android.Logging
 import me.rerere.common.android.appTempFolder
 import com.whl.quickjs.android.QuickJSLoader
@@ -461,6 +462,11 @@ class RikkaHubApp : Application() {
     private fun seedGuardians() {
         get<AppScope>().launch(Dispatchers.IO) {
             runCatching {
+                // Gate on the disk load: settingsFlow is a dummy until it lands, update(fn)
+                // refuses dummy writes, and a boot hook that fires first must not lose its
+                // seed either — wait for the real snapshot (Fold v0.0.4 proved a seed
+                // written over the dummy wipes providers on every launch).
+                awaitRealSettings()
                 val text = assets.open(me.rerere.rikkahub.data.guardians.FloorGuardians.ASSET_PATH)
                     .bufferedReader().use { it.readText() }
                 val inserted = me.rerere.rikkahub.data.guardians.seedGuardianAssistants(
@@ -471,6 +477,13 @@ class RikkaHubApp : Application() {
                 Log.e(TAG, "seedGuardians failed", it)
             }
         }
+    }
+
+    /** Suspend until [SettingsStore.settingsFlow] carries the disk-backed snapshot. */
+    private suspend fun awaitRealSettings() {
+        val store = get<SettingsStore>()
+        withTimeoutOrNull(15_000) { store.settingsFlow.first { !it.init } }
+            ?: error("settings still dummy after 15s — skipping boot mutations")
     }
 
     /**
@@ -484,7 +497,8 @@ class RikkaHubApp : Application() {
         get<AppScope>().launch(Dispatchers.IO) {
             runCatching {
                 val store = get<SettingsStore>()
-                val sd = store.settingsFlowRaw.first().providers
+                awaitRealSettings()
+                val sd = store.settingsFlow.value.providers
                     .filterIsInstance<me.rerere.ai.provider.ProviderSetting.SdCppLocal>()
                     .firstOrNull() ?: return@runCatching
                 val installer = me.rerere.sdcpp.SdModelInstaller(this@RikkaHubApp)
