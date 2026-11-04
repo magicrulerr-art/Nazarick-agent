@@ -83,16 +83,18 @@ if(SDCPP_ENABLE_OPENCL AND TARGET sdcpp_opencl_stub)
             add_dependencies(${_sdcpp_opencl_consumer} sdcpp_opencl_stub)
         endif()
     endforeach()
-    # sd-cpp builds ggml static (SD_BUILD_SHARED_GGML_LIB=OFF), so the stub's missing
-    # cl* symbols surface at the libsdcpp_jni.so link, not at a backend .so — the leaf
-    # needs the lazy treatment llamajni applied one level earlier.
-    foreach(_sdcpp_opencl_link ggml-opencl stable-diffusion)
-        if(TARGET ${_sdcpp_opencl_link})
-            target_link_options(${_sdcpp_opencl_link} PRIVATE
-                "LINKER:--unresolved-symbols=ignore-all"
-                "LINKER:-z,lazy")
-        endif()
-    endforeach()
+    # The NDK links every shared lib with --no-undefined. sd-cpp builds its ggml
+    # static (SD_BUILD_SHARED_GGML_LIB=OFF), so the cl* references surface at the
+    # libsdcpp_jni.so link — run 105 proved that applying the lazy treatment one
+    # layer down (as llamajni does for its separate libggml-opencl.so) does not
+    # reach the leaf: ld.lld listed every cl* there. The leaf must carry it, and
+    # link the stub explicitly so libOpenCL.so lands in DT_NEEDED and the vendor
+    # ICD is what the loader resolves at dlopen time.
+    target_link_options(sdcpp_jni PRIVATE
+        "LINKER:--unresolved-symbols=ignore-all"
+        "LINKER:-z,lazy")
+    target_link_libraries(sdcpp_jni PRIVATE ${OpenCL_LIBRARIES})
+    add_dependencies(sdcpp_jni sdcpp_opencl_stub)
 endif()
 
 add_library(sdcpp_jni SHARED
