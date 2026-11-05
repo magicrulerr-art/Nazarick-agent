@@ -100,16 +100,16 @@ android {
             if (providers.gradleProperty("PLAY_BETA").isPresent) {
                 applicationId = "com.nazarick.agent.beta"
             }
-            versionCode = 11
-            versionName = "0.0.4"
+            versionCode = 12
+            versionName = "0.0.1"
             // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
             // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
             // only as the upstream fallback in main's strings.xml.
             resValue("string", "app_name", "Nazarick Agent")
             buildConfigField("String", "BRAND_NAME", "\"Nazarick\"")
             buildConfigField("String", "BRAND_ID", "\"nazarick\"")
-            buildConfigField("String", "VERSION_NAME", "\"0.0.4\"")
-            buildConfigField("String", "VERSION_CODE", "\"11\"")
+            buildConfigField("String", "VERSION_NAME", "\"0.0.1\"")
+            buildConfigField("String", "VERSION_CODE", "\"12\"")
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
             // The version line now matches the tags (v0.03 == 0.0.3), which it did not: this
             // flavour used to carry the donor's 0.7.x, so an APK labelled 0.7.0 shipped out of a
