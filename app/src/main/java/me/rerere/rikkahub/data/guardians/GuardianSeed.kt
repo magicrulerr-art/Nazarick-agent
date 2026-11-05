@@ -126,19 +126,19 @@ suspend fun seedGuardianAssistants(
     version: Int = GuardianSeed.SEED_VERSION,
 ): Boolean {
     val current = store.settingsFlow.first()
-    if (current.guardianSeedVersion >= version) return false
+    if (current.guardiansSeedVersion >= version) return false
     val pack = runCatching { FloorGuardians.parse(assetText) }
         .getOrNull()
-        ?.guardian
+        ?\.guardians
         ?.map { GuardianSeedSpec(it.name, it.description, it.prompt, it.portrait) }
         ?: return false
     val plan = GuardianSeed.plan(current.assistants, pack)
     store.update { settings ->
-        if (settings.guardianSeedVersion >= version) settings
+        if (settings.guardiansSeedVersion >= version) settings
         else settings.copy(
-            assistants = settings.assistants + plan.insert,
-            guardianSeedVersion = version,
+            assistants = settings.assistants + plan.inserts,
+            guardiansSeedVersion = version,
         )
     }
-    return plan.insert.isNotEmpty()
+    return plan.inserts.isNotEmpty()
 }
