@@ -68,26 +68,26 @@ android {
         }
     }
 
-    // This branch ships exactly one product: Moxw Agent. The `brand` dimension is
-    // kept because the flavour source set (`app/src/moxw/res`) carries the name, the
+    // This branch ships exactly one product: Nazarick Agent. The `brand` dimension is
+    // kept because the flavour source set (`app/src/nazarick/res`) carries the name, the
     // icon and the localised strings — but with a single flavour it describes an
     // identity rather than a choice.
     //
-    //  · moxw — Moxw Agent. A standalone brand, with its own applicationId and an
+    //  · nazarick — Nazarick Agent. A standalone brand, with its own applicationId and an
     //    independent version line (0.x), see cold-memory M21.
     //
     // The installation identity is `com.nazarick.agent` as of 2026-10-31: this project is
     // no longer a downstream of anything, so the package follows the project rather than
     // the old product brand. Two consequences, both accepted knowingly: an existing
-    // `com.moxw.agent` install does NOT upgrade onto this — Android reads a package name
+    // `com.nazarick.agent` install does NOT upgrade onto this — Android reads a package name
     // change as a different app, so the old one stays on the device until it is removed —
-    // and the flavour is still *named* `moxw`, because renaming that would move source
+    // and the flavour is still *named* `nazarick`, because renaming that would move source
     // sets, the CI matrix and every artifact name, which is a ticket of its own.
     // The Kotlin namespace stays `me.rerere.rikkahub` for the same reason: thousands of
     // files, plus exported intent actions that external automation addresses by name.
     flavorDimensions += "brand"
     productFlavors {
-        create("moxw") {
+        create("nazarick") {
             dimension = "brand"
             applicationId = "com.nazarick.agent"
             // Play Store listing (owner directive, 2026-11-04): the Play build ships
@@ -102,12 +102,12 @@ android {
             }
             versionCode = 11
             versionName = "0.0.4"
-            // Renamed for v0.04 — the launcher still read "Moxw Agent" after the
+            // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
             // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
             // only as the upstream fallback in main's strings.xml.
             resValue("string", "app_name", "Nazarick Agent")
             buildConfigField("String", "BRAND_NAME", "\"Nazarick\"")
-            buildConfigField("String", "BRAND_ID", "\"moxw\"")
+            buildConfigField("String", "BRAND_ID", "\"nazarick\"")
             buildConfigField("String", "VERSION_NAME", "\"0.0.4\"")
             buildConfigField("String", "VERSION_CODE", "\"11\"")
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
@@ -245,14 +245,14 @@ androidComponents {
     onVariants(selector().all()) { variant ->
         variant.outputs.forEach { output ->
             // AGP names every output `app-<flavour>-<abi>-<buildType>.apk`, so the file a
-            // user downloads said "moxw" — the internal brand id and source-set directory
+            // user downloads said "nazarick" — the internal brand id and source-set directory
             // name — while everything they can actually see (package, repo, release) says
             // Nazarick.
             //
             // Rewrite the token rather than rebuild the name from filters, so AGP keeps
             // ownership of arm64 / x86_64 / universal. The catch, learned from run
             // 41433989045: `outputFileName.set(outputFileName.map { … })` compiles happily
-            // and then dies during dependency resolution of :app:packageMoxwRelease with
+            // and then dies during dependency resolution of :app:packageNazarickRelease with
             //   Circular evaluation detected: property(java.lang.String, map(…))
             // because a property's new value was derived from that same property. So read
             // AGP's default eagerly and assign a plain String — a value, not a mapping.
@@ -263,7 +263,7 @@ androidComponents {
             // says so, which beats a build that cannot configure itself.
             val default = runCatching { output.outputFileName.orNull }.getOrNull()
             if (default != null) {
-                output.outputFileName.set(default.replaceFirst("app-moxw", "app-nazarick"))
+                output.outputFileName.set(default.replaceFirst("app-nazarick", "app-nazarick"))
             } else {
                 logger.lifecycle(
                     "nazarick: could not read AGP's default outputFileName for ${variant.name}" +
@@ -281,8 +281,8 @@ composeCompiler {
 }
 
 tasks.register("buildAll") {
-    dependsOn("assembleMoxwRelease", "bundleMoxwRelease")
-    description = "Build the Moxw APK and AAB"
+    dependsOn("assembleNazarickRelease", "bundleNazarickRelease")
+    description = "Build the Nazarick APK and AAB"
 }
 
 ksp {

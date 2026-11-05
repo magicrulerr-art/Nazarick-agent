@@ -56,10 +56,10 @@ enum class GettingStartedStep { Model, Embedding, Tools, Permissions, Workspace 
 /**
  * The steps without which the app cannot do its job at all. Everything else only *adds*
  * capability, so the guide tracks progress against these two rather than treating all five
- * as equally required — on Moxw a user with both models configured already has a working
+ * as equally required — on Nazarick a user with both models configured already has a working
  * agent, and a "done 2 of 5" that never resolves reads as a failure.
  *
- * Moxw-specific: [GettingStartedStep.Embedding] is the piece the stock line does not have.
+ * Nazarick-specific: [GettingStartedStep.Embedding] is the piece the stock line does not have.
  * Retrieval in this product runs through the on-device embedding model, so a chat model
  * alone buys a plain chat app — no tools, no memory.
  */
@@ -106,7 +106,7 @@ fun evaluateGettingStartedSteps(
  * don't know what to do". This page turns that dead end into an ordered, tappable checklist
  * that points at the exact setting each capability lives in.
  *
- * The Moxw build adds the one prerequisite the stock line does not have: an on-device
+ * The Nazarick build adds the one prerequisite the stock line does not have: an on-device
  * embedding model, which memory, the file library, past-chat search and the tool catalogue
  * all run on. It is listed second, right after the chat model, because without it the two
  * required steps are not done no matter what else is set up.

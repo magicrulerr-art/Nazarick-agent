@@ -382,7 +382,7 @@ private fun errorEnvelope(code: String, detail: String): String = buildJsonObjec
 }.toString()
 
 /**
- * Moxw - semantic search over the cold-memory knowledge base.
+ * Nazarick - semantic search over the cold-memory knowledge base.
  *
  * Sits beside `memory_index` / `memory_read` rather than replacing them: those are exact and free,
  * and a model that already knows the file name should not pay for an embedding call to be told it.

@@ -40,7 +40,7 @@ data class Assistant(
     val customHeaders: List<CustomHeader> = emptyList(),
     val customBodies: List<CustomBody> = emptyList(),
     val mcpServers: Set<Uuid> = emptySet(),
-    // Moxw - redefined: this used to be the set of local-tool GROUPS this assistant had enabled.
+    // Nazarick - redefined: this used to be the set of local-tool GROUPS this assistant had enabled.
     // It is now the set of GATED groups the user turned on. Every other group is unconditional
     // (see LocalToolGates), because a tool catalogue that feeds an embedding model does not get
     // smaller in any way the model notices - the ranking, not the size, decides what a turn sees.
@@ -103,7 +103,7 @@ data class Assistant(
     // Appended last on purpose: a new field may never shift the position of an existing one.
     val enableCompactContextTool: Boolean = true,
     // Phase 17 (①) — tool exposure. This field used to hold DIRECT / PROGRESSIVE_CATALOG and let an
-    // assistant inject every enabled tool's schema up front. Moxw removed the direct dump: the tool
+    // assistant inject every enabled tool's schema up front. Nazarick removed the direct dump: the tool
     // list is always built from `tool_search` / `tool_open` plus what the turn actually retrieved,
     // because the embedding model is a prerequisite here rather than an enhancement. The field is
     // gone rather than fixed to one value, so there is no stored mode left to disagree with the
@@ -176,7 +176,7 @@ data class Assistant(
     // Appended last on purpose: a new field may never shift the position of an existing one.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val pinnedToolNames: List<String> = emptyList(),
-    // Moxw P4 — the file library. Off until asked for, like cold memory: indexing a directory
+    // Nazarick P4 — the file library. Off until asked for, like cold memory: indexing a directory
     // costs a model call per chunk, and a feature that spends that without being asked is one
     // users turn off. @EncodeDefault(NEVER) keeps an assistant that never used it byte-identical
     // in the store, which is also why both fields can be appended here safely.

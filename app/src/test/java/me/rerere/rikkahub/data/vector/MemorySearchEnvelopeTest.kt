@@ -122,7 +122,7 @@ class MemorySearchEnvelopeTest {
     fun `unavailable names the reason and the way out`() {
         // "The way out" is an instruction now, not an alternative. This used to point at
         // `memory_read`, which was right while a keyword path existed and is exactly the fallback
-        // Moxw removed: with no embedding model the search does not run at all, so the only
+        // Nazarick removed: with no embedding model the search does not run at all, so the only
         // sentence worth sending is how to install one.
         val json = Json.parseToJsonElement(
             MemorySearchEnvelope.unavailable("no embedding model is installed")

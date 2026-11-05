@@ -9,7 +9,7 @@ package me.rerere.ai
  * consumers and unit tests on the historical value.
  */
 object AppBranding {
-    /** "RikkaHub" on the pure build, "Nazarick" on the moxw build (v0.04+). */
+    /** "RikkaHub" on the pure build, "Nazarick" on the nazarick build (v0.04+). */
     @Volatile
     var name: String = "RikkaHub"
 }

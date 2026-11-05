@@ -85,7 +85,7 @@ val dataSourceModule = module {
     single { get<UsageLedgerDatabase>().usageRecordDao() }
     single { UsageLedger(get()) }
 
-    // Moxw - the vector index also lives in its own database file (see VectorIndexDatabase for
+    // Nazarick - the vector index also lives in its own database file (see VectorIndexDatabase for
     // why). Every row in it is derivable from a document plus an embedding model, so it is a
     // cache rather than user data: it must never sit on the main database's upgrade path, and
     // forgetting it is just deleting the file.

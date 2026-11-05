@@ -3,7 +3,7 @@ package me.rerere.rikkahub.data.ai.tools
 import me.rerere.rikkahub.data.agentdef.LocalToolGroups
 
 /**
- * Moxw — which local-tool groups the user may still switch off, and which are simply always on.
+ * Nazarick — which local-tool groups the user may still switch off, and which are simply always on.
  *
  * ## Why the switch is gone for most groups
  *

@@ -88,7 +88,7 @@ object ImportedDatabaseReconciler {
 
     /**
      * v35 (批 A) adds six runtime columns to `missions` through the 34->35 auto-migration. A
-     * v32..v34 moxw backup carries the table without them, and the "already current" stamp
+     * v32..v34 nazarick backup carries the table without them, and the "already current" stamp
      * below skips the auto-migration (same reasoning as [SHELL_COMPATIBILITY_MODE_DDL]), so
      * each missing column is added here. The DDL mirrors what Room's auto-migration emits; a
      * column guard keeps re-runs a no-op (bare ALTER ... ADD COLUMN is not idempotent).
@@ -171,7 +171,7 @@ object ImportedDatabaseReconciler {
         "CREATE INDEX IF NOT EXISTS `index_missions_updated_at` ON `missions` (`updated_at`)",
         // v33: mission_events is generalised into the unified run_events journal. The new
         // table is fork-only (absent from upstream backups), so it is pre-created here the
-        // same way missions is; a v32 moxw backup that already carries mission_events is
+        // same way missions is; a v32 nazarick backup that already carries mission_events is
         // dropped so the v32->33 auto-migration (skipped on the "already current" stamp path)
         // does not leave a stale, orphaned table behind. Every statement is idempotent.
         "CREATE TABLE IF NOT EXISTS `run_events` (`id` TEXT NOT NULL, `mission_id` TEXT, `conversation_id` TEXT, `run_id` TEXT, `type` TEXT NOT NULL, `title` TEXT NOT NULL, `detail` TEXT, `payload_json` TEXT, `created_at` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`mission_id`) REFERENCES `missions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",

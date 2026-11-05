@@ -78,7 +78,7 @@ object MemorySearchEnvelope {
      *
      * The hint is an instruction, not an alternative. It used to point at `memory_index` /
      * `memory_read` — a keyword-free way to browse the same directory — but that is a fallback for
-     * a feature that is simply off, and Moxw does not keep those: the model is what searching by
+     * a feature that is simply off, and Nazarick does not keep those: the model is what searching by
      * meaning runs on, so the only thing worth telling anyone is how to install it.
      */
     fun unavailable(detail: String?): String = buildJsonObject {

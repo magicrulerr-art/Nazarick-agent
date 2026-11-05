@@ -501,13 +501,13 @@ class ChatService(
     private val policyEngine: me.rerere.rikkahub.data.policy.PolicyEngine,
     private val workspaceRepository: WorkspaceRepository,
     private val folderRepository: FolderRepository,
-    /** Moxw - owns the knowledge-base vector index: its background sync and its search. */
+    /** Nazarick - owns the knowledge-base vector index: its background sync and its search. */
     private val memoryIndex: MemoryIndexCoordinator,
-    /** Moxw - owns the tool catalogue's vectors, so `tool_search` can rank by meaning. */
+    /** Nazarick - owns the tool catalogue's vectors, so `tool_search` can rank by meaning. */
     private val toolVectors: me.rerere.rikkahub.data.vector.ToolVectorIndex,
     private val libraryIndex: me.rerere.rikkahub.data.vector.LibraryIndexCoordinator,
     private val conversationIndex: me.rerere.rikkahub.data.vector.ConversationIndexCoordinator,
-    /** Moxw workbench - tracks conversation-bound missions; artifact logging hooks below. */
+    /** Nazarick workbench - tracks conversation-bound missions; artifact logging hooks below. */
     private val missionEngine: me.rerere.rikkahub.data.mission.MissionEngine,
     /** One creation path for missions the model starts with `mission_create`. */
     private val missionCreationProvider: () -> me.rerere.rikkahub.service.mission.MissionCreationService,
@@ -518,7 +518,7 @@ class ChatService(
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
-    // Moxw - <app_environment> 系统提示注入 (依赖 workspaceRepository / libraryIndex, 故在类内构造)
+    // Nazarick - <app_environment> 系统提示注入 (依赖 workspaceRepository / libraryIndex, 故在类内构造)
     private val appEnvironmentTransformer = me.rerere.rikkahub.data.ai.transformers
         .AppEnvironmentTransformer(workspaceRepository, libraryIndex)
 
@@ -933,7 +933,7 @@ class ChatService(
         if (conversation != null) {
             updateConversation(conversationId, conversation)
             settingsStore.updateAssistant(conversation.assistantId)
-            // Moxw - opening a conversation is when the index is about to be wanted, and it is
+            // Nazarick - opening a conversation is when the index is about to be wanted, and it is
             // the only moment the app reliably sees. Debounced inside, so flicking between
             // conversations does not re-scan a directory the last few minutes already covered;
             // failures are logged there and never reach this call.
@@ -2930,7 +2930,7 @@ class ChatService(
     }
 
     /**
-     * Moxw P4 - the file library. Built only when the assistant turned it on AND bound a
+     * Nazarick P4 - the file library. Built only when the assistant turned it on AND bound a
      * workspace; otherwise this returns an empty list and the tool surface is byte-for-byte what
      * it was before P4.
      *

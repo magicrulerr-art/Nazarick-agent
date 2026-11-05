@@ -137,7 +137,7 @@ class LlamaCppProvider(
      *  (a no-op when it is already loaded - see [ensureLoaded]). Shared by [generateText] and
      *  [streamText] so the two agree on exactly one load path; both already hold [loadMutex]
      *  before calling this. */
-    /** Bench hook for the engine A/B lanes: `adb shell setprop debug.moxw.gpu_layers N`.
+    /** Bench hook for the engine A/B lanes: `adb shell setprop debug.nazarick.gpu_layers N`.
      *  Absent (0) keeps the shipped CPU path exactly as before; -1 offloads every layer the
      *  compiled-in GPU backend can take. Read per load, so a lane switch only needs a model
      *  reload, never a reinstall. SystemProperties is a hidden API — reflection keeps the
@@ -145,13 +145,13 @@ class LlamaCppProvider(
     private fun gpuLayersOverride(): Int = try {
         Class.forName("android.os.SystemProperties")
             .getMethod("getInt", String::class.java, Int::class.javaPrimitiveType)
-            .invoke(null, "debug.moxw.gpu_layers", 0) as Int
+            .invoke(null, "debug.nazarick.gpu_layers", 0) as Int
     } catch (_: Throwable) {
         0
     }
 
     private suspend fun ensureModelReady(messages: List<UIMessage>, params: TextGenerationParams) {
-        Log.i("moxw-perf", "diag: ensureModelReady enter msgs=${messages.size} tools=${params.tools.size} availMem=${readAvailableRamBytes() / 1048576}MB")
+        Log.i("nazarick-perf", "diag: ensureModelReady enter msgs=${messages.size} tools=${params.tools.size} availMem=${readAvailableRamBytes() / 1048576}MB")
         val installed = prefs.installedModels(LocalRuntime.LlamaCpp)
         val modelPath = resolveModelPath(installed, params.model.modelId)
         // The load blocks the calling thread on a multi-gigabyte mmap, metadata parse and
@@ -169,7 +169,7 @@ class LlamaCppProvider(
                 availableRamBytes = readAvailableRamBytes(),
                 gpuLayers = gpuLayersOverride(),
             )
-            Log.i("moxw-perf", "diag: ensureLoaded returned")
+            Log.i("nazarick-perf", "diag: ensureLoaded returned")
         }
     }
 
@@ -252,15 +252,15 @@ class LlamaCppProvider(
             gpuLayers: Int = 0,
         ) {
             if (loadedPath.get() == path) {
-                Log.i("moxw-perf", "diag: replan begin tools=${tools.size} sysPromptBytes=$systemPromptBytes")
+                Log.i("nazarick-perf", "diag: replan begin tools=${tools.size} sysPromptBytes=$systemPromptBytes")
                 runtime.replan(tools, systemPromptBytes)
-                Log.i("moxw-perf", "diag: replan end")
+                Log.i("nazarick-perf", "diag: replan end")
                 return
             }
             loadedPath.set(null)
-            Log.i("moxw-perf", "diag: load begin path=$path tools=${tools.size} sysPromptBytes=$systemPromptBytes availRamMB=${availableRamBytes / 1048576} gpuLayers=$gpuLayers")
+            Log.i("nazarick-perf", "diag: load begin path=$path tools=${tools.size} sysPromptBytes=$systemPromptBytes availRamMB=${availableRamBytes / 1048576} gpuLayers=$gpuLayers")
             runtime.load(path, tools, systemPromptBytes, availableRamBytes, gpuLayers = gpuLayers)
-            Log.i("moxw-perf", "diag: load end")
+            Log.i("nazarick-perf", "diag: load end")
             loadedPath.set(path)
         }
 
@@ -309,14 +309,14 @@ class LlamaCppProvider(
             val reasoningId = "$streamId-reasoning"
             // Trim history to the input half of the planned context before templating, so a
             // long conversation drops its oldest turns instead of overflowing the prompt.
-            Log.i("moxw-perf", "diag: stream begin msgs=${messages.size} inputBudgetBytes=${runtime.inputBudgetBytes()}")
+            Log.i("nazarick-perf", "diag: stream begin msgs=${messages.size} inputBudgetBytes=${runtime.inputBudgetBytes()}")
             // The planner fits tools into the context by dropping the ones that do not fit;
             // honour that here, otherwise the decision exists only in the plan and the
             // rendered prompt overflows anyway.
             val dropped = runtime.droppedToolNames().toSet()
             val keptTools = if (dropped.isEmpty()) params.tools else params.tools.filterNot { it.name in dropped }
             if (dropped.isNotEmpty()) {
-                Log.i("moxw-perf", "diag: tools dropped for context ${dropped.size}/${params.tools.size}: $dropped")
+                Log.i("nazarick-perf", "diag: tools dropped for context ${dropped.size}/${params.tools.size}: $dropped")
             }
             val trimmedMessages = ChatRequestMapper.trimToBudget(messages, runtime.inputBudgetBytes())
             val requestJson = ChatRequestMapper.toRequestJson(
@@ -324,9 +324,9 @@ class LlamaCppProvider(
                 keptTools,
                 enableThinking = ContextPlanner.tunables.reasoning,
             )
-            Log.i("moxw-perf", "diag: request json built bytes=${requestJson.toByteArray(Charsets.UTF_8).size}")
+            Log.i("nazarick-perf", "diag: request json built bytes=${requestJson.toByteArray(Charsets.UTF_8).size}")
             val appliedTemplateJson = runtime.applyTemplate(requestJson)
-            Log.i("moxw-perf", "diag: template applied")
+            Log.i("nazarick-perf", "diag: template applied")
             val tracker = ChatDeltaTracker()
             val accumulated = StringBuilder()
             val finished = AtomicBoolean(false)
@@ -373,21 +373,21 @@ class LlamaCppProvider(
             }
 
             val worker = launch(Dispatchers.IO) {
-                Log.i("moxw-perf", "diag: worker launching native generate")
+                Log.i("nazarick-perf", "diag: worker launching native generate")
                 try {
                     runtime.generate(appliedTemplateJson, params.maxTokens ?: DEFAULT_MAX_TOKENS) { piece ->
                         accumulated.append(piece)
                         val parsed = runtime.parse(accumulated.toString(), true, appliedTemplateJson)
                         sendDelta(tracker.consume(parsed, isPartial = true), false)
                     }
-                    Log.i("moxw-perf", "diag: native generate returned chars=${accumulated.length}")
+                    Log.i("nazarick-perf", "diag: native generate returned chars=${accumulated.length}")
 
                     // The final parse is authoritative: it flushes any tool call whose arguments
                     // were still settling when generation stopped (see ChatDeltaTracker.consume).
                     val finalParsed = runtime.parse(accumulated.toString(), false, appliedTemplateJson)
                     sendDelta(tracker.consume(finalParsed, isPartial = false), true)
                     trySend(StreamChunk.Finish())
-                    Log.i("moxw-perf", "diag: stream finish sent")
+                    Log.i("nazarick-perf", "diag: stream finish sent")
                 } finally {
                     finished.set(true)
                     close()

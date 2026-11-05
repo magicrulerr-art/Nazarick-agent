@@ -46,7 +46,7 @@ class ToolCatalogTest {
     private fun catalogOf(vararg names: String) = ToolCatalog(names.map { entry(it) })
 
     /**
-     * Moxw — `tool_search` now runs on a vector channel and has no lexical fallback, so every
+     * Nazarick — `tool_search` now runs on a vector channel and has no lexical fallback, so every
      * wiring test has to hand it one. This stands in for [ToolVectorIndex.answer]: a name
      * containing the query, in catalogue order, which is all these tests ever asserted.
      */

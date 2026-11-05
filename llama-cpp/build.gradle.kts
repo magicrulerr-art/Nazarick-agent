@@ -67,7 +67,7 @@ android {
     }
 
     testOptions {
-        // diag branch only: the provider's moxw-perf breadcrumbs call android.util.Log,
+        // diag branch only: the provider's nazarick-perf breadcrumbs call android.util.Log,
         // which throws "not mocked" in JVM unit tests against the stub android.jar.
         unitTests.isReturnDefaultValues = true
     }

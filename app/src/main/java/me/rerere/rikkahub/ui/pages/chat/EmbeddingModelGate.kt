@@ -18,10 +18,10 @@ import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.hooks.rememberSharedPreferenceBoolean
 
 /** Set once the user has seen the gate, so it is a first-run notice and not a nag. */
-private const val EMBEDDING_GATE_ACK_KEY = "moxw_embedding_gate_acknowledged"
+private const val EMBEDDING_GATE_ACK_KEY = "nazarick_embedding_gate_acknowledged"
 
 /**
- * Moxw — the embedding model is a prerequisite, not an enhancement, and this is the one place that
+ * Nazarick — the embedding model is a prerequisite, not an enhancement, and this is the one place that
  * says so out loud.
  *
  * Every retrieval in this app runs through the local embedding model: cold memory, the file

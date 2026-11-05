@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Moxw — the rules behind "every local tool is on, and the page only configures the resident ones".
+ * Nazarick — the rules behind "every local tool is on, and the page only configures the resident ones".
  *
  * The interesting property is the negative one: a stored `localTools` payload from before the
  * redefinition must not be able to narrow the surface, whatever it names. `effective` is the only

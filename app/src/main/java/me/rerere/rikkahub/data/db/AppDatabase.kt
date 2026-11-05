@@ -129,13 +129,13 @@ import me.rerere.rikkahub.workflow.db.WorkflowRunEntity
         // crash-loops the app on every launch (issue #105).
         // v32: the workbench Mission tables (missions + mission_events). Both are pure
         // additions, so Room's auto-migration creates them outright; no backup can carry
-        // them since the moxw line never shipped a workbench before.
+        // them since the nazarick line never shipped a workbench before.
         AutoMigration(from = 31, to = 32),
         // v33: the workbench mission_events timeline is generalised into the unified
         // run_events journal (RunEventEntity) so any execution path — chat turns,
         // sub-agent runs, cron jobs, workflows — can append observability events.
         // mission_events is dropped via the [Migration_32_33] spec: its rows were a
-        // throwaway timeline cache, and the moxw line never shipped a workbench before
+        // throwaway timeline cache, and the nazarick line never shipped a workbench before
         // v32, so no user data is lost. run_events is created by Room's auto-diff.
         AutoMigration(from = 32, to = 33, spec = Migration_32_33::class),
         AutoMigration(from = 33, to = 34),

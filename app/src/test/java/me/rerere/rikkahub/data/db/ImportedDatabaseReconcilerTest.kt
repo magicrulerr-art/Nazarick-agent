@@ -125,7 +125,7 @@ class ImportedDatabaseReconcilerTest {
     @Test
     fun `fork only ddl creates run_events and drops the superseded mission_events`() {
         // v33 generalises mission_events into the unified run_events journal. The reconciler
-        // must pre-create run_events (a v31/v32 moxw backup never carried it) and drop any
+        // must pre-create run_events (a v31/v32 nazarick backup never carried it) and drop any
         // stale mission_events a v32 backup might carry, since the "already current" stamp
         // path skips the 32->33 auto-migration that would otherwise do both.
         val ddl = ImportedDatabaseReconciler.FORK_ONLY_DDL

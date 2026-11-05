@@ -208,7 +208,7 @@ class SettingsStore(
         val OCR_MODEL = stringPreferencesKey("ocr_model")
         val OCR_PROMPT = stringPreferencesKey("ocr_prompt")
         /**
-         * Moxw - which installed GGUF the vector index embeds with. A file name inside
+         * Nazarick - which installed GGUF the vector index embeds with. A file name inside
          * `local-models/llamacpp`, because that is what the local-model page writes: the ordinary
          * install flow is the only download UI this needs.
          *
@@ -1289,7 +1289,7 @@ data class Settings(
     val launchCount: Int = 0,
 
     /**
-     * Moxw - the GGUF file name the vector index embeds with, or empty to pick automatically
+     * Nazarick - the GGUF file name the vector index embeds with, or empty to pick automatically
      * among the installed curation. Stored per field like everything else here, which is what
      * SettingsPersistenceCoverageTest enforces: a field without a Preferences.Key would look
      * saved and then vanish on the next launch.

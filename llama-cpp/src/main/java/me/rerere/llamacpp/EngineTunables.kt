@@ -12,9 +12,9 @@ import android.util.Log
  * force-stop, rerun" is the only loop fast enough for what is left on this model: prefill
  * latency at the context the planner now picks, and later the projector's pixel budget.
  *
- * One property, `debug.moxw.tune`, holding `key=value` pairs split on ';' or ',':
+ * One property, `debug.nazarick.tune`, holding `key=value` pairs split on ';' or ',':
  *
- *   adb shell setprop debug.moxw.tune "ctx_force=8192;response_reserve=0.35;n_ubatch=1024"
+ *   adb shell setprop debug.nazarick.tune "ctx_force=8192;response_reserve=0.35;n_ubatch=1024"
  *
  * One property rather than one per knob because setprop values are flat strings either way, and
  * a single echo line then records the whole engine configuration for the run. Anything unset
@@ -58,8 +58,8 @@ data class EngineTunables(
     val reasoning: Boolean? = null,
 ) {
     companion object {
-        const val PROPERTY = "debug.moxw.tune"
-        private const val TAG = "moxw-tune"
+        const val PROPERTY = "debug.nazarick.tune"
+        private const val TAG = "nazarick-tune"
 
         /** Exactly what the planner did before this class existed. */
         val DEFAULT = EngineTunables()

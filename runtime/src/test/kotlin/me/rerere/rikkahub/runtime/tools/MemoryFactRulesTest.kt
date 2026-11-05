@@ -79,7 +79,7 @@ class MemoryFactRulesTest {
 
     @Test
     fun `a missing confidence is assumed rather than discarded`() {
-        val raw = """{"facts":[{"subject":"user","predicate":"works_on","object":"Moxw"}]}"""
+        val raw = """{"facts":[{"subject":"user","predicate":"works_on","object":"Nazarick"}]}"""
         val facts = MemoryFactRules.parse(raw)
         assertEquals(1, facts.size)
         assertTrue(facts[0].confidence >= MemoryFactRules.MIN_CONFIDENCE)

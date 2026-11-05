@@ -7,7 +7,7 @@
 
 inline void throwJava(JNIEnv *env, const char *message) {
     // Every native failure crosses here; a release build has no other voice.
-    __android_log_print(ANDROID_LOG_INFO, "moxw-perf", "throw: %s", message);
+    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf", "throw: %s", message);
     jclass cls = env->FindClass("java/lang/RuntimeException");
     if (cls != nullptr) {
         env->ThrowNew(cls, message);

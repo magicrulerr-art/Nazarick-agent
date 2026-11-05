@@ -121,7 +121,7 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
     val filesManager: FilesManager = koinInject()
     val context = LocalContext.current
 
-    // Moxw — resolved through the same rules the embedder itself uses, so this row cannot disagree
+    // Nazarick — resolved through the same rules the embedder itself uses, so this row cannot disagree
     // with the feature it points at. A configured file that was deleted reads the same here as it
     // does at embedding time.
     // One resolver for every screen that asks this question, so a settings row can never claim

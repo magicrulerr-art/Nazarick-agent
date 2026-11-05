@@ -22,8 +22,8 @@
 
 // JNI_GUARD bodies are macro arguments: commas survive only inside parentheses,
 // and a template's angle brackets are not parentheses — hence the alias.
-using MoxwMs = std::chrono::duration<double, std::milli>;
-using MoxwLock = std::lock_guard<std::mutex>;
+using NazarickMs = std::chrono::duration<double, std::milli>;
+using NazarickLock = std::lock_guard<std::mutex>;
 
 // One GPU, one bus, one very unforgiving driver: the chat context and the embedding
 // context are separate llama_contexts, and when both submit work to the Adreno Vulkan
@@ -61,7 +61,7 @@ static void jniEngineLog(enum ggml_log_level level, const char *text, void *) {
                      : ANDROID_LOG_VERBOSE;
     // The callback hands over partial lines with no trailing newline guarantee; logcat adds
     // its own, so the newline and anything after it is dropped.
-    __android_log_print(prio, "moxw-engine", "%.*s", (int) strcspn(text, "\n"), text);
+    __android_log_print(prio, "nazarick-engine", "%.*s", (int) strcspn(text, "\n"), text);
 }
 
 // Names of every ggml device the registry knows about. Empty means no GPU backend got
@@ -99,7 +99,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstrin
         llama_backend_init();
         const std::string path = jstringToUtf8(env, pathIn);
         initEngineLogging();
-        __android_log_print(ANDROID_LOG_INFO, "moxw-engine",
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-engine",
                             "load: begin n_gpu_layers=%d devices=[%s]",
                             (int) nGpuLayersIn, engineDeviceList().c_str());
 
@@ -127,7 +127,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstrin
             throwJava(env, ("failed to load model: " + path).c_str());
             return 0L;
         }
-        __android_log_print(ANDROID_LOG_INFO, "moxw-engine",
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-engine",
                             "load: ok devices=[%s]", engineDeviceList().c_str());
         return reinterpret_cast<jlong>(model);
     })
@@ -232,7 +232,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeModelInfo(JNIEnv *env, jobject, jlong 
         // Every field below is a ContextPlanner input, and a wrong one strands the model on the
         // smallest context rung silently. Print what the shim derived, so the next diagnosis of
         // "why did the planner pick 4096" is one logcat line instead of an afternoon.
-        __android_log_print(ANDROID_LOG_INFO, "moxw-engine",
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-engine",
             "modelInfo: layers=%d head_kv_max=%d head=%d head_k=%d head_v=%d swa=%d embd=%d ctx_train=%d",
             nLayers, nHeadKv, nHeadCnt, headK, headV, slidingWindow, nEmbd, nCtxTrain);
 
@@ -363,7 +363,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
         // substitutes a content-only parser when that is empty, which returns plausible text
         // with every tool call missing. "format" is still carried because the parse side uses
         // it to pick a mapper for two of the formats, but it is not a substitute for this.
-        // common_peg_arena::save() yields a JSON document of its own (moxw fork addition —
+        // common_peg_arena::save() yields a JSON document of its own (nazarick fork addition —
         // upstream keeps the arena inside one process and never needed to serialize it).
         // Reparsed as nlohmann and embedded as an object, so the blob carries one JSON,
         // not a string-in-a-string; parseChat reparse()s it into common_json on the way in.
@@ -631,7 +631,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
     JNI_GUARD_VOID(env, {
         auto *gen   = reinterpret_cast<GenerationContext *>(ctxHandle);
         auto *model = reinterpret_cast<llama_model *>(modelHandle);
-        __android_log_print(ANDROID_LOG_INFO, "moxw-perf", "gen: begin maxTokens=%d", (int)maxTokens);
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf", "gen: begin maxTokens=%d", (int)maxTokens);
         if (gen == nullptr || gen->ctx == nullptr || model == nullptr) {
             throwJava(env, "context or model handle is null");
             return;
@@ -649,7 +649,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         const llama_vocab *vocab = llama_model_get_vocab(model);
         // Geometry of the context actually built, not the planner's intent: whether a slow
         // prefill is small-batch overhead or plain compute depends on these numbers.
-        __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                 "gen: ctx n_ctx=%d n_batch=%d n_ubatch=%d",
                 (int)llama_n_ctx(ctx), (int)llama_n_batch(ctx), (int)llama_n_ubatch(ctx));
 
@@ -723,7 +723,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
             // lands in the window between tokenizing and decoding is honoured instead of
             // being read only after a full prefill has already run.
             if (gen->cancelled.load(std::memory_order_relaxed)) {
-                __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                         "gen: cancelled before prefill slice %d of %d", (int)start, (int)nPrompt);
                 return;
             }
@@ -731,15 +731,15 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
             const auto  tSlice0 = std::chrono::steady_clock::now();
             const int32_t rc = llama_decode(ctx, llama_batch_get_one(tokens.data() + start, count));
             const double sliceMs =
-                    std::chrono::duration_cast<MoxwMs>(std::chrono::steady_clock::now() - tSlice0).count();
-            __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                    std::chrono::duration_cast<NazarickMs>(std::chrono::steady_clock::now() - tSlice0).count();
+            __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                     "gen: prefill slice %d/%d tok this %d tok %.0f ms",
                     (int)(start + count), (int)nPrompt, (int)count, sliceMs);
             if (rc != 0) {
                 // A cancel that lands mid-decode comes back as rc 2 from the abort callback.
                 // That is the caller getting what it asked for, not a failure.
                 if (gen->cancelled.load(std::memory_order_relaxed)) {
-                    __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                             "gen: cancelled mid-prefill decode (rc=%d)", (int)rc);
                     return;
                 }
@@ -760,9 +760,9 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         bool        stopped = false;
         const auto  tDecode0 = std::chrono::steady_clock::now();
         const double prefillMs =
-                std::chrono::duration_cast<MoxwMs>(tDecode0 - tPrefill0).count();
+                std::chrono::duration_cast<NazarickMs>(tDecode0 - tPrefill0).count();
         jint decoded = 0;
-        __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                 "gen: prefill done %d tokens %.0f ms", (int)nPrompt, prefillMs);
 
         for (jint i = 0; i < maxTokens; i++) {
@@ -788,12 +788,12 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                     // The sink threw. Its exception is the one the caller should see and no
                     // further JNI call is legal while one is pending, so leave it there and
                     // unwind; the sampler is still freed on the way out.
-                    __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                             "gen: sink threw at decoded=%d", (int)decoded);
                     return;
                 }
                 if (keepGoing == JNI_FALSE) {
-                    __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                             "gen: sink said stop at decoded=%d", (int)decoded);
                     stopped = true;
                     break;
@@ -801,7 +801,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
             }
 
             if (gen->cancelled.load(std::memory_order_relaxed)) {
-                __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+                __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                         "gen: cancelled mid-decode at %d tokens", (int)decoded);
                 stopped = true;
                 break;
@@ -842,9 +842,9 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         // Bench line for the engine A/B (and every perf probe after it): pure prefill/decode
         // wall time from this function's own loops. The sink callbacks ride inside the decode
         // window; they are Kotlin emits, milliseconds at worst against seconds of decode.
-        const double decodeMs = std::chrono::duration_cast<MoxwMs>(
+        const double decodeMs = std::chrono::duration_cast<NazarickMs>(
                 std::chrono::steady_clock::now() - tDecode0).count();
-        __android_log_print(ANDROID_LOG_INFO, "moxw-perf",
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                 "prefill %d tok %.0f ms (%.1f tok/s) | decode %d tok %.0f ms (%.1f tok/s)",
                 nPrompt, prefillMs, prefillMs > 0 ? nPrompt * 1000.0 / prefillMs : 0.0,
                 (int)decoded, decodeMs, decodeMs > 0 && decoded > 0 ? decoded * 1000.0 / decodeMs : 0.0);
@@ -940,7 +940,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeFreeEmbedContext(JNIEnv *env, jobject,
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbedModelInfo(JNIEnv *env, jobject, jlong handle) {
     JNI_GUARD(env, nullptr, {
-        MoxwLock guard(gComputeMutex);
+        NazarickLock guard(gComputeMutex);
         auto *engine = reinterpret_cast<llamajni::EmbedEngine *>(handle);
         if (engine == nullptr) {
             throwJava(env, "embedding handle is null");
@@ -963,7 +963,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
         JNIEnv *env, jobject, jlong handle, jbyteArray textIn) {
     JNI_GUARD(env, nullptr, {
-        MoxwLock guard(gComputeMutex);
+        NazarickLock guard(gComputeMutex);
         auto *engine = reinterpret_cast<llamajni::EmbedEngine *>(handle);
         if (engine == nullptr) {
             throwJava(env, "embedding handle is null");

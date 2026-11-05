@@ -47,7 +47,7 @@ rikkahub/rikkahub                     the original native Android LLM chat clien
         └─ wuyhong715/rikkahub-agent-pure    the "Pure" hardening pass: long runs made survivable,
              │                             metered and capped (standalone since 2026-10-07)
              └─ magicrulerr-art/Nazarick-agent   ★ THIS REPO — renamed 2026-10-25 (AURA-003)
-                  └─ flavour `moxw`    the only shipping product: applicationId com.nazarick.agent,
+                  └─ flavour `nazarick`    the only shipping product: applicationId com.nazarick.agent,
                                        its own icon, strings, version line, and local engine
 ```
 
@@ -85,10 +85,10 @@ The trade, stated plainly rather than glossed: upstream fixes no longer arrive f
 Eleven things had to happen between "a nice chat client" and "an agent that survives its own phone". Each is listed with the reason it exists — none of them were roadmap items, all of them were *extracted* from a failure. Ticket IDs (`AURA-nnn`) are the floor records; commit hashes are in this repo.
 
 ### i · The flavour schism — *a fork that ships a stranger's brand is a fork with amnesia*
-`c928ecd0` split shipping into `pure`/`moxw` flavours · `b3b28294` made the product name flavour-scoped · `fe20eaf2` gave Moxw a launcher icon · `a66e31db` seeded bundled skills under the brand · `e17ff3b8` collapsed it to **one product, one flavour** · `36c35ae7` disabled the upstream update check.
+`c928ecd0` split shipping into `pure`/`nazarick` flavours · `b3b28294` made the product name flavour-scoped · `fe20eaf2` gave Nazarick a launcher icon · `a66e31db` seeded bundled skills under the brand · `e17ff3b8` collapsed it to **one product, one flavour** · `36c35ae7` disabled the upstream update check.
 
-**Why:** the two lines were one product wearing two names. Worse, Moxw builds were fetching the *Pure* line's `/releases/latest` and offering a stranger's APK as an update. A device you carry should not greet you with somebody else's icon.
-**Proof:** `applicationId com.nazarick.agent`, `BRAND_ID moxw`, `UPDATE_CHECK_ENABLED=false` in `app/build.gradle.kts:92-105`.
+**Why:** the two lines were one product wearing two names. Worse, Nazarick builds were fetching the *Pure* line's `/releases/latest` and offering a stranger's APK as an update. A device you carry should not greet you with somebody else's icon.
+**Proof:** `applicationId com.nazarick.agent`, `BRAND_ID nazarick`, `UPDATE_CHECK_ENABLED=false` in `app/build.gradle.kts:92-105`.
 
 ### ii · A local engine that earns the word "local"
 `de1a4bcc` on-device text embeddings on llama.cpp with EmbeddingGemma 2 · `fb4bd6f2` makes the embedding model a *declared prerequisite the app states out loud* · `2468a5a9` adds a multimodal rung with the LiteRT engine behind it.
@@ -124,12 +124,12 @@ Eleven things had to happen between "a nice chat client" and "an agent that surv
 **Why:** the model family we wanted (LFM3) needed an engine newer than our peg, and our peg contained a fix upstream did not have. So the engine became a fork with a pinned SHA — the only honest way to ship a native dependency you have had to repair.
 
 ### viii · Give a release build a voice (AURA-005)
-`931b6688` light **every** exit path of `nativeGenerate` under `moxw-perf` · `9b9959ef` `debug.moxw.gpu_layers` bench hook + prefill/decode timing in logcat · `13bd4be3` breadcrumb every Kotlin milestone upstream of `nativeGenerate`, and ship a debuggable APK so `debuggerd`/`run-as` work on the device · `32f4b03d` route llama/ggml logs and the device-registry list into logcat (`moxw-engine`).
+`931b6688` light **every** exit path of `nativeGenerate` under `nazarick-perf` · `9b9959ef` `debug.nazarick.gpu_layers` bench hook + prefill/decode timing in logcat · `13bd4be3` breadcrumb every Kotlin milestone upstream of `nativeGenerate`, and ship a debuggable APK so `debuggerd`/`run-as` work on the device · `32f4b03d` route llama/ggml logs and the device-registry list into logcat (`nazarick-engine`).
 
 **Why:** a stalled release build is a corpse that won't say where it was shot. We turned nine knobs blind before admitting the problem was not the knobs — nine turns of silence later the fix was *instrumentation*. (The blindfold itself turned out to be **SELinux**, not the missing symbol we blamed.) Every number in [The Numbers](#the-numbers) exists because of this labour.
 
 ### ix · Retune without rebuilding (AURA-008)
-`e67a7dca` — `setprop debug.moxw.tune "ctx_force=8192;response_reserve=0.25"`, restart, done. See [The Knobs](#the-knobs).
+`e67a7dca` — `setprop debug.nazarick.tune "ctx_force=8192;response_reserve=0.25"`, restart, done. See [The Knobs](#the-knobs).
 
 **Why:** every context number cost a 15-minute CI build, so "tune the model" meant "rebuild the model" and nobody tuned anything. Latency questions stopped being experiments and became tickets. The fix is not clever: read the numbers at load time and **echo what won**, so the log is never ambiguous about the configuration that produced it.
 
@@ -139,7 +139,7 @@ Eleven things had to happen between "a nice chat client" and "an agent that surv
 **Why:** a checkbox labelled "auto-approve" is an apology written in advance. An unattended agent needs a *policy*, a run surface with a contract, and children that bring back answers — a sub-agent that returns nothing is a rumour, and a retry that hides a race is a leash wrapped around smoke (we route, we don't blindly retry).
 
 ### xi · CI as an instrument, not a ceremony
-`f5fd8401` gate Moxw PRs and build-fix branches · `18883434` name `glslc` explicitly for shader codegen · `8c8ac71f`/`c4b34265` make the SPIRV toll run on the branches that actually carry a Vulkan engine.
+`f5fd8401` gate Nazarick PRs and build-fix branches · `18883434` name `glslc` explicitly for shader codegen · `8c8ac71f`/`c4b34265` make the SPIRV toll run on the branches that actually carry a Vulkan engine.
 
 **Why:** a fork needs to learn what it genuinely compiles, on the builder, not on the author's machine. The habit that came out of this era is permanent: **verify the artifact, not the job** — one green CI run once shipped an APK containing *none* of the patch, because the fork push had been lost and CI built upstream. Every release since is proved by scanning the built `dex` and the packaged `.so` list before anything touches a device.
 
@@ -147,7 +147,7 @@ Eleven things had to happen between "a nice chat client" and "an agent that surv
 
 ## The Numbers
 
-Measured on the Fold (`RFCY71BMBRE`, Adreno 830) with `moxw-perf`/`moxw-engine` log lines — not inferred, not projected. Where a claim is shaky, it says so.
+Measured on the Fold (`RFCY71BMBRE`, Adreno 830) with `nazarick-perf`/`nazarick-engine` log lines — not inferred, not projected. Where a claim is shaky, it says so.
 
 | | Result | What it means |
 |---|---|---|
@@ -167,9 +167,9 @@ Caveats, printed rather than hidden: one run per configuration, decode samples o
 Everything the engine decides about *size* can be overridden at runtime. No rebuild, no reinstall — the values are read on every model load and echoed into logcat with `(OVERRIDDEN)` so a log line can never lie about the configuration that produced it.
 
 ```bat
-adb shell setprop debug.moxw.tune "ctx_force=8192;response_reserve=0.25;reasoning=false"
+adb shell setprop debug.nazarick.tune "ctx_force=8192;response_reserve=0.25;reasoning=false"
 adb shell am force-stop com.nazarick.agent
-adb logcat -s moxw-tune:I moxw-perf:I moxw-engine:I
+adb logcat -s nazarick-tune:I nazarick-perf:I nazarick-engine:I
 ```
 
 | Key | Default | What it bends |
@@ -183,14 +183,14 @@ adb logcat -s moxw-tune:I moxw-perf:I moxw-engine:I
 | `headroom_coarse` / `headroom_fine` | `1.1` / `1.2` | Multipliers over the computed footprint: `1.1` for allocator overhead when GGUF metadata is trustworthy, `1.2` when it is not. |
 | `ram_safety` | `0.8` | Fraction of device RAM the planner is willing to believe it can have. |
 | `reasoning` | template default | Forces the chat template's thinking switch on/off — some templates default thinking **on**, which costs tokens on every reply. |
-| `debug.moxw.gpu_layers` *(separate prop)* | — | Layers to offload; `-1` = as many as fit. |
+| `debug.nazarick.gpu_layers` *(separate prop)* | — | Layers to offload; `-1` = as many as fit. |
 
 ## Raise it
 
 ### Install
-Grab the APK from **[Releases](https://github.com/magicrulerr-art/Nazarick-agent/releases/latest)** and `adb install -r -d` it (or tap it). Package is **`com.nazarick.agent`**, so it installs **beside** an upstream RikkaHub rather than fighting it — and beside the older `com.moxw.agent` build too, because a package rename is a *different app* to Android: nothing migrates, and every release since is signed by our own key (see [Standing alone](#standing-alone)).
+Grab the APK from **[Releases](https://github.com/magicrulerr-art/Nazarick-agent/releases/latest)** and `adb install -r -d` it (or tap it). Package is **`com.nazarick.agent`**, so it installs **beside** an upstream RikkaHub rather than fighting it — and beside the older `com.nazarick.agent` build too, because a package rename is a *different app* to Android: nothing migrates, and every release since is signed by our own key (see [Standing alone](#standing-alone)).
 
-The workflow **signs the release itself**: it decodes `NAZARICK_KEYSTORE_B64` into `$RUNNER_TEMP`, and the artifact out of CI is the shipping APK — `app-nazarick-arm64-v8a-release.apk`, no `-unsigned` suffix, verified in the job log by `apksigner verify --print-certs`. Releases publish that file under the same name plus `SHA256SUMS.txt`; the seal is v3 only, because AGP stops emitting a v2 signature above `minSdk` 24. (The file used to say `app-moxw-…`: AGP names outputs after the *flavour*, and `moxw` survives as the internal brand id and source-set directory. `androidComponents.onVariants` now rewrites that one token, leaving AGP's own ABI and `universal` naming alone.) Building locally, drop the same four keys (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) in `local.properties`, or export the four `NAZARICK_*` variables; either way `app/build.gradle.kts` picks them up. With neither, the release still builds unsigned on purpose — a fork with no secrets should not go red.
+The workflow **signs the release itself**: it decodes `NAZARICK_KEYSTORE_B64` into `$RUNNER_TEMP`, and the artifact out of CI is the shipping APK — `app-nazarick-arm64-v8a-release.apk`, no `-unsigned` suffix, verified in the job log by `apksigner verify --print-certs`. Releases publish that file under the same name plus `SHA256SUMS.txt`; the seal is v3 only, because AGP stops emitting a v2 signature above `minSdk` 24. (The file used to say `app-nazarick-…`: AGP names outputs after the *flavour*, and `nazarick` survives as the internal brand id and source-set directory. `androidComponents.onVariants` now rewrites that one token, leaving AGP's own ABI and `universal` naming alone.) Building locally, drop the same four keys (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) in `local.properties`, or export the four `NAZARICK_*` variables; either way `app/build.gradle.kts` picks them up. With neither, the release still builds unsigned on purpose — a fork with no secrets should not go red.
 
 ### Build from source
 **JDK 17**, the Android SDK, and **bun** + **pnpm** on `PATH` (they build the in-app web UI). Clone recursively: the llama.cpp submodule points at **our fork** (labour **vii**), and building against upstream will silently lose the peg-parser fix.
@@ -199,8 +199,8 @@ The workflow **signs the release itself**: it decodes `NAZARICK_KEYSTORE_B64` in
 git clone --recursive https://github.com/magicrulerr-art/Nazarick-agent.git
 cd Nazarick-agent
 
-./gradlew :app:assembleMoxwRelease          # -> app/build/outputs/apk/moxw/release/*.apk
-./gradlew :app:assembleMoxwRelease -Pllama.gpu=vulkan   # swap the GPU lane: opencl | vulkan | cpu
+./gradlew :app:assembleNazarickRelease          # -> app/build/outputs/apk/nazarick/release/*.apk
+./gradlew :app:assembleNazarickRelease -Pllama.gpu=vulkan   # swap the GPU lane: opencl | vulkan | cpu
 ./gradlew :llama-cpp:testDebugUnitTest      # planner + JNI contract tests (25 planner assertions)
 ./gradlew :app:testDebugUnitTest            # the rest of the suite
 ```

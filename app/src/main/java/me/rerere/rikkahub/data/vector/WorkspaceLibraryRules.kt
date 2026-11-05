@@ -3,7 +3,7 @@ package me.rerere.rikkahub.data.vector
 /**
  * What the file library is allowed to contain, and how much of it one round may read.
  *
- * Moxw - the library is a directory in the workspace that the user points at, and the index reads
+ * Nazarick - the library is a directory in the workspace that the user points at, and the index reads
  * it recursively. Both halves of that sentence are why this object exists: a workspace can hold
  * anything (the one this was built against holds two repository clones, a gradle cache and a pile
  * of jars), so the walk needs an allow-list rather than a deny-list, and reading it can cost
