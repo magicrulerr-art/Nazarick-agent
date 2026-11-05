@@ -129,7 +129,7 @@ suspend fun seedGuardianAssistants(
     if (current.guardiansSeedVersion >= version) return false
     val pack = runCatching { FloorGuardians.parse(assetText) }
         .getOrNull()
-        ?\.guardians
+        ?.guardians
         ?.map { GuardianSeedSpec(it.name, it.description, it.prompt, it.portrait) }
         ?: return false
     val plan = GuardianSeed.plan(current.assistants, pack)
