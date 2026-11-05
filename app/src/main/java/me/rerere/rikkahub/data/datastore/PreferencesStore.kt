@@ -383,7 +383,7 @@ class SettingsStore(
                     JsonInstant.encodeToString(settings.enabledSystemInjections)
                 preferences[ALLOW_MODEL_MISSION_CREATION] = settings.allowModelMissionCreation
                 preferences[AGENT_DEFAULTS_VERSION] = settings.agentDefaultsVersion
-                preferences[GUARDIANS_SEED_VERSION] = settings.guardiansSeedVersion
+                preferences[GUARDIANS_SEED_VERSION] = settings.guardianSeedVersion
                 preferences[AUTO_COMPACTION_THRESHOLD_MODE] = settings.autoCompactionThresholdMode.name
                 preferences[AUTO_COMPACTION_THRESHOLD_PERCENT] =
                     settings.autoCompactionThresholdPercent.coerceIn(5, 95)
@@ -521,7 +521,7 @@ class SettingsStore(
                 } ?: SystemInjections.DEFAULT_IDS,
                 allowModelMissionCreation = preferences[ALLOW_MODEL_MISSION_CREATION] != false,
                 agentDefaultsVersion = preferences[AGENT_DEFAULTS_VERSION] ?: 0,
-                guardiansSeedVersion = preferences[GUARDIANS_SEED_VERSION] ?: 0,
+                guardianSeedVersion = preferences[GUARDIANS_SEED_VERSION] ?: 0,
                 autoCompactionThresholdMode = preferences[AUTO_COMPACTION_THRESHOLD_MODE]
                     ?.let { value -> runCatching { AutoCompactionThresholdMode.valueOf(value) }.getOrNull() }
                     ?: AutoCompactionThresholdMode.PERCENT,

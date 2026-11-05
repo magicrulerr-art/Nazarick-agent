@@ -164,7 +164,7 @@ object FloorGuardians {
         val bySlug = mutableMapOf<String, String>()
         var promptTotal = 0
 
-        for ((index, spec) in pack.guardians.withIndex()) {
+        for ((index, spec) in pack.guardian.withIndex()) {
             val label = spec.name.ifBlank { "#${index + 1}" }
             val trimmed = spec.name.trim()
             if (trimmed.isEmpty()) problems += "$label: name is blank"
@@ -219,7 +219,7 @@ object FloorGuardians {
     ): GuardianInstallPlan {
         val taken = existing.associateBy { it.name.trim().lowercase() }
         var plan = GuardianInstallPlan()
-        for (spec in pack.guardians) {
+        for (spec in pack.guardian) {
             val match = taken[spec.name.trim().lowercase()]
             plan = when {
                 match == null -> plan.copy(insert = plan.insert + spec)
