@@ -331,9 +331,14 @@ jobs:
           # the APK outputFileName, so the flavour token "nazarick" leaked onto the file Ainz-sama
           # downloads for the Console. Rewrite the token in place; the upload glob is *.aab.
           AAB="app/build/outputs/bundle/${FLAVOR}Release/app-${FLAVOR}-release.aab"
+          DEST="app/build/outputs/bundle/${FLAVOR}Release/App-nazarick-release.aab"
           if [ -f "$AAB" ]; then
-            mv -f "$AAB" "app/build/outputs/bundle/${FLAVOR}Release/app-nazarick-release.aab"
-            echo "renamed bundle -> app-nazarick-release.aab"
+            if [ "$AAB" != "$DEST" ]; then
+              mv -f "$AAB" "$DEST"
+              echo "renamed bundle -> app-nazarick-release.aab"
+            else
+              echo "bundle already at $DEST - nothing to rename"
+            fi
           else
             echo "::warning::bundle not at $AAB — Play artifact keeps the flavour name"
           fi
