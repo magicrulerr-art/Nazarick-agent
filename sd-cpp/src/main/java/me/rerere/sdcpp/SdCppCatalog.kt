@@ -71,6 +71,30 @@ object SdCppCatalog {
             defaultCfg = 7.0f,
             note = "Near-lossless weights for a phone with room to spare.",
         ),
+        SdModelEntry(
+            id = "sdturbo-q4_0",
+            displayName = "Stable Diffusion Turbo · Q4_0",
+            fileName = "sd_turbo_q4_0.gguf",
+            url = "https://huggingface.co/samoudi/sd-turbo-gguf/resolve/main/sd_turbo_q4_0.gguf",
+            sizeBytes = 1847909248L,
+            baseSize = 512,
+            defaultSteps = 4,
+            defaultCfg = 1.0f,
+            note = "Distilled SD1.5 turbo checkpoint: 4 steps, low CFG, " +
+                "~4x faster than the 20-step entries. Source: samoudi/sd-turbo-gguf.",
+        ),
+        SdModelEntry(
+            id = "sdturbo-q8_0",
+            displayName = "Stable Diffusion Turbo · Q8_0",
+            fileName = "sd_turbo_q8_0.gguf",
+            url = "https://huggingface.co/samoudi/sd-turbo-gguf/resolve/main/sd_turbo_q8_0.gguf",
+            sizeBytes = 2149136352L,
+            baseSize = 512,
+            defaultSteps = 4,
+            defaultCfg = 1.0f,
+            note = "Near-lossless turbo weights; same 4-step, low-CFG recipe " +
+                "as Q4_0 for phones that can spare the extra ~300 MB.",
+        ),
     )
 
     fun entryFor(fileName: String): SdModelEntry? = models.firstOrNull { it.fileName == fileName }
