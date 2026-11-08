@@ -83,7 +83,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools'
+          # cmake;3.31.6 (AURA-016): :sd-cpp pins CMake 3.31.6 because the ggml
+          # fork's htp skel sub-project requires >=3.22.2; AGP auto-installed
+          # only the legacy 3.22.1 and then CXX1300'd (run 122) — pin it.
+          packages: 'platform-tools cmake;3.31.6'
           accept-android-sdk-licenses: true
 
       # NOTE: do *not* cache $ANDROID_HOME/ndk. The runner image already ships
@@ -629,7 +632,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools'
+          # cmake;3.31.6 = the exact version :sd-cpp pins (htp skel needs
+          # >=3.22.2, run 120; AGP will not fetch it on its own, run 122).
+          packages: 'platform-tools cmake;3.31.6'
           accept-android-sdk-licenses: true
 
       - name: Install ccache
