@@ -731,16 +731,48 @@ jobs:
           unzip -l "$APK" | grep -E 'arm64-v8a/.*\.so' || true
           unzip -l "$APK" | grep 'libggml-htp-v73.so' || { echo "FATAL: skel missing from APK"; exit 1; }
           # FastRPC client: DT_NEEDED libcdsprpc.so is authored by the SDK's
-          # build_idl -- the SDK's real android_aarch64 lib must ride along
+          # build_idl -- the SDK's android_aarch64 lib must ride along
           # (runs 125-127: stub=shadowed, excluded=dangled, both crash at load).
-          # Size floor proves it's the SDK lib, not a resurrected 3.7 KB stub.
-          LINE="$(unzip -l "$APK" | grep 'lib/arm64-v8a/libcdsprpc.so' || true)"
-          echo "cdsprpc entry: ${LINE:-MISSING}"
-          SIZE=$(echo "$LINE" | awk '{print $1}'); SIZE=${SIZE:-0}
-          if [ "$SIZE" -lt 100000 ]; then
-            echo "FATAL: SDK libcdsprpc.so missing from APK (found bytes: $SIZE)"; exit 1
-          fi
-          echo "OK: skel inside, SDK FastRPC client inside (${SIZE} B)"
+          # NOT a size floor (run 128): AGP's stripper shrinks aarch64 libs
+          # 29520 -> 7880 B before packaging (hexagon-arch skel untouched).
+          # Real gate = the stripped entry still DEFINES the FastRPC fns
+          # htp-drv dlsyms; parse .dynsym straight out of the APK.
+          unzip -p "$APK" lib/arm64-v8a/libcdsprpc.so > "$RUNNER_TEMP/apk_libcdsprpc.so"
+          python3 - "$RUNNER_TEMP/apk_libcdsprpc.so" <<'PY'
+          import struct, sys
+          data = open(sys.argv[1], 'rb').read()
+          assert data[:4] == b'\x7fELF', f'not ELF ({len(data)} B)'
+          e_shoff = struct.unpack_from('<Q', data, 0x28)[0]
+          e_shentsize, e_shnum, e_shstrndx = struct.unpack_from('<HHH', data, 0x3A)
+          secs = []
+          for i in range(e_shnum):
+              off = e_shoff + i * e_shentsize
+              f = struct.unpack_from('<IIQQQQ', data, off)[:6]
+              sh_link = struct.unpack_from('<I', data, off + 40)[0]
+              secs.append((f[0], f[2], f[3], sh_link))
+          stro = secs[e_shstrndx][1]
+          def nm(n):
+              e = data.index(b'\0', stro + n)
+              return data[stro + n:e].decode()
+          dynsym = next(s for s in secs if nm(s[0]) == '.dynsym')
+          so, sz, lk = dynsym[1], dynsym[2], dynsym[3]
+          str_off = secs[lk][1]
+          defined = set()
+          for i in range(sz // 24):
+              st_name, _, _, st_shndx = struct.unpack_from('<IBBH', data, so + i * 24)
+              if st_shndx != 0:
+                  e = data.index(b'\0', str_off + st_name)
+                  defined.add(data[str_off + st_name:e].decode())
+          need = {'remote_handle64_open', 'remote_handle64_close',
+                  'remote_session_control', 'remote_handle_invoke',
+                  'rpcmem_alloc', 'rpcmem_free'}
+          missing = sorted(need - defined)
+          n_fast = len([s for s in defined if s.startswith(('remote_', 'rpcmem_', 'dspqueue_'))])
+          print(f'cdsprpc: {len(data)} B stripped, {n_fast} FastRPC fns defined')
+          if missing:
+              print(f'FATAL: APK cdsprpc lib lacks {missing}'); sys.exit(1)
+          print('SYMBOLS OK: skel inside, FastRPC exports intact')
+          PY
 
       - name: Upload hexagon APK
         uses: actions/upload-artifact@v4
