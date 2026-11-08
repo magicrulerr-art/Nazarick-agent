@@ -645,6 +645,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # :app pulls :web:installWebUiDeps (bun-driven) even for a native-lane
+      # proof APK -- run 124: "A problem occurred starting process 'bun'".
+      # Same pair the assemble job installs.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       # :app is configured even for a :sd-cpp-only build (settings-level eval), and
       # app's signingConfigs.create("release") eagerly getValue("storeFile")!! --
       # run 118 proved that NPEs here when the env trio is absent. Provision the
