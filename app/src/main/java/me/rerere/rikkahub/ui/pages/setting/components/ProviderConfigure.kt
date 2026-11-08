@@ -1335,6 +1335,10 @@ private fun SdModelEntryRow(
         entries.forEach { entry ->
             val isInstalled = entry.id in installed
             val busy = progress?.first == entry.id
+            // Local stable copy: `progress` is a mutable state-delegated var, and the
+            // progress lambda cannot smart-cast across a capture (the extracted
+            // SdModelEntryRow got this for free with its parameter).
+            val bar = progress?.second ?: 0f
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(entry.displayName, style = MaterialTheme.typography.bodyMedium)
@@ -1419,6 +1423,10 @@ private fun ColumnScope.ProviderConfigureLocalDream(
         me.rerere.localdream.LocalDreamCatalog.models.forEach { entry ->
             val isInstalled = entry.id in installed
             val busy = progress?.first == entry.id
+            // Local stable copy: `progress` is a mutable state-delegated var, and the
+            // progress lambda cannot smart-cast across a capture (the extracted
+            // SdModelEntryRow got this for free with its parameter).
+            val bar = progress?.second ?: 0f
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(entry.displayName, style = MaterialTheme.typography.bodyMedium)
@@ -1430,7 +1438,7 @@ private fun ColumnScope.ProviderConfigureLocalDream(
                     )
                     if (busy) {
                         LinearProgressIndicator(
-                            progress = { progress.second },
+                            progress = { bar },
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         )
                     }
