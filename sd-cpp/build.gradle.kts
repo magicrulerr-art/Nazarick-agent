@@ -63,7 +63,12 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            # Was 3.22.1; the ggml fork's htp skel project (built via
+            # ExternalProject with THIS very cmake binary) declares
+            # cmake_minimum_required(3.22.2) -- run 120: "You are running
+            # version 3.22.1-g37088a8". 3.31.6 is the sdkmanager-current
+            # series AGP installs on demand; upstream hexagon CI is on 4.x.
+            version = "3.31.6"
         }
     }
 
