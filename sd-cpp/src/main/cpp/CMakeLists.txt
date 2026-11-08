@@ -82,6 +82,16 @@ if(SDCPP_ENABLE_HEXAGON)
             "(got '${HEXAGON_SDK_ROOT}')")
     endif()
     set(GGML_HEXAGON ON CACHE BOOL "" FORCE)
+    # SDK 6.7's hexagon_fun.cmake runs string(FIND ${PREBUILT_LIB_DIR} toolv8X..)
+    # at include time -- with the variable empty the first argument vanishes and
+    # every check dies ("string sub-command FIND requires 3 or 4 parameters",
+    # run 119). Upstream dodges this only because its docker presets export the
+    # var. The checks feed a QURT-only libc++ branch we never take (host side is
+    # Android); only the derived include dirs matter and the real ones are
+    # already passed explicitly by ggml-hexagon/CMakeLists. android_aarch64 is
+    # the ship dir that actually exists in this SDK for the FastRPC host side.
+    set(PREBUILT_LIB_DIR "android_aarch64" CACHE STRING
+        "Hexagon SDK ship dir (see run 119 note above)" FORCE)
     # FastRPC userspace symbols (remote_handle64_open, rpcmem_*, dspqueue_*) live in
     # the device's libcdsprpc.so; the NDK sysroot carries no import lib -- the same
     # hole :llama-cpp plugged for libOpenCL.so and libvulkan.so. Do-nothing stub
