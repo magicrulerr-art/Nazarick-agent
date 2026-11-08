@@ -749,12 +749,19 @@ jobs:
               off = e_shoff + i * e_shentsize
               f = struct.unpack_from('<IIQQQQ', data, off)[:6]
               sh_link = struct.unpack_from('<I', data, off + 40)[0]
-              secs.append((f[0], f[2], f[3], sh_link))
+              # tuple = (name, offset, size, link) -- f is
+              # (name,type,flags,addr,offset,size); run 129 stored flags/addr
+              # and never found .dynsym.
+              secs.append((f[0], f[4], f[5], sh_link))
           stro = secs[e_shstrndx][1]
           def nm(n):
               e = data.index(b'\0', stro + n)
-              return data[stro + n:e].decode()
-          dynsym = next(s for s in secs if nm(s[0]) == '.dynsym')
+              # llvm-strip leaves garbage in the shstrtab tail (run 129: byte
+              # 0xc0 killed strict utf-8); names we care about are ASCII.
+              return data[stro + n:e].decode('utf-8', 'replace')
+          cands = [s for s in secs if nm(s[0]) == '.dynsym']
+          assert cands, f'no .dynsym in {len(data)} B entry'
+          dynsym = cands[0]
           so, sz, lk = dynsym[1], dynsym[2], dynsym[3]
           str_off = secs[lk][1]
           defined = set()
@@ -762,7 +769,7 @@ jobs:
               st_name, _, _, st_shndx = struct.unpack_from('<IBBH', data, so + i * 24)
               if st_shndx != 0:
                   e = data.index(b'\0', str_off + st_name)
-                  defined.add(data[str_off + st_name:e].decode())
+                  defined.add(data[str_off + st_name:e].decode('utf-8', 'replace'))
           need = {'remote_handle64_open', 'remote_handle64_close',
                   'remote_session_control', 'remote_handle_invoke',
                   'rpcmem_alloc', 'rpcmem_free'}
