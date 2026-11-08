@@ -50,6 +50,12 @@ data class ProviderRequirement(
                     severity = TagType.INFO,
                 ),
             )
+            is ProviderSetting.LocalDream -> listOf(
+                ProviderRequirement(
+                    label = "On-device · NPU images · Qualcomm only · ~1 GB packs",
+                    severity = TagType.INFO,
+                ),
+            )
             else -> emptyList()
         }
     }

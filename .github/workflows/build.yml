@@ -271,7 +271,10 @@ jobs:
           # maxParallelForks, tracked as a follow-up rather than smuggled into this ticket.
           # (:sd-cpp added by AURA-014: its catalog/PNG/repair suites shipped with AURA-012 and
           # nothing ever ran them — an orphaned suite gates nothing.)
-          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest :sd-cpp:testDebugUnitTest $FLAGS --stacktrace
+          # (:local-dream added with the QNN transplant: its suites pin the segfault-shaped
+          # CLI invariants and the exact HF pack sizes — the two things a refactor can break
+          # silently and a device session would only find the hard way.)
+          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest :sd-cpp:testDebugUnitTest :local-dream:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true

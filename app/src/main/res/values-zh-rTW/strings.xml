@@ -1364,6 +1364,8 @@
   <string name="sd_cpp_catalog_subtitle">權重下載至 local-models/sdcpp，推理全程不離開裝置。每個模型約 1.5 GB。</string>
   <string name="sd_cpp_install_action">安裝</string>
   <string name="sd_cpp_delete_action">刪除</string>
+<string name="local_dream_catalog_title">NPU 擴散模型</string>
+<string name="local_dream_catalog_subtitle">QNN 上下文套件解壓縮至 local-models/localdream，推論不離開裝置。每個模型包約 1 GB。僅支援高通裝置。</string>
   <string name="local_llm_insufficient_memory_format">需要約 %1$d MB 的可用記憶體（模型 %2$d MB 加上執行階段餘量），但只有 %3$d MB 可用。請關閉其他應用程式或選擇更小的模型。</string>
   <string name="local_llm_invalid_url">無效網址：必須是 https 且格式正確</string>
   <string name="local_llm_litert_name">本機 · LiteRT</string>

@@ -86,6 +86,19 @@ val DEFAULT_PROVIDERS = listOf(
             Text("On-device - images")
         },
     ),
+    ProviderSetting.LocalDream(
+        // The NPU drawing tile (QNN context binaries, MNN fallback). Disabled by default for
+        // the same reason as its siblings — its packs are ~1 GB each — and it ships beside
+        // sd.cpp rather than replacing it until on-device numbers say which wins.
+        enabled = false,
+        builtIn = true,
+        description = {
+            Text("Generates images on the Hexagon NPU via pre-compiled QNN graphs (MNN CPU fallback). Qualcomm devices only.")
+        },
+        shortDescription = {
+            Text("On-device - NPU images")
+        },
+    ),
     // All built-in providers ship DISABLED by default. New installs start with zero
     // network-egress paths so a freshly-installed app can never make an LLM call (or
     // bill any account) until the user explicitly enables a provider AND adds an API

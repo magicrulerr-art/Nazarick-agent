@@ -465,6 +465,7 @@ dependencies {
     implementation(project(":local-llm"))
     implementation(project(":llama-cpp"))
     implementation(project(":sd-cpp"))
+    implementation(project(":local-dream"))
     implementation(project(":web"))
     implementation(project(":document"))
     implementation(project(":highlight"))
@@ -504,3 +505,4 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+

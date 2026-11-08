@@ -632,6 +632,7 @@ internal fun enableAfterFirstDownload(provider: ProviderSetting): ProviderSettin
     is ProviderSetting.LiteRtLocal -> provider.copy(enabled = true)
     is ProviderSetting.LlamaCppLocal -> provider.copy(enabled = true)
     is ProviderSetting.SdCppLocal -> provider.copy(enabled = true)
+    is ProviderSetting.LocalDream -> provider.copy(enabled = true)
     else -> provider
 }
 

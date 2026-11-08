@@ -800,6 +800,14 @@ val dataSourceModule = module {
                     context = get(),
                 ),
             )
+            // local-dream is lazily touched like sd.cpp: the subprocess only spawns when a
+            // model loads, so registering it here costs nothing on non-Qualcomm devices.
+            pm.registerProvider(
+                "local_dream",
+                me.rerere.localdream.LocalDreamProvider(
+                    context = get(),
+                ),
+            )
             pm.registerProvider(
                 "codex",
                 CodexProvider(

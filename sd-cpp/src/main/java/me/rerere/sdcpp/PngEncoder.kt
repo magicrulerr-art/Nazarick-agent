@@ -18,8 +18,11 @@ import java.util.zip.Deflater
  * PNG is small enough to write directly: a signature, IHDR, one IDAT (zlib over filter-0
  * scanlines) and IEND. Filter 0 ("None") is the honest choice here — the engine's output is
  * noisy detail, where the predictive filters mostly cost CPU without shrinking much.
+ *
+ * Public since the local-dream transplant: the QNN engine speaks base64 RGB3 over HTTP and
+ * reuses this encoder rather than carrying a second copy of the container code.
  */
-internal object PngEncoder {
+object PngEncoder {
 
     private val SIGNATURE = byteArrayOf(
         -119, 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(),

@@ -437,6 +437,51 @@ sealed class ProviderSetting {
         )
     }
 
+    /**
+     * On-device image generation through the **local-dream** engine — QNN context binaries on
+     * the Hexagon NPU with an MNN CPU fallback, transplanted from Off Grid AI (MIT). Fifth
+     * member of the local family and the second that draws: it coexists with [SdCppLocal]
+     * deliberately (ggml CPU/OpenCL here, compiled HTP graphs there), because the honest
+     * state of mobile NPU diffusion in 2026-11 is "two engines, measure, keep what wins".
+     */
+    @Serializable
+    @SerialName("local_dream")
+    data class LocalDream(
+        override var id: Uuid = LOCAL_DREAM_PROVIDER_ID,
+        override var enabled: Boolean = false,
+        override var name: String = "Local · QNN NPU",
+        override var models: List<Model> = emptyList(),
+        override val balanceOption: BalanceOption = BalanceOption(),
+        override val customHeaders: List<CustomHeader> = emptyList(),
+        @Transient override val builtIn: Boolean = true,
+        @Transient override val description: @Composable (() -> Unit) = {},
+        @Transient override val shortDescription: @Composable (() -> Unit) = {},
+    ) : ProviderSetting() {
+        override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
+        override fun editModel(model: Model): ProviderSetting =
+            copy(models = models.map { if (it.id == model.id) model else it })
+        override fun delModel(model: Model): ProviderSetting =
+            copy(models = models.filter { it.id != model.id })
+        override fun moveMove(from: Int, to: Int): ProviderSetting =
+            copy(models = models.toMutableList().apply { add(to, removeAt(from)) })
+        override fun copyProvider(
+            id: Uuid,
+            enabled: Boolean,
+            name: String,
+            models: List<Model>,
+            balanceOption: BalanceOption,
+            customHeaders: List<CustomHeader>,
+            builtIn: Boolean,
+            description: @Composable (() -> Unit),
+            shortDescription: @Composable (() -> Unit),
+        ): ProviderSetting = copy(
+            id = id, enabled = enabled, name = name, models = models,
+            builtIn = builtIn, description = description, shortDescription = shortDescription,
+            balanceOption = balanceOption,
+            customHeaders = customHeaders,
+        )
+    }
+
     @Serializable
     @SerialName("codex")
     data class Codex(
@@ -632,6 +677,13 @@ val LLAMACPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-00000000000
  * and nothing else.
  */
 val SDCPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000004")
+
+/**
+ * The local-dream (QNN NPU diffusion) provider. A separate stable ID from sd.cpp because
+ * they are separate engines with separate model directories and separate enabled-state —
+ * the user turns on the NPU, not "images".
+ */
+val LOCAL_DREAM_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000005")
 private val AICORE_NANO_FAST_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000002")
 private val AICORE_NANO_FULL_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000003")
 

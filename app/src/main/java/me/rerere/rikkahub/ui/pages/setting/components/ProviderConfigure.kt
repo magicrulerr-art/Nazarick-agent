@@ -145,6 +145,10 @@ fun ProviderConfigure(
                 ProviderConfigureSdCpp(provider, onEdit)
             }
 
+            is ProviderSetting.LocalDream -> {
+                ProviderConfigureLocalDream(provider, onEdit)
+            }
+
             is ProviderSetting.Codex -> Unit
             is ProviderSetting.Grok -> Unit
             is ProviderSetting.GeminiOAuth -> Unit
@@ -163,6 +167,7 @@ fun ProviderSetting.convertTo(type: KClass<out ProviderSetting>): ProviderSettin
         is ProviderSetting.LiteRtLocal -> "" // on-device, no API key
         is ProviderSetting.LlamaCppLocal -> "" // on-device, no API key
         is ProviderSetting.SdCppLocal -> "" // on-device, no API key
+        is ProviderSetting.LocalDream -> "" // on-device, no API key
         is ProviderSetting.Codex -> "" // OAuth, no API key
         is ProviderSetting.Grok -> "" // OAuth, no API key
         is ProviderSetting.GeminiOAuth -> "" // OAuth, no API key
@@ -175,6 +180,7 @@ fun ProviderSetting.convertTo(type: KClass<out ProviderSetting>): ProviderSettin
         is ProviderSetting.LiteRtLocal -> "" // on-device, no base URL
         is ProviderSetting.LlamaCppLocal -> "" // on-device, no base URL
         is ProviderSetting.SdCppLocal -> "" // on-device, no base URL
+        is ProviderSetting.LocalDream -> "" // on-device, no base URL
         is ProviderSetting.Codex -> "" // OAuth, no base URL
         is ProviderSetting.Grok -> "" // OAuth, no base URL
         is ProviderSetting.GeminiOAuth -> "" // OAuth, no base URL
@@ -234,6 +240,7 @@ internal fun ProviderSetting.defaultBaseUrlForReset(): String {
             is ProviderSetting.LiteRtLocal -> return "" // on-device, no base URL
             is ProviderSetting.LlamaCppLocal -> return "" // on-device, no base URL
             is ProviderSetting.SdCppLocal -> return "" // on-device, no base URL
+            is ProviderSetting.LocalDream -> return "" // on-device, no base URL
             is ProviderSetting.Codex -> return "" // OAuth, no base URL
             is ProviderSetting.Grok -> return "" // OAuth, no base URL
             is ProviderSetting.GeminiOAuth -> return "" // OAuth, no base URL
@@ -247,6 +254,7 @@ internal fun ProviderSetting.defaultBaseUrlForReset(): String {
         is ProviderSetting.LiteRtLocal -> ""
         is ProviderSetting.LlamaCppLocal -> ""
         is ProviderSetting.SdCppLocal -> ""
+        is ProviderSetting.LocalDream -> ""
         is ProviderSetting.Codex -> ""
         is ProviderSetting.Grok -> ""
         is ProviderSetting.GeminiOAuth -> ""
@@ -263,6 +271,7 @@ internal fun ProviderSetting.resetBaseUrlToDefault(): ProviderSetting {
         is ProviderSetting.LiteRtLocal -> this // no base URL to reset
         is ProviderSetting.LlamaCppLocal -> this // no base URL to reset
         is ProviderSetting.SdCppLocal -> this // no base URL to reset
+        is ProviderSetting.LocalDream -> this // no base URL to reset
         is ProviderSetting.Codex -> this // no base URL to reset
         is ProviderSetting.Grok -> this // no base URL to reset
         is ProviderSetting.GeminiOAuth -> this // no base URL to reset
@@ -278,6 +287,7 @@ internal fun ProviderSetting.isUsingDefaultBaseUrl(): Boolean {
         is ProviderSetting.LiteRtLocal -> return true // no base URL concept
         is ProviderSetting.LlamaCppLocal -> return true // no base URL concept
         is ProviderSetting.SdCppLocal -> return true // no base URL concept
+        is ProviderSetting.LocalDream -> return true // no base URL concept
         is ProviderSetting.Codex -> return true // no base URL concept
         is ProviderSetting.Grok -> return true // no base URL concept
         is ProviderSetting.GeminiOAuth -> return true // no base URL concept
@@ -1352,6 +1362,133 @@ private fun SdModelEntryRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * The QNN NPU image tile. Structured like [ProviderConfigureSdCpp] — direct installer
+ * driving, tile-local progress, register-on-success — with one deliberate omission: no
+ * library-reconcile self-heal. sd-cpp needed one because a whole GGUF *file* can exist while
+ * its Model row went missing; here the installed test is "marker file under
+ * `local-models/localdream/<id>/`", so a re-open of this tile reflects disk truth through
+ * `installedEntries()` without a planner. If packs and rows ever drift on purpose (user
+ * deleted a row but kept the pack), Install shows as available and short-circuits on the
+ * installer's `isInstalled` fast path.
+ */
+@Composable
+private fun ColumnScope.ProviderConfigureLocalDream(
+    provider: ProviderSetting.LocalDream,
+    onEdit: (ProviderSetting.LocalDream) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installer = remember { me.rerere.localdream.QnnModelInstaller(context) }
+
+    var progress by remember { mutableStateOf<Pair<String, Float>?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    var installed by remember { mutableStateOf(installer.installedEntries().map { it.id }.toSet()) }
+    var refresh by remember { mutableStateOf(0) }
+    LaunchedEffect(refresh) { installed = installer.installedEntries().map { it.id }.toSet() }
+
+    provider.description()
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            stringResource(id = R.string.setting_provider_page_enable),
+            modifier = Modifier.weight(1f),
+        )
+        Checkbox(checked = provider.enabled, onCheckedChange = { onEdit(provider.copy(enabled = it)) })
+    }
+
+    OutlinedTextField(
+        value = provider.name,
+        onValueChange = { onEdit(provider.copy(name = it.trim())) },
+        label = { Text(stringResource(id = R.string.setting_provider_page_name)) },
+        modifier = Modifier.fillMaxWidth(),
+        maxLines = 3,
+    )
+
+    Text(
+        text = stringResource(R.string.local_dream_catalog_subtitle),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+        Text(stringResource(R.string.local_dream_catalog_title), style = MaterialTheme.typography.titleSmall)
+        me.rerere.localdream.LocalDreamCatalog.models.forEach { entry ->
+            val isInstalled = entry.id in installed
+            val busy = progress?.first == entry.id
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(entry.displayName, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "512px · ${(entry.sizeBytes / (1024 * 1024)).let { "%,d".format(it) }} MB" +
+                            if (entry.note.isNotBlank()) " · ${entry.note}" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (busy) {
+                        LinearProgressIndicator(
+                            progress = { progress.second },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        )
+                    }
+                }
+                if (isInstalled) {
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            if (installer.delete(entry)) {
+                                refresh++
+                                onEdit(provider.copy(models = provider.models.filterNot { it.modelId == entry.id }))
+                            } else {
+                                failure = "Could not delete ${entry.id} — is it in use?"
+                            }
+                        }
+                    }, enabled = progress == null) {
+                        Text(stringResource(R.string.sd_cpp_delete_action))
+                    }
+                } else {
+                    Button(onClick = {
+                        failure = null
+                        scope.launch {
+                            runCatching {
+                                installer.install(entry) { done, total ->
+                                    progress = entry.id to (if (total > 0) done.toFloat() / total else 0f)
+                                }
+                            }.onSuccess {
+                                progress = null
+                                refresh++
+                                // Same AURA-014 lesson as the sd tile, in one line: a pack
+                                // without a Model row is invisible to the picker, and a
+                                // registered model under a disabled provider still fails it.
+                                onEdit(
+                                    enableAfterFirstDownload(
+                                        registerInstalledModel(
+                                            provider,
+                                            me.rerere.localdream.LocalDreamCatalog.modelFor(entry),
+                                        ),
+                                    ) as ProviderSetting.LocalDream,
+                                )
+                            }.onFailure { e ->
+                                progress = null
+                                failure = e.message ?: e.javaClass.simpleName
+                            }
+                        }
+                    }, enabled = progress == null) {
+                        Text(stringResource(R.string.sd_cpp_install_action))
+                    }
+                }
+            }
+        }
+    }
+
+    failure?.let { message ->
+        Text(
+            text = message,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 

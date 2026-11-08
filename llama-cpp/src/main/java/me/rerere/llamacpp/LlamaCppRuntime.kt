@@ -190,9 +190,20 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
         }
 
         val ctx = try {
+            // GPU-offload KV guard (rule battle-tested in production by Off Grid AI's OGAM,
+            // llmHelpers.ts, ported 2026-11-08): on a spread of Adreno devices the OpenCL
+            // backend faults at context creation once explicit cache_type_k/v arrive as
+            // anything but f16 — and flash attention ON is fatal there too, which we get
+            // for free since llama_context_default_params() leaves FA off and nothing here
+            // flips it. ContextPlanner's ladder picks Q8_0 happily when RAM is tight, and
+            // that is right ON CPU; the clamp belongs at the offload boundary, not in the
+            // planner's memory maths (when the bench knob offloads on a Q8_0 plan, the KV
+            // footprint doubles against the estimate — accepted: correctness before the
+            // knob's throughput experiment, and the knob ships at 0).
+            val cache = cacheTypeForOffload(plan.cacheTypeK, gpuLayers)
             native.createContext(
                 model, plan.nCtx, plan.nBatch, plan.nUBatch,
-                plan.cacheTypeK.id, plan.cacheTypeV.id, threads,
+                cache.id, cache.id, threads,
             )
         } catch (t: Throwable) {
             native.freeModel(model)
@@ -351,3 +362,12 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
     private fun defaultThreads(): Int =
         (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 8)
 }
+
+/**
+ * Pure form of the GPU-offload KV guard from [load] — see the comment there for the
+ * OGAM-sourced Adreno evidence. Clamped to F16 whenever layers leave the CPU; untouched
+ * when the plan stays on CPU (which is every production load today).
+ */
+internal fun cacheTypeForOffload(planned: KvCacheType, gpuLayers: Int): KvCacheType =
+    if (gpuLayers != 0) KvCacheType.F16 else planned
+

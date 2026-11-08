@@ -771,6 +771,20 @@ class SettingsStore(
                                 }
                             providers.add(after, defaultProvider.copyProvider())
                         }
+                        is ProviderSetting.LocalDream -> {
+                            // The NPU tile sits directly after the sd.cpp tile so the local
+                            // group stays contiguous; same cascade-down when predecessors
+                            // were deleted by a tinkerer.
+                            val after = providers.indexOfFirst { it is ProviderSetting.SdCppLocal }
+                                .let {
+                                    when {
+                                        it >= 0 -> it + 1
+                                        else -> providers.indexOfFirst { p -> p is ProviderSetting.LlamaCppLocal }
+                                            .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
+                                    }
+                                }
+                            providers.add(after, defaultProvider.copyProvider())
+                        }
                         else -> providers.add(defaultProvider.copyProvider())
                     }
                 }
@@ -887,6 +901,10 @@ class SettingsStore(
                         )
 
                         is ProviderSetting.SdCppLocal -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
+
+                        is ProviderSetting.LocalDream -> provider.copy(
                             models = provider.models.distinctBy { model -> model.id }
                         )
 

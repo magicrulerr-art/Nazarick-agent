@@ -2125,6 +2125,8 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="sd_cpp_catalog_subtitle">Weights land in local-models/sdcpp and inference never leaves the device. Plan on ~1.5 GB per model.</string>
   <string name="sd_cpp_install_action">Install</string>
   <string name="sd_cpp_delete_action">Delete</string>
+<string name="local_dream_catalog_title">NPU diffusion models</string>
+<string name="local_dream_catalog_subtitle">QNN context binaries unpack into local-models/localdream and inference never leaves the device. Plan on ~1 GB per pack. Qualcomm devices only.</string>
   <string name="local_llm_accelerator_label">Accelerator: %1$s</string>
   <string name="local_llm_test_model">Test</string>
   <string name="local_llm_manage_files_title">Installed model files</string>

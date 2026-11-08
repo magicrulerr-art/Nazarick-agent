@@ -1521,6 +1521,8 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="sd_cpp_catalog_subtitle">权重下载至 local-models/sdcpp，推理全程不离开设备。每个模型约 1.5 GB。</string>
   <string name="sd_cpp_install_action">安装</string>
   <string name="sd_cpp_delete_action">删除</string>
+<string name="local_dream_catalog_title">NPU 扩散模型</string>
+<string name="local_dream_catalog_subtitle">QNN 上下文包解压到 local-models/localdream，推理不离开设备。每个模型包约 1 GB。仅支持高通设备。</string>
   <string name="local_llm_insufficient_memory_format">需要约 %1$d MB 的可用内存（模型 %2$d MB 加上运行时余量），但只有 %3$d MB 可用。请关闭其他应用或选择更小的模型。</string>
   <string name="local_llm_invalid_url">无效网址：必须是 https 且格式正确</string>
   <string name="local_llm_litert_name">本地 · LiteRT</string>
