@@ -5,13 +5,23 @@
 # than we change releases), so glob for it and take the first hit; zero hits is
 # fatal, because shipping without the skel reproduces the exact failure this
 # whole branch exists to avoid.
-file(GLOB_RECURSE skel_matches "${SEARCH_DIR}/**/${SKEL}")
-list(REMOVE_DUPLICATES skel_matches)
-list(LENGTH skel_matches skel_count)
-if(skel_count LESS 1)
-    message(FATAL_ERROR "htp skel '${SKEL}' not found anywhere under ${SEARCH_DIR}")
+# Two modes:
+#   SRC=<file>            -- copy that exact file (SDK libcdsprpc.so lane)
+#   SEARCH_DIR + glob     -- find skel by name anywhere under a tree (v73 lane)
+if(DEFINED SRC)
+    if(NOT EXISTS "${SRC}")
+        message(FATAL_ERROR "copy_htp_skel: SRC missing: ${SRC}")
+    endif()
+    set(skel_src "${SRC}")
+else()
+    file(GLOB_RECURSE skel_matches "${SEARCH_DIR}/**/${SKEL}")
+    list(REMOVE_DUPLICATES skel_matches)
+    list(LENGTH skel_matches skel_count)
+    if(skel_count LESS 1)
+        message(FATAL_ERROR "htp skel '${SKEL}' not found anywhere under ${SEARCH_DIR}")
+    endif()
+    list(GET skel_matches 0 skel_src)
 endif()
-list(GET skel_matches 0 skel_src)
 file(MAKE_DIRECTORY "${DST_DIR}")
 execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${skel_src}" "${DST_DIR}/${SKEL}"
     RESULT_VARIABLE skel_rc)

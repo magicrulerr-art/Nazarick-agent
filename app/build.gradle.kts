@@ -195,13 +195,11 @@ android {
             // llamajni's OpenCL soname stub is link-time bait for libggml-opencl;
             // packaging it would shadow the vendor's real libOpenCL.so on device.
             excludes += "lib/*/libOpenCL.so"
-            // Guard for the Hexagon lane (AURA-016): nothing should emit a
-            // libcdsprpc.so at all -- htp-drv dlopens the vendor lib by soname
-            // (public.libraries.txt grants that contract). Run 125's stub proved
-            // the failure modes: shipped-in-APK shadows the vendor lib, and
-            // DT_NEEDED on it died UnsatisfiedLinkError in the classloader
-            // namespace before JNI_OnLoad (run 126). Keep excluding, forever.
-            excludes += "lib/*/libcdsprpc.so"
+            // AURA-016, do NOT re-add a libcdsprpc exclude: run 126/127 proved the
+            // DT_NEEDED entry is authored by the SDK's build_idl (hexagon_fun.cmake)
+            // linking the SDK's real android_aarch64 client lib -- the fix is to
+            // SHIP that lib (sd-cpp POST_BUILD copies it into jniLibs), not to
+            // strip it. Excluding it dangles DT_NEEDED and JNI_OnLoad never runs.
         }
     }
     lint {

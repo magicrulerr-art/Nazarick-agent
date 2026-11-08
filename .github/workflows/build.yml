@@ -730,12 +730,17 @@ jobs:
           echo "=== APK contents (arm64 native libs) ==="
           unzip -l "$APK" | grep -E 'arm64-v8a/.*\.so' || true
           unzip -l "$APK" | grep 'libggml-htp-v73.so' || { echo "FATAL: skel missing from APK"; exit 1; }
-          # The stub must NOT ride along (see app packaging excludes): a packaged
-          # stub shadows the vendor libcdsprpc.so and kills FastRPC at runtime.
-          if unzip -l "$APK" | grep 'lib/arm64-v8a/libcdsprpc.so'; then
-            echo "FATAL: cdsprpc stub shipped in APK - vendor library would be shadowed"; exit 1
+          # FastRPC client: DT_NEEDED libcdsprpc.so is authored by the SDK's
+          # build_idl -- the SDK's real android_aarch64 lib must ride along
+          # (runs 125-127: stub=shadowed, excluded=dangled, both crash at load).
+          # Size floor proves it's the SDK lib, not a resurrected 3.7 KB stub.
+          LINE="$(unzip -l "$APK" | grep 'lib/arm64-v8a/libcdsprpc.so' || true)"
+          echo "cdsprpc entry: ${LINE:-MISSING}"
+          SIZE=$(echo "$LINE" | awk '{print $1}'); SIZE=${SIZE:-0}
+          if [ "$SIZE" -lt 100000 ]; then
+            echo "FATAL: SDK libcdsprpc.so missing from APK (found bytes: $SIZE)"; exit 1
           fi
-          echo "OK: skel inside, stub outside"
+          echo "OK: skel inside, SDK FastRPC client inside (${SIZE} B)"
 
       - name: Upload hexagon APK
         uses: actions/upload-artifact@v4

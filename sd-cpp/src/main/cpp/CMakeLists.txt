@@ -92,14 +92,17 @@ if(SDCPP_ENABLE_HEXAGON)
     # the ship dir that actually exists in this SDK for the FastRPC host side.
     set(PREBUILT_LIB_DIR "android_aarch64" CACHE STRING
         "Hexagon SDK ship dir (see run 119 note above)" FORCE)
-    # NO libcdsprpc link lane (run 126 device proof, the honest correction):
-    # htp-drv.cpp dlopens "libcdsprpc.so" itself at runtime and dlsyms every
-    # FastRPC fn (ggml-hexagon/htp-drv.cpp:337-375), so link-time symbols were
-    # never needed. The earlier llamajni-style soname stub put libcdsprpc.so in
-    # DT_NEEDED -- and the app classloader namespace cannot see /vendor libs
-    # even though the vendor lib is in public.libraries.txt (that grants
-    # dlopen-by-soname only). Result: dlopen(libsdcpp_jni.so) died
-    # UnsatisfiedLinkError before JNI_OnLoad ever ran.
+    # The FastRPC client lib is NOT our stub to make: SDK 6.7's build_idl()
+    # (hexagon_fun.cmake:192,467) auto-links the SDK's own
+    # ipc/fastrpc/remote/ship/android_aarch64/libcdsprpc.so into htp_iface, so
+    # DT_NEEDED libcdsprpc.so is born from the fork's CMake, not our wrapper
+    # (runs 125/126 stub history was chasing the wrong author). A prebuilt
+    # linked by path is not an AGP-packaged output though -- so DT_NEEDED was
+    # dangling and JNI_OnLoad never ran. Ship the SDK copy beside the skel:
+    # the app-namespace finds it in nativeLibraryDir and htp-drv's dlopen +
+    # public.libraries.txt path stays as belt-and-braces fallback. The copy
+    # itself lives in the leaf block below (sdcpp_jni must exist first -- run
+    # 106's ordering lesson, re-learned byAura on this very file).
 endif()
 # Three levels up from src/main/cpp/, i.e. the module root -- same shape :llama-cpp uses.
 # Spelling it "native/sd.cpp" resolves against this file's directory and CI says, quite
@@ -171,13 +174,19 @@ set_target_properties(sdcpp_jni PROPERTIES
 if(SDCPP_ENABLE_HEXAGON)
     target_compile_definitions(sdcpp_jni PRIVATE SDCPP_HAVE_HEXAGON=1)
     # ignore-all stays REQUIRED (static ggml-hexagon + htp_iface glue carry
-    # FastRPC refs; every real call routes through htp-drv's dlsym'd pfn
-    # table, so nothing is ever demanded at load). NO stub, NO DT_NEEDED --
-    # see the run 126 note above the add_library for why the OpenCL recipe
-    # cannot be copied for FastRPC.
+    # FastRPC refs; runtime resolution is the SDK libcdsprpc.so shipped per
+    # the note above -- dlopen in htp-drv, direct PLT calls from generated
+    # glue, both land on the app-local copy). No hand-rolled stub anywhere.
     target_link_options(sdcpp_jni PRIVATE
         "LINKER:--unresolved-symbols=ignore-all"
         "LINKER:-z,lazy")
+    add_custom_command(TARGET sdcpp_jni POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DSRC=${HEXAGON_SDK_ROOT}/ipc/fastrpc/remote/ship/android_aarch64/libcdsprpc.so
+            -DDST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/arm64-v8a
+            -DSKEL=libcdsprpc.so
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/copy_htp_skel.cmake
+        COMMENT "sdcpp: packaging SDK libcdsprpc.so into jniLibs")
     add_custom_command(TARGET sdcpp_jni POST_BUILD
         COMMAND ${CMAKE_COMMAND}
             -DSEARCH_DIR=${CMAKE_BINARY_DIR}
