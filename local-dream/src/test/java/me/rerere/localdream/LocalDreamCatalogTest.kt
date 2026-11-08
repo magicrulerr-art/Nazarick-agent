@@ -33,7 +33,7 @@ class LocalDreamCatalogTest {
 
     @Test fun lookupHelpers() {
         assertEquals("chilloutmix-8gen2", LocalDreamCatalog.entryFor("ChilloutMix_qnn2.28_8gen2.zip")?.id)
-        assertEquals("chilloutmix-mnn", LocalDreamCatalog.entryById("chilloutmix-mnn")?.packKind)
+        assertEquals("mnn", LocalDreamCatalog.entryById("chilloutmix-mnn")?.packKind)
         assertNull(LocalDreamCatalog.entryById("nope"))
     }
 

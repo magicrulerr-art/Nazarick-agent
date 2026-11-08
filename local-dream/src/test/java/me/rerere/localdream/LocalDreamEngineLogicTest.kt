@@ -172,10 +172,11 @@ class LocalDreamEngineLogicTest {
         // PNG signature
         assertEquals(0x89.toByte(), png[0])
         assertEquals('P'.code.toByte(), png[1])
-        // IHDR width/height big-endian at fixed offsets
-        assertEquals(0, png[16])
-        assertEquals(2, png[19])
-        assertEquals(1, png[23])
+        // IHDR width/height big-endian at fixed offsets. .toInt() is load-bearing:
+        // assertEquals(Integer, Byte) compares boxed types and never matches (run 133).
+        assertEquals(0, png[16].toInt())
+        assertEquals(2, png[19].toInt())
+        assertEquals(1, png[23].toInt())
         runCatching { LocalDreamEngine.rgbBase64ToPng(base64, 4, 1) }
             .onFailure { assertTrue(it is IllegalArgumentException) }
             .onSuccess { assertFalse("short raster must not pass", true) }
