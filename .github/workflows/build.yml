@@ -607,7 +607,7 @@ jobs:
     name: sd-cpp hexagon NPU native (sd.gpu=hexagon)
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/hexagon-npu'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     concurrency:
       group: build-hexagon-${{ github.ref }}
       cancel-in-progress: true
@@ -693,8 +693,19 @@ jobs:
           set -eu
           ./gradlew :sd-cpp:assembleRelease -Psd.gpu=hexagon --stacktrace
 
+      # Device proof (plan W4) needs an installable APK, not just the AAR: the
+      # whole app rebuilt with the NPU lane compiled in (JNI ADSP_LIBRARY_PATH
+      # block + skel merged from :sd-cpp jniLibs). Lint skipped: feat-branch
+      # fast lane, same rule as the assemble job.
+      - name: Assemble hexagon APK (installable proof build)
+        run: |
+          set -eu
+          ./gradlew :app:assembleNazarickRelease -Psd.gpu=hexagon -PskipLintVital --stacktrace
+          ls -la app/build/outputs/apk/nazarick/release/
+
       # Static proof the NPU lane actually produced artifacts, not a silent CPU
-      # fallthrough: libsdcpp_jni.so must exist AND carry the v73 skel alongside.
+      # fallthrough: libsdcpp_jni.so must exist AND the v73 skel must ride
+      # INSIDE the shipping APK (jniLibs merge is the only path it travels).
       - name: Verify hexagon native outputs
         run: |
           set -eu
@@ -704,6 +715,18 @@ jobs:
           find . -name 'libggml-htp-v73.so' -printf '%p  %s bytes\n' | head
           echo "=== jniLibs landing (packaged for arm64) ==="
           find sd-cpp/src/main/jniLibs -name '*.so' -printf '%p  %s bytes\n' 2>/dev/null || echo "(jniLibs empty - check POST_BUILD copy)"
+          APK="$(ls app/build/outputs/apk/nazarick/release/*.apk | head -n1)"
+          echo "=== APK contents (arm64 native libs) ==="
+          unzip -l "$APK" | grep -E 'arm64-v8a/.*\.so' || true
+          unzip -l "$APK" | grep 'libggml-htp-v73.so' || { echo "FATAL: skel missing from APK"; exit 1; }
+
+      - name: Upload hexagon APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-nazarick-hexagon
+          path: app/build/outputs/apk/nazarick/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload hexagon native (aar + skel)
         uses: actions/upload-artifact@v4
