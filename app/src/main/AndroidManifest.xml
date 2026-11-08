@@ -142,6 +142,7 @@
     android:name=".RikkaHubApp"
     android:largeHeap="true"
     android:allowBackup="true"
+    android:extractNativeLibs="true"
     android:appCategory="productivity"
     android:dataExtractionRules="@xml/data_extraction_rules"
     android:enableOnBackInvokedCallback="true"
