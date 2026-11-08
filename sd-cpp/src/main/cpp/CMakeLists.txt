@@ -92,17 +92,14 @@ if(SDCPP_ENABLE_HEXAGON)
     # the ship dir that actually exists in this SDK for the FastRPC host side.
     set(PREBUILT_LIB_DIR "android_aarch64" CACHE STRING
         "Hexagon SDK ship dir (see run 119 note above)" FORCE)
-    # FastRPC userspace symbols (remote_handle64_open, rpcmem_*, dspqueue_*) live in
-    # the device's libcdsprpc.so; the NDK sysroot carries no import lib -- the same
-    # hole :llama-cpp plugged for libOpenCL.so and libvulkan.so. Do-nothing stub
-    # carries the soname so DT_NEEDED lands and the vendor library resolves the
-    # symbols at load time.
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sdcpp_cdsprpc_stub.cpp"
-         "// Carries the libcdsprpc.so soname; vendor FastRPC resolves symbols at load time.\n")
-    add_library(sdcpp_cdsprpc_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/sdcpp_cdsprpc_stub.cpp")
-    set_target_properties(sdcpp_cdsprpc_stub PROPERTIES
-        OUTPUT_NAME "cdsprpc"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    # NO libcdsprpc link lane (run 126 device proof, the honest correction):
+    # htp-drv.cpp dlopens "libcdsprpc.so" itself at runtime and dlsyms every
+    # FastRPC fn (ggml-hexagon/htp-drv.cpp:337-375), so link-time symbols were
+    # never needed. The earlier llamajni-style soname stub put libcdsprpc.so in
+    # DT_NEEDED -- and the app classloader namespace cannot see /vendor libs
+    # even though the vendor lib is in public.libraries.txt (that grants
+    # dlopen-by-soname only). Result: dlopen(libsdcpp_jni.so) died
+    # UnsatisfiedLinkError before JNI_OnLoad ever ran.
 endif()
 # Three levels up from src/main/cpp/, i.e. the module root -- same shape :llama-cpp uses.
 # Spelling it "native/sd.cpp" resolves against this file's directory and CI says, quite
@@ -173,16 +170,14 @@ set_target_properties(sdcpp_jni PROPERTIES
 # v73 = the Fold's SM8650; the tree also produces v75/v79/v81 we cannot run.
 if(SDCPP_ENABLE_HEXAGON)
     target_compile_definitions(sdcpp_jni PRIVATE SDCPP_HAVE_HEXAGON=1)
-    # Leaf treatment identical to the OpenCL lane's proven recipe (run 105/106
-    # learned it the hard way): the static ggml-hexagon carries FastRPC refs,
-    # ignore-all + lazy defers them, and the stub's libcdsprpc.so in DT_NEEDED
-    # loads the vendor library into the namespace before the first remote call.
+    # ignore-all stays REQUIRED (static ggml-hexagon + htp_iface glue carry
+    # FastRPC refs; every real call routes through htp-drv's dlsym'd pfn
+    # table, so nothing is ever demanded at load). NO stub, NO DT_NEEDED --
+    # see the run 126 note above the add_library for why the OpenCL recipe
+    # cannot be copied for FastRPC.
     target_link_options(sdcpp_jni PRIVATE
         "LINKER:--unresolved-symbols=ignore-all"
         "LINKER:-z,lazy")
-    target_link_libraries(sdcpp_jni PRIVATE
-        "${CMAKE_CURRENT_BINARY_DIR}/libcdsprpc.so")
-    add_dependencies(sdcpp_jni sdcpp_cdsprpc_stub)
     add_custom_command(TARGET sdcpp_jni POST_BUILD
         COMMAND ${CMAKE_COMMAND}
             -DSEARCH_DIR=${CMAKE_BINARY_DIR}
