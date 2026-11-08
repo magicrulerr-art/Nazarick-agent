@@ -640,6 +640,33 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # :app is configured even for a :sd-cpp-only build (settings-level eval), and
+      # app's signingConfigs.create("release") eagerly getValue("storeFile")!! --
+      # run 118 proved that NPEs here when the env trio is absent. Provision the
+      # same way the assemble job does; the sd-cpp AAR itself is unsigned, but the
+      # config phase cannot dodge the app module.
+      - name: Provision release keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.NAZARICK_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.NAZARICK_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NAZARICK_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${STORE_PASSWORD:-}" ]; then
+            echo "::notice::No keystore secret configured - release variant ships unsigned"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_B64}" | base64 -d > "$RUNNER_TEMP/nazarick-release.p12"
+          {
+            echo "NAZARICK_KEYSTORE=$RUNNER_TEMP/nazarick-release.p12"
+            echo "NAZARICK_STORE_PASSWORD=${STORE_PASSWORD}"
+            echo "NAZARICK_KEY_PASSWORD=${KEY_PASSWORD}"
+            echo "NAZARICK_KEY_ALIAS=nazarick"
+          } >> "$GITHUB_ENV"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
       # The Hexagon SDK is only needed to (a) compile the DSP skels with
       # hexagon-clang and (b) supply rpcmem/rpc headers + the IDL stub generator.
       # Export its extracted root; sd-cpp's CMake fails loudly if it is missing.
