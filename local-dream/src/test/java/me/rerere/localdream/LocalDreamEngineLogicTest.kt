@@ -147,12 +147,12 @@ class LocalDreamEngineLogicTest {
         val p = LocalDreamEngine.parseSseData(
             """{"type":"progress","step":4,"total_steps":20,"image":"aGVsbG8="}""",
         )
-        assertTrue(p is LocalDreamEngine.SseEvent.Progress)
-        assertEquals(4, (p as LocalDreamEngine.SseEvent.Progress).step)
+        assertTrue(p is SseEvent.Progress)
+        assertEquals(4, (p as SseEvent.Progress).step)
 
         val c = LocalDreamEngine.parseSseData(
             """{"type":"complete","image":"aGk=","width":512,"height":512,"seed":7,"generation_time_ms":9000}""",
-        ) as? LocalDreamEngine.SseEvent.Complete
+        ) as? SseEvent.Complete
         assertNotNull(c)
         assertEquals(512, c!!.width)
         assertEquals(9000L, c.elapsedMs)

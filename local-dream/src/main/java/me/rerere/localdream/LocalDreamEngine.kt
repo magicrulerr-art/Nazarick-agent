@@ -260,17 +260,9 @@ class LocalDreamEngine(private val context: Context) {
             null
         }
 
-        internal sealed interface SseEvent {
-            data class Progress(val step: Int, val totalSteps: Int, val previewBase64: String) : SseEvent
-            data class Complete(
-                val imageBase64: String,
-                val width: Int,
-                val height: Int,
-                val seed: Int,
-                val elapsedMs: Long,
-            ) : SseEvent
-        }
-
+        // NOTE: the SSE event types live at file level as `SseEvent` — a companion-nested
+        // class is not reachable as `LocalDreamEngine.SseEvent`, which the run-132 CI caught
+        // the honest way.
         /** base64 RGB3 → PNG bytes, via the sd-cpp container writer (channel 3). */
         internal fun rgbBase64ToPng(base64: String, width: Int, height: Int): ByteArray {
             // MIME decoder, not the strict one: some server stacks line-wrap long fields and
@@ -526,6 +518,23 @@ class LocalDreamEngine(private val context: Context) {
         currentBackend = null
         isServerReady = false
     }
+}
+
+/**
+ * One SSE `data:` payload from `/generate`, typed per the engine's HTTP contract. File-level
+ * on purpose: companion-nested types are not reachable through the class name from other
+ * files (run 132's `Unresolved reference 'SseEvent'`), and these are wire-format types, not
+ * engine state.
+ */
+internal sealed interface SseEvent {
+    data class Progress(val step: Int, val totalSteps: Int, val previewBase64: String) : SseEvent
+    data class Complete(
+        val imageBase64: String,
+        val width: Int,
+        val height: Int,
+        val seed: Int,
+        val elapsedMs: Long,
+    ) : SseEvent
 }
 
 private fun JsonObject.stringOrNull(key: String): String? =
