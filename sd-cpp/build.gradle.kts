@@ -33,11 +33,29 @@ android {
                 // why the dial is SDCPP_ENABLE_OPENCL rather than SD_OPENCL, which
                 // this module's CMakeLists FORCEs) lives in src/main/cpp/CMakeLists.txt.
                 // Escape hatch: -Psd.gpu=cpu.
+                // 2026-11-07: the pinned ggml fork DOES carry an NPU tier —
+                // ggml-hexagon (HTP over FastRPC, arch v73-v81; the Fold's SM8650
+                // is v73). The stale "no QNN backend" note above predates the
+                // audit in floor/hexagon-npu-plan-2026-11-07.md. Third dial
+                // value: -Psd.gpu=hexagon compiles the HTP backend and leaves
+                // OpenCL OUT, so both backends' GPU-class devices can never
+                // contend for auto-fit (Hexagon registers as DEVICE_TYPE_GPU,
+                // ggml-hexagon.cpp:9275). CI supplies HEXAGON_SDK_ROOT; the
+                // skel build FATALs without it, deliberately loudly.
                 val sdGpu = providers.gradleProperty("sd.gpu").getOrElse("opencl")
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
                     "-DSDCPP_ENABLE_OPENCL=${if (sdGpu == "opencl") "ON" else "OFF"}",
+                    "-DSDCPP_ENABLE_HEXAGON=${if (sdGpu == "hexagon") "ON" else "OFF"}",
                 )
+                if (sdGpu == "hexagon") {
+                    val hexSdk = providers.environmentVariable("HEXAGON_SDK_ROOT").orNull
+                    require(!hexSdk.isNullOrBlank()) {
+                        "sd.gpu=hexagon requires HEXAGON_SDK_ROOT env (CI fetches the " +
+                        "snapdragon-toolchain community SDK; the htp skel build dies without it)"
+                    }
+                    arguments += "-DHEXAGON_SDK_ROOT=$hexSdk"
+                }
             }
         }
     }

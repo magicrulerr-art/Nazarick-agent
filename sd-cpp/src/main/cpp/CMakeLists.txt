@@ -62,6 +62,38 @@ if(SDCPP_ENABLE_OPENCL)
     set(SD_OPENCL ON CACHE BOOL "" FORCE)
 endif()
 
+# Hexagon HTP (NPU) backend (owner directive 2026-11-07: "Do qnn, since GPU is
+# not working" -- after the OpenCL verdict in floor/opencl-fold-verdict-2026-11-07.md:
+# Adreno ran, +32% slower AND white pixels; the plan of record is
+# floor/hexagon-npu-plan-2026-11-07.md). Same FORCE-dial rationale as
+# SDCPP_ENABLE_OPENCL above: every backend flag here is forced OFF. Turning
+# GGML_HEXAGON on pulls ggml/src/ggml-hexagon, which FATALs unless
+# HEXAGON_SDK_ROOT points at a real SDK (build_idl + hexagon-clang build the
+# libggml-htp-vXX DSP skels; CI fetches the snapdragon-toolchain Community
+# Edition). The loud failure is the point -- a silently-CPU "NPU" build is the
+# exact bite this repo already took during the pre-OpenCL era. Mutual
+# exclusion with OpenCL is enforced on the gradle side (sd.gpu picks one), so
+# only one GPU-class device exists for auto-fit.
+option(SDCPP_ENABLE_HEXAGON "Build sd.cpp with the Hexagon HTP (NPU) backend" OFF)
+if(SDCPP_ENABLE_HEXAGON)
+    if(NOT EXISTS "${HEXAGON_SDK_ROOT}")
+        message(FATAL_ERROR
+            "sdcpp: SDCPP_ENABLE_HEXAGON needs -DHEXAGON_SDK_ROOT=<extracted Hexagon SDK> "
+            "(got '${HEXAGON_SDK_ROOT}')")
+    endif()
+    set(GGML_HEXAGON ON CACHE BOOL "" FORCE)
+    # FastRPC userspace symbols (remote_handle64_open, rpcmem_*, dspqueue_*) live in
+    # the device's libcdsprpc.so; the NDK sysroot carries no import lib -- the same
+    # hole :llama-cpp plugged for libOpenCL.so and libvulkan.so. Do-nothing stub
+    # carries the soname so DT_NEEDED lands and the vendor library resolves the
+    # symbols at load time.
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sdcpp_cdsprpc_stub.cpp"
+         "// Carries the libcdsprpc.so soname; vendor FastRPC resolves symbols at load time.\n")
+    add_library(sdcpp_cdsprpc_stub SHARED "${CMAKE_CURRENT_BINARY_DIR}/sdcpp_cdsprpc_stub.cpp")
+    set_target_properties(sdcpp_cdsprpc_stub PROPERTIES
+        OUTPUT_NAME "cdsprpc"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 # Three levels up from src/main/cpp/, i.e. the module root -- same shape :llama-cpp uses.
 # Spelling it "native/sd.cpp" resolves against this file's directory and CI says, quite
 # correctly, that no such directory exists.
@@ -122,3 +154,31 @@ set_target_properties(sdcpp_jni PROPERTIES
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON
 )
+
+# The FastRPC loader resolves the DSP skel by FILENAME at runtime
+# ("file:///libggml-htp-v73.so"), it is not a DT_NEEDED dep, and Gradle never
+# runs ggml's install() step -- so the skel must be steered into jniLibs while
+# externalNativeBuild is still executing, or AGP's jniLibs merge never sees it
+# and the device logs "failed to load skel" in a language nobody prints.
+# v73 = the Fold's SM8650; the tree also produces v75/v79/v81 we cannot run.
+if(SDCPP_ENABLE_HEXAGON)
+    target_compile_definitions(sdcpp_jni PRIVATE SDCPP_HAVE_HEXAGON=1)
+    # Leaf treatment identical to the OpenCL lane's proven recipe (run 105/106
+    # learned it the hard way): the static ggml-hexagon carries FastRPC refs,
+    # ignore-all + lazy defers them, and the stub's libcdsprpc.so in DT_NEEDED
+    # loads the vendor library into the namespace before the first remote call.
+    target_link_options(sdcpp_jni PRIVATE
+        "LINKER:--unresolved-symbols=ignore-all"
+        "LINKER:-z,lazy")
+    target_link_libraries(sdcpp_jni PRIVATE
+        "${CMAKE_CURRENT_BINARY_DIR}/libcdsprpc.so")
+    add_dependencies(sdcpp_jni sdcpp_cdsprpc_stub)
+    add_custom_command(TARGET sdcpp_jni POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DSEARCH_DIR=${CMAKE_BINARY_DIR}
+            -DDST_DIR=${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/arm64-v8a
+            -DSKEL=libggml-htp-v73.so
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/copy_htp_skel.cmake
+        COMMENT "sdcpp: packaging libggml-htp-v73 skel into jniLibs")
+    add_dependencies(sdcpp_jni htp-v73)
+endif()

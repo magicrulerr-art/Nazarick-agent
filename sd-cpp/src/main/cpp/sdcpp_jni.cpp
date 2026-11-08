@@ -5,8 +5,13 @@
 
 #include <android/log.h>
 #include <atomic>
+#include <cstdlib>
 #include <string>
 #include <vector>
+
+#ifdef SDCPP_HAVE_HEXAGON
+#include <dlfcn.h>
+#endif
 
 #include "stable-diffusion.h"
 
@@ -100,6 +105,35 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *) {
         return JNI_ERR;
     }
     sd_set_log_callback(sd_log_bridge, nullptr);
+
+#ifdef SDCPP_HAVE_HEXAGON
+    // The DSP daemon (not this process's linker) opens the HTP skel by bare
+    // filename -- "file:///libggml-htp-vXX.so" -- and searches ADSP_LIBRARY_PATH
+    // (getenv, read in THIS process, forwarded to the daemon by libcdsprpc).
+    // Android leaves that variable unset for app processes and /vendor is
+    // read-only, so the packaged skel in our nativeLibraryDir would go unfound.
+    // Point ADSP_LIBRARY_PATH at the directory the loader already used for this
+    // very library (dladdr on a local symbol -> same dir the jniLibs skel lands
+    // in), prepending it to any vendor path already present. Must run before the
+    // first session open inside new_sd_ctx; JNI_OnLoad is that ordering guarantee.
+    Dl_info dl{};
+    if (dladdr(reinterpret_cast<void *>(&sd_log_bridge), &dl) != 0 && dl.dli_fname != nullptr) {
+        std::string lib_path(dl.dli_fname);
+        const auto slash = lib_path.find_last_of('/');
+        if (slash != std::string::npos) {
+            lib_path.resize(slash);
+            const char *prev = getenv("ADSP_LIBRARY_PATH");
+            const std::string value = prev && *prev ? (lib_path + ":" + prev) : lib_path;
+            setenv("ADSP_LIBRARY_PATH", value.c_str(), 1);
+            LOGI("JNI_OnLoad: ADSP_LIBRARY_PATH=%s", value.c_str());
+        } else {
+            LOGE("JNI_OnLoad: dli_fname had no directory separator: %s", dl.dli_fname);
+        }
+    } else {
+        LOGE("JNI_OnLoad: dladdr(sd_log_bridge) failed; the htp skel will not resolve");
+    }
+#endif
+
     LOGI("JNI_OnLoad: ok (SdRaster cached, log bridge installed)");
     return JNI_VERSION_1_6;
 }

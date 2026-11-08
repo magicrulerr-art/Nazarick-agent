@@ -592,3 +592,93 @@ jobs:
           path: app/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 14
+
+  # AURA-016: Hexagon HTP (NPU) image generation. Owner directive 2026-11-07
+  # "Do qnn, since GPU is not working" after the OpenCL verdict (slower + white
+  # pixels). Builds ONLY :sd-cpp with -Psd.gpu=hexagon to prove the vendored
+  # ggml-hexagon backend compiles, links against a libcdsprpc soname stub, and
+  # cross-builds the libggml-htp-v73 skel for the Fold's SM8650. Gated to the
+  # feature branch + manual dispatch so main's assemble stays lean; green here
+  # is precondition, not proof (device 512x512 gen with non-white pixels is).
+  hexagon:
+    name: sd-cpp hexagon NPU native (sd.gpu=hexagon)
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/hexagon-npu'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: build-hexagon-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      ANDROID_USE_CCACHE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      # snapdragon-toolchain community mirror (no Qualcomm login); matches the
+      # toolchain the vendored htp skels expect.
+      HEXAGON_SDK_URL: https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      - name: Install ccache
+        run: |
+          sudo apt-get install -y -qq ccache > /dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq ccache; }
+          ccache --version | head -1
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The Hexagon SDK is only needed to (a) compile the DSP skels with
+      # hexagon-clang and (b) supply rpcmem/rpc headers + the IDL stub generator.
+      # Export its extracted root; sd-cpp's CMake fails loudly if it is missing.
+      - name: Fetch Hexagon SDK (community mirror)
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP"
+          curl -fL --retry 3 -o hexagon-sdk.tar.xz "$HEXAGON_SDK_URL"
+          mkdir -p hexagon-sdk
+          tar -xf hexagon-sdk.tar.xz -C hexagon-sdk --strip-components=1
+          # The archive nests a versioned dir; find the real root (has incs/ + tools/).
+          SDK_ROOT="$([ -d hexagon-sdk/incs ] && echo "$PWD/hexagon-sdk" || find "$PWD/hexagon-sdk" -maxdepth 2 -type d -name incs -printf '%h\n' | head -n1)"
+          echo "SDK_ROOT=$SDK_ROOT"
+          test -d "$SDK_ROOT/incs"
+          echo "HEXAGON_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Assemble sd-cpp native (sd.gpu=hexagon)
+        run: |
+          set -eu
+          ./gradlew :sd-cpp:assembleRelease -Psd.gpu=hexagon --stacktrace
+
+      # Static proof the NPU lane actually produced artifacts, not a silent CPU
+      # fallthrough: libsdcpp_jni.so must exist AND carry the v73 skel alongside.
+      - name: Verify hexagon native outputs
+        run: |
+          set -eu
+          echo "=== built native libs ==="
+          find sd-cpp/build -name 'libsdcpp_jni.so' -printf '%p  %s bytes\n'
+          echo "=== htp skels produced (v73 = SM8650/Fold) ==="
+          find . -name 'libggml-htp-v73.so' -printf '%p  %s bytes\n' | head
+          echo "=== jniLibs landing (packaged for arm64) ==="
+          find sd-cpp/src/main/jniLibs -name '*.so' -printf '%p  %s bytes\n' 2>/dev/null || echo "(jniLibs empty - check POST_BUILD copy)"
+
+      - name: Upload hexagon native (aar + skel)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sd-cpp-hexagon-native
+          path: |
+            sd-cpp/build/outputs/aar/*.aar
+            sd-cpp/src/main/jniLibs/**/*.so
+          if-no-files-found: error
+          retention-days: 14
