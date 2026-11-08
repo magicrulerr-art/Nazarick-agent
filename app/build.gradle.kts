@@ -195,6 +195,13 @@ android {
             // llamajni's OpenCL soname stub is link-time bait for libggml-opencl;
             // packaging it would shadow the vendor's real libOpenCL.so on device.
             excludes += "lib/*/libOpenCL.so"
+            // Same trap for the Hexagon lane (AURA-016, run 125 evidence): sdcpp_jni
+            // carries a do-nothing libcdsprpc.so stub in DT_NEEDED so lld stops
+            // listing FastRPC symbols; if the 3.7 KB stub ships in the APK it wins
+            // the app-namespace search and every remote_handle_open call dies
+            // unresolved. Excluded, DT_NEEDED falls through to the vendor library,
+            // which Qualcomm exposes to app namespaces via public.libraries.txt.
+            excludes += "lib/*/libcdsprpc.so"
         }
     }
     lint {
