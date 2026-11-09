@@ -100,8 +100,8 @@ android {
             if (providers.gradleProperty("PLAY_BETA").isPresent) {
                 applicationId = "com.nazarick.agent.beta"
             }
-            versionCode = 15
-            versionName = "0.5"
+            versionCode = 16
+            versionName = "0.6"
             // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
             // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
             // only as the upstream fallback in main's strings.xml.
@@ -302,6 +302,7 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.work.runtime.ktx)
