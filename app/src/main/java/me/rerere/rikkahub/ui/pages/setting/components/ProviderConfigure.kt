@@ -1394,6 +1394,37 @@ private fun ColumnScope.ProviderConfigureLocalDream(
     var refresh by remember { mutableStateOf(0) }
     LaunchedEffect(refresh) { installed = installer.installedEntries().map { it.id }.toSet() }
 
+    // AURA-017 — the AURA-014 heal, mirrored (see LocalDreamLibraryRepair.kt for the why).
+    // The install button's registration below only touches this pane's DRAFT; a finished
+    // download followed by a back-navigation used to lose the Model row exactly like v0.03
+    // did. Disk truth is reconciled here and **persisted through SettingsStore**, so the
+    // heal survives the draft; onEdit keeps the visible draft in agreement.
+    val settingsStore = org.koin.compose.koinInject<me.rerere.rikkahub.data.datastore.SettingsStore>()
+    LaunchedEffect(refresh, provider.models, provider.enabled) {
+        val diskIds = withContext(Dispatchers.IO) { installer.installedEntries().map { it.id }.toSet() }
+        val repair = me.rerere.localdream.reconcileLocalDreamLibrary(
+            registeredModelIds = provider.models.map { it.modelId }.toSet(),
+            diskInstalledIds = diskIds,
+            enabled = provider.enabled,
+        )
+        if (repair.changed) {
+            var updated: ProviderSetting = provider
+            repair.register.forEach { entry ->
+                updated = registerInstalledModel(updated, me.rerere.localdream.LocalDreamCatalog.modelFor(entry))
+            }
+            if (repair.enable && updated is ProviderSetting.LocalDream) {
+                updated = updated.copy(enabled = true)
+            }
+            val healed = updated as ProviderSetting.LocalDream
+            settingsStore.update { s ->
+                s.copy(providers = s.providers.map { p ->
+                    if (p is ProviderSetting.LocalDream && p.id == healed.id) healed else p
+                })
+            }
+            onEdit(healed)
+        }
+    }
+
     provider.description()
 
     Row(verticalAlignment = Alignment.CenterVertically) {
