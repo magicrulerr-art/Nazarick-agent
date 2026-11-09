@@ -1544,6 +1544,10 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
     val errorMessage by vm.errorMessage.collectAsStateWithLifecycle()
     val installedModelFiles by vm.installedModelFiles.collectAsStateWithLifecycle()
     val perfTelemetry by vm.perfTelemetry.collectAsStateWithLifecycle()
+    // Owner-facing GPU lane - identical control to the local runtimes' switch. The engine
+    // resolves it at every model load (LlamaCppProvider.resolveGpuLayers); the default is
+    // device-dependent exactly like LiteRT's (CPU only for the Tensor crash class).
+    val forceCpu by vm.forceCpu.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val filePicker = rememberLauncherForActivityResult(
@@ -1584,6 +1588,39 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
         style = MaterialTheme.typography.bodySmall,
     )
 
+    // GPU acceleration opt-in (owner request, v0.6): same Switch and strings as the local
+    // runtimes' lane. Engine side this maps to n_gpu_layers -1 (all layers to the shipped
+    // OpenCL backend); flipping it takes effect on the next chat (read per load). If a device
+    // runs slower or unstable on GPU (my CPU-vs-OpenCL A/B on the owner's model will tell),
+    // flip this off - CPU is byte-identical to the pre-v0.6 path.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(
+                text = stringResource(id = R.string.local_llm_try_gpu_label),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = stringResource(id = R.string.local_llm_try_gpu_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = !forceCpu,
+            onCheckedChange = { checked -> vm.setForceCpu(force = !checked) },
+        )
+    }
+
     // Install a GGUF the user already has on-device, via the storage file picker.
     OutlinedButton(
         onClick = { filePicker.launch(arrayOf("application/octet-stream")) },
@@ -1602,9 +1639,10 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
         provider.models.forEach { model ->
             InstalledModelRow(
                 model = model,
-                // llama.cpp is CPU-only with no vision support in this build (vision and
-                // mmproj are a spec non-goal) — there is no vision encoder that could
-                // fail, so this row never shows the vision caption or retry button.
+                // llama.cpp has no vision support in this build (vision and mmproj are a
+                // spec non-goal; the GPU lane changes compute, not modality) — there is no
+                // vision encoder that could fail, so this row never shows the vision caption
+                // or retry button.
                 visionUnavailable = false,
                 allowVisionRetry = false,
                 perfSample = perfTelemetry[model.modelId],

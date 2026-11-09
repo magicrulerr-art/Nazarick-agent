@@ -17,8 +17,10 @@ class GpuCacheGuardTest {
     }
 
     @Test fun cpuPlansPassThroughUntouched() {
-        // Production ships gpu_layers=0; the planner's Q8_0 choice must survive there —
-        // clamping the CPU path would silently double KV memory for no benefit.
+        // The CPU lane (force-CPU switch / Tensor default) ships gpu_layers=0; the planner's
+        // Q8_0 choice must survive there — clamping the CPU path would silently double KV
+        // memory for no benefit. (v0.6 made the GPU lane the default elsewhere; this
+        // invariant governs the escape hatch.)
         assertEquals(KvCacheType.Q8_0, cacheTypeForOffload(KvCacheType.Q8_0, gpuLayers = 0))
         assertEquals(KvCacheType.F16, cacheTypeForOffload(KvCacheType.F16, gpuLayers = 0))
     }

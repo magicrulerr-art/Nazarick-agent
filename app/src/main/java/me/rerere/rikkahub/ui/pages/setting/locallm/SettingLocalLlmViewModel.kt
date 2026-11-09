@@ -292,9 +292,11 @@ class SettingLocalLlmViewModel(
         val forceCpuNow = prefs.forceCpu(runtime)
         val accel = when (runtime) {
             LocalRuntime.LiteRT -> AcceleratorProbe.probeLiteRt(context, forceCpu = forceCpuNow)
-            // llama.cpp is CPU-only in this build (no GPU backend compiled in), so there is
-            // nothing to probe and no force-CPU toggle to honour.
-            LocalRuntime.LlamaCpp -> "cpu"
+            // v0.6: the old "CPU-only in this build" comment was stale — the APK has shipped
+            // libggml-opencl.so since the OpenCL era and the engine honors this runtime's
+            // force-CPU switch at load (LlamaCppProvider.resolveGpuLayers). Report the lane
+            // the engine will actually load on; the switch IS the probe.
+            LocalRuntime.LlamaCpp -> if (forceCpuNow) "cpu" else "opencl"
         }
         prefs.setAccelerator(runtime, accel)
         _accelerator.value = accel
