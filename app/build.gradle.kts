@@ -464,7 +464,7 @@ dependencies {
     implementation(project(":runtime"))
     implementation(project(":local-llm"))
     implementation(project(":llama-cpp"))
-    implementation(project(":sd-cpp"))
+    // :sd-cpp dependency removed in v0.6 (sd.cpp retired — see settings.gradle.kts).
     implementation(project(":local-dream"))
     implementation(project(":web"))
     implementation(project(":document"))

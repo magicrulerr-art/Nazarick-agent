@@ -189,10 +189,8 @@ class RikkaHubApp : Application() {
         // reappear on every settings read, a seeded guardian stays deleted when deleted.
         seedGuardians()
 
-        // AURA-014 bug #1 — the sd.cpp library heal: whole GGUFs on disk must be registered
-        // and enabled before anything opens a model picker, not merely when the provider
-        // detail pane happens to compose (that pane is a draft; its writes die on back).
-        repairSdLibrary()
+        // sd.cpp's boot-time library heal (repairSdLibrary) went away with the sd.cpp
+        // provider itself in v0.6; local-dream keeps its own pane-open reconcile.
 
         // Increment launch count
         incrementLaunchCount()
@@ -487,51 +485,9 @@ class RikkaHubApp : Application() {
     }
 
     /**
-     * AURA-014 bug #1 — re-register sd.cpp weights that sit whole in the runtime directory
-     * while the provider's model list pretends they don't exist. The provider detail pane
-     * heals too, but it is a draft page: a picker opened without ever visiting Settings (or
-     * a session that only restarted after v0.03's silent download) needs the store fixed
-     * before any UI exists. Disk truth; the pure reconcileSdLibrary plan is unit-tested.
+     * sd.cpp retired in v0.6: the boot-time repairSdLibrary() heal that lived here went
+     * with the module. Old persisted local_sdcpp rows are dropped by PreferencesStore.
      */
-    private fun repairSdLibrary() {
-        get<AppScope>().launch(Dispatchers.IO) {
-            runCatching {
-                val store = get<SettingsStore>()
-                awaitRealSettings()
-                val sd = store.settingsFlow.value.providers
-                    .filterIsInstance<me.rerere.ai.provider.ProviderSetting.SdCppLocal>()
-                    .firstOrNull() ?: return@runCatching
-                val installer = me.rerere.sdcpp.SdModelInstaller(this@RikkaHubApp)
-                val diskNames = installer.libraryEntries().map { it.fileName }.toSet()
-                if (diskNames.isEmpty()) return@runCatching
-                val repair = me.rerere.sdcpp.reconcileSdLibrary(
-                    registeredModelIds = sd.models.map { it.modelId }.toSet(),
-                    diskFileNames = diskNames,
-                    enabled = sd.enabled,
-                )
-                if (!repair.changed) return@runCatching
-                var updated: me.rerere.ai.provider.ProviderSetting.SdCppLocal = sd
-                repair.register.forEach { entry ->
-                    updated = me.rerere.rikkahub.ui.pages.setting.locallm
-                        .registerInstalledModel(
-                            updated, me.rerere.sdcpp.SdCppCatalog.modelFor(entry),
-                        ) as me.rerere.ai.provider.ProviderSetting.SdCppLocal
-                }
-                if (repair.enable) updated = updated.copy(enabled = true)
-                val healed = updated
-                store.update { s ->
-                    s.copy(providers = s.providers.map { p ->
-                        if (p is me.rerere.ai.provider.ProviderSetting.SdCppLocal &&
-                            p.id == healed.id
-                        ) healed else p
-                    })
-                }
-                Log.i(TAG, "repairSdLibrary: registered=${repair.register.size} enabled=${repair.enable}")
-            }.onFailure {
-                Log.w(TAG, "repairSdLibrary failed", it)
-            }
-        }
-    }
 
     private fun eagerlyInitChatService() {
         try {

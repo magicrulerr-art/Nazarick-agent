@@ -38,9 +38,8 @@ kotlin {
 
 dependencies {
     implementation(project(":ai"))
-    // PngEncoder (hand-rolled PNG container, already fleet-proven on the sd-cpp lane) and
-    // ModelInstall's local-models directory contract both come from neighbours, not copies.
-    implementation(project(":sd-cpp"))
+    // PngEncoder used to be pulled from :sd-cpp; the v0.6 sd.cpp retirement moved the encoder
+    // into this package (see local-dream/.../PngEncoder.kt), so the :sd-cpp dependency is gone.
     implementation(project(":local-llm"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)

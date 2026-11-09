@@ -31,7 +31,10 @@ include(":highlight")
 include(":ai")
 include(":local-llm")
 include(":llama-cpp")
-include(":sd-cpp")
+// :sd-cpp removed from the build graph in v0.6 (owner ruling, sd.cpp provider retired).
+// Its only living consumer was PngEncoder, which local-dream now owns (same package). The
+// module directory + its vendored sd.cpp submodule linger on disk for the follow-up physical
+// deletion ticket, but nothing in Gradle compiles, tests, or ships them.
 include(":local-dream")
 include(":search")
 include(":speech")

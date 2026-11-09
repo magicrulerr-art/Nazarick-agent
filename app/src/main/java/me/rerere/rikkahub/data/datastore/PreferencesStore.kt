@@ -724,6 +724,12 @@ class SettingsStore(
                         else -> true
                     }
             }
+            // sd.cpp retired in v0.6 (owner ruling): the module and tile are gone, so drop
+            // every persisted local_sdcpp row here — same one-shot cleanup shape as the
+            // sponsored-provider sweep above, but unconditional (the engine no longer exists
+            // to serve the row; its GGUFs stay on disk untouched). The SdCppLocal class
+            // survives as a @Serializable tombstone so old blobs still decode.
+            providers.removeAll { provider -> provider is ProviderSetting.SdCppLocal }
             // For existing installs that pre-date the on-device AICore provider being
             // promoted to first-place, hoist it to the top so the user does not have to
             // scroll past every legacy aggregator to find it.
@@ -756,30 +762,16 @@ class SettingsStore(
                                 .let { if (it >= 0) it + 1 else providers.indexOfFirst { p -> p is ProviderSetting.AICore } + 1 }
                             providers.add(insertAt, defaultProvider.copyProvider())
                         }
-                        is ProviderSetting.SdCppLocal -> {
-                            // Fourth member of the on-device group: sits directly after
-                            // LlamaCppLocal so the four local tiles stay contiguous at the top.
-                            // Falls back through LlamaCpp → LiteRT → AICore → 0, mirroring the
-                            // absent-index handling above for users who deleted one of them.
+                        is ProviderSetting.LocalDream -> {
+                            // The NPU tile sits directly after the llama.cpp tile so the local
+                            // group stays contiguous (sd.cpp's tile was retired in v0.6, so it
+                            // is no longer the anchor). Same cascade-down when predecessors
+                            // were deleted by a tinkerer: LlamaCpp → LiteRT → AICore → 0.
                             val after = providers.indexOfFirst { it is ProviderSetting.LlamaCppLocal }
                                 .let {
                                     when {
                                         it >= 0 -> it + 1
                                         else -> providers.indexOfFirst { p -> p is ProviderSetting.LiteRtLocal }
-                                            .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
-                                    }
-                                }
-                            providers.add(after, defaultProvider.copyProvider())
-                        }
-                        is ProviderSetting.LocalDream -> {
-                            // The NPU tile sits directly after the sd.cpp tile so the local
-                            // group stays contiguous; same cascade-down when predecessors
-                            // were deleted by a tinkerer.
-                            val after = providers.indexOfFirst { it is ProviderSetting.SdCppLocal }
-                                .let {
-                                    when {
-                                        it >= 0 -> it + 1
-                                        else -> providers.indexOfFirst { p -> p is ProviderSetting.LlamaCppLocal }
                                             .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
                                     }
                                 }
