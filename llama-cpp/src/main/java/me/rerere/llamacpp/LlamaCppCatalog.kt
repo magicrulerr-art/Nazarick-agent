@@ -27,13 +27,24 @@ object LlamaCppCatalog {
      * higher-precision quant fits.
      *
      * Every repo, file name and byte size below was verified against the live HuggingFace API
-     * on 2026-08-03. They are exact and must not be edited, guessed at, or extended without
+     * on 2026-11-09 (the Qwen3 trio's numbers carried over from the 2026-08-03 check and are
+     * unchanged). They are exact and must not be edited, guessed at, or extended without
      * re-verifying against the live API: a wrong repo id or file name 404s on first download,
      * which is worse than shipping nothing.
      *
-     * All three are Qwen3, apache-2.0, public and ungated. Qwen3 ships a tool-declaring chat
-     * template, satisfying the spec's first entry criterion, and supports an optional thinking
-     * mode.
+     * ORDER IS A RULING (owner, v0.6): LFM3 leads — "use lfm3 as the recommended top option,
+     * the 1.7b for daily and the 2vl for vision". Liquid's numbers have LFM3-1.7B as the
+     * fastest phone-class decoder (1.8–2.8x the next model at Q4 with 128K KV at 1.6 GB), and
+     * the vendored engine can load it: LFM3 landed upstream in llama.cpp on 2026-10-27
+     * (19cce691, PR #31252) and this fork's native pin (4284599a) is 2026-10-29. That pin
+     * predates the 2026-11-03 NVFP4 enablement (d1044bc8), so the repos' NVFP4 files must
+     * NOT be offered until the pin moves. Qwen3 stays underneath as the proven fallback set
+     * (apache-2.0, tool-declaring templates, optional thinking mode).
+     *
+     * LFM3-VL caveat, kept honest: this build's llama lane is text-only — the mmproj
+     * sidecar is not downloaded and vision is not wired (ProviderConfigure notes it). The
+     * entry ships as the vision pick so the right model is already on the phone when that
+     * engine lane lands; today it still downloads and runs as a strong text model.
      *
      * The official `Qwen/Qwen3-0.6B-GGUF` and `Qwen/Qwen3-1.7B-GGUF` repos each publish a
      * single file, Q8_0, with no 4-bit variant. 0.6B at Q8_0 is small enough that the spec's
@@ -43,6 +54,25 @@ object LlamaCppCatalog {
      * smaller weights file leaves more RAM for the KV cache.
      */
     val ENTRIES: List<LlamaCppCatalogEntry> = listOf(
+        LlamaCppCatalogEntry(
+            displayName = "LFM3 1.7B",
+            // Owner's daily driver pick, top of the picker.
+            repo = "LiquidAI/LFM3-1.7B-GGUF",
+            file = "LFM3-1.7B-Q4_K_M.gguf",
+            sizeBytes = 1099627808L,
+            minMemGb = 4,
+            tags = listOf("tools"),
+        ),
+        LlamaCppCatalogEntry(
+            displayName = "LFM3 VL 2B",
+            // Vision role (see the mmproj caveat above). Weights share the 1.7B's size;
+            // the Q8_0 projector (203,031,872 B) rides along once the engine lane exists.
+            repo = "LiquidAI/LFM3-VL-2B-GGUF",
+            file = "LFM3-VL-2B-Q4_K_M.gguf",
+            sizeBytes = 1099627808L,
+            minMemGb = 4,
+            tags = listOf("tools", "vision"),
+        ),
         LlamaCppCatalogEntry(
             displayName = "Qwen3 0.6B",
             repo = "Qwen/Qwen3-0.6B-GGUF",

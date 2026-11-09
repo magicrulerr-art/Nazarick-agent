@@ -138,10 +138,10 @@ class LlamaCppProvider(
      *  [streamText] so the two agree on exactly one load path; both already hold [loadMutex]
      *  before calling this. */
     /** Bench hook for the engine A/B lanes: `adb shell setprop debug.nazarick.gpu_layers N`.
-     *  Absent (0) keeps the shipped CPU path exactly as before; -1 offloads every layer the
-     *  compiled-in GPU backend can take. Read per load, so a lane switch only needs a model
-     *  reload, never a reinstall. SystemProperties is a hidden API — reflection keeps the
-     *  module free of a compile dependency on it. */
+     *  0 means "unset - the provider pane's GPU switch decides"; -1 offloads every layer the
+     *  compiled-in GPU backend can take, any positive N pins an explicit count. Read per load,
+     *  so a lane switch only needs a model reload, never a reinstall. SystemProperties is a
+     *  hidden API — reflection keeps the module free of a compile dependency on it. */
     private fun gpuLayersOverride(): Int = try {
         Class.forName("android.os.SystemProperties")
             .getMethod("getInt", String::class.java, Int::class.javaPrimitiveType)
@@ -150,10 +150,21 @@ class LlamaCppProvider(
         0
     }
 
+    /** Owner-facing GPU lane, decided at each model load by [resolveGpuLayers] (top-level). */
+
     private suspend fun ensureModelReady(messages: List<UIMessage>, params: TextGenerationParams) {
         Log.i("nazarick-perf", "diag: ensureModelReady enter msgs=${messages.size} tools=${params.tools.size} availMem=${readAvailableRamBytes() / 1048576}MB")
         val installed = prefs.installedModels(LocalRuntime.LlamaCpp)
         val modelPath = resolveModelPath(installed, params.model.modelId)
+        // GPU lane: owner's provider-pane switch (per-runtime force-CPU) with the bench prop
+        // layered on. Resolved per load so flipping the switch takes effect on the next chat,
+        // no reinstall. Embeddings are a separate loader (LlamaCppEmbedder.nativeLoadModel,0)
+        // and stay on CPU regardless - the KV guard + planner Q8_0 invariant is untouched.
+        val gpuLayers = resolveGpuLayers(
+            forceCpu = prefs.forceCpu(LocalRuntime.LlamaCpp),
+            propOverride = gpuLayersOverride(),
+        )
+        Log.i("nazarick-engine", "gpu lane: gpu_layers=$gpuLayers")
         // The load blocks the calling thread on a multi-gigabyte mmap, metadata parse and
         // context allocation, so it runs on Dispatchers.IO rather than whatever dispatcher the
         // caller used - mirrors LiteRtRuntime's engine init (LiteRtRuntime.kt:758). Without this,
@@ -167,7 +178,7 @@ class LlamaCppProvider(
                 tools = ChatRequestMapper.toolDeclarations(params.tools),
                 systemPromptBytes = systemPromptBytesOf(messages),
                 availableRamBytes = readAvailableRamBytes(),
-                gpuLayers = gpuLayersOverride(),
+                gpuLayers = gpuLayers,
             )
             Log.i("nazarick-perf", "diag: ensureLoaded returned")
         }
@@ -402,4 +413,16 @@ class LlamaCppProvider(
             }
         }
     }
+}
+
+/** Owner-facing GPU lane (top-level so it is unit-testable without a native runtime, mirroring
+ *  [cacheTypeForOffload]). The provider pane's "Try GPU acceleration" switch sets [forceCpu];
+ *  [propOverride] is `debug.nazarick.gpu_layers` where 0 means unset. force-CPU is the owner's
+ *  authority and pins the pre-toggle CPU path exactly (0 layers). Inside GPU mode a non-zero
+ *  bench value wins; unset offloads every layer the compiled-in OpenCL backend can take (-1).
+ *  The full-offload path is device-proven on Adreno 830 (CI run 68: 24/24 layers on GPUOpenCL). */
+internal fun resolveGpuLayers(forceCpu: Boolean, propOverride: Int): Int = when {
+    forceCpu -> 0
+    propOverride != 0 -> propOverride
+    else -> -1
 }

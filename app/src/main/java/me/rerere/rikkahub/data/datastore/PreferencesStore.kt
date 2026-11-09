@@ -66,6 +66,7 @@ import me.rerere.rikkahub.subagent.SubAgentDefaults
 import me.rerere.rikkahub.subagent.SubAgentDispatchProfile
 import me.rerere.rikkahub.ui.theme.CustomTheme
 import me.rerere.rikkahub.ui.theme.PresetThemes
+import me.rerere.rikkahub.ui.theme.presets.NazarickThemePreset
 import me.rerere.rikkahub.runtime.util.JsonInstant
 import me.rerere.rikkahub.runtime.SystemInjections
 import me.rerere.rikkahub.utils.toMutableStateFlow
@@ -92,6 +93,19 @@ const val DEFAULT_CONTEXT_COMPACTION_TARGET_PERCENT = 1
  * upgrade is one-shot: a user who later disables memory or replaces the prompt keeps that choice.
  */
 private const val CURRENT_AGENT_DEFAULTS_VERSION = 1
+
+/**
+ * v0.6 Nazarick retag (owner ruling): existing installs move onto the house palette once.
+ * Every settings save persists dynamicColor/themeId wholesale, so after any older launch the
+ * stored values are the OLD defaults written implicitly — "key absent" cannot distinguish
+ * never-touched from defaulted-to, and only a version marker can. On the retag pass:
+ * dynamic color goes off, and a stored themeId equal to the donor default ("sakura", whether
+ * chosen or merely inherited) becomes "nazarick". Anyone who chose ocean/black/claude keeps
+ * it; anyone who explicitly chose sakura loses it once, and one tap gets it back. After the
+ * pass the marker sticks and the user owns the toggles.
+ */
+private const val CURRENT_THEME_RETAG_VERSION = 1
+private const val LEGACY_DEFAULT_THEME_ID = "sakura"
 
 private const val TAG = "PreferencesStore"
 
@@ -238,6 +252,7 @@ class SettingsStore(
         val ALLOW_MODEL_MISSION_CREATION = booleanPreferencesKey("allow_model_mission_creation")
         /** One-shot marker for the capability/prompt upgrade applied to built-in assistants. */
         val AGENT_DEFAULTS_VERSION = intPreferencesKey("agent_defaults_version")
+        val THEME_RETAG_VERSION = intPreferencesKey("theme_retag_version")
         val GUARDIANS_SEED_VERSION = intPreferencesKey("guardians_seed_version")
         val AUTO_COMPACTION_THRESHOLD_MODE = stringPreferencesKey("auto_compaction_threshold_mode")
         val AUTO_COMPACTION_THRESHOLD_PERCENT = intPreferencesKey("auto_compaction_threshold_percent")
@@ -383,6 +398,7 @@ class SettingsStore(
                     JsonInstant.encodeToString(settings.enabledSystemInjections)
                 preferences[ALLOW_MODEL_MISSION_CREATION] = settings.allowModelMissionCreation
                 preferences[AGENT_DEFAULTS_VERSION] = settings.agentDefaultsVersion
+                preferences[THEME_RETAG_VERSION] = settings.themeRetagVersion
                 preferences[GUARDIANS_SEED_VERSION] = settings.guardiansSeedVersion
                 preferences[AUTO_COMPACTION_THRESHOLD_MODE] = settings.autoCompactionThresholdMode.name
                 preferences[AUTO_COMPACTION_THRESHOLD_PERCENT] =
@@ -521,6 +537,7 @@ class SettingsStore(
                 } ?: SystemInjections.DEFAULT_IDS,
                 allowModelMissionCreation = preferences[ALLOW_MODEL_MISSION_CREATION] != false,
                 agentDefaultsVersion = preferences[AGENT_DEFAULTS_VERSION] ?: 0,
+                themeRetagVersion = preferences[THEME_RETAG_VERSION] ?: 0,
                 guardiansSeedVersion = preferences[GUARDIANS_SEED_VERSION] ?: 0,
                 autoCompactionThresholdMode = preferences[AUTO_COMPACTION_THRESHOLD_MODE]
                     ?.let { value -> runCatching { AutoCompactionThresholdMode.valueOf(value) }.getOrNull() }
@@ -591,7 +608,11 @@ class SettingsStore(
                         preferences[SUB_AGENT_DISPATCH_PROFILE] ?: ""
                     )
                 }.getOrDefault(SubAgentDispatchProfile.NEVER),
-                dynamicColor = preferences[DYNAMIC_COLOR] != false,
+                // Raw decode: only an EXPLICIT true enables Material You. Absent (fresh
+                // install) is false = Nazarick; for upgrades the one-shot marker pass at
+                // [CURRENT_THEME_RETAG_VERSION] is what forces the retag, since older builds
+                // persisted this key wholesale and "absent" never survives an upgrade anyway.
+                dynamicColor = preferences[DYNAMIC_COLOR] == true,
                 themeId = preferences[THEME_ID] ?: PresetThemes[0].id,
                 customThemes = preferences[CUSTOM_THEMES]?.let { raw ->
                     runCatching { JsonInstant.decodeFromString<List<CustomTheme>>(raw) }.getOrElse {
@@ -724,6 +745,12 @@ class SettingsStore(
                         else -> true
                     }
             }
+            // sd.cpp retired in v0.6 (owner ruling): the module and tile are gone, so drop
+            // every persisted local_sdcpp row here — same one-shot cleanup shape as the
+            // sponsored-provider sweep above, but unconditional (the engine no longer exists
+            // to serve the row; its GGUFs stay on disk untouched). The SdCppLocal class
+            // survives as a @Serializable tombstone so old blobs still decode.
+            providers.removeAll { provider -> provider is ProviderSetting.SdCppLocal }
             // For existing installs that pre-date the on-device AICore provider being
             // promoted to first-place, hoist it to the top so the user does not have to
             // scroll past every legacy aggregator to find it.
@@ -756,30 +783,16 @@ class SettingsStore(
                                 .let { if (it >= 0) it + 1 else providers.indexOfFirst { p -> p is ProviderSetting.AICore } + 1 }
                             providers.add(insertAt, defaultProvider.copyProvider())
                         }
-                        is ProviderSetting.SdCppLocal -> {
-                            // Fourth member of the on-device group: sits directly after
-                            // LlamaCppLocal so the four local tiles stay contiguous at the top.
-                            // Falls back through LlamaCpp → LiteRT → AICore → 0, mirroring the
-                            // absent-index handling above for users who deleted one of them.
+                        is ProviderSetting.LocalDream -> {
+                            // The NPU tile sits directly after the llama.cpp tile so the local
+                            // group stays contiguous (sd.cpp's tile was retired in v0.6, so it
+                            // is no longer the anchor). Same cascade-down when predecessors
+                            // were deleted by a tinkerer: LlamaCpp → LiteRT → AICore → 0.
                             val after = providers.indexOfFirst { it is ProviderSetting.LlamaCppLocal }
                                 .let {
                                     when {
                                         it >= 0 -> it + 1
                                         else -> providers.indexOfFirst { p -> p is ProviderSetting.LiteRtLocal }
-                                            .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
-                                    }
-                                }
-                            providers.add(after, defaultProvider.copyProvider())
-                        }
-                        is ProviderSetting.LocalDream -> {
-                            // The NPU tile sits directly after the sd.cpp tile so the local
-                            // group stays contiguous; same cascade-down when predecessors
-                            // were deleted by a tinkerer.
-                            val after = providers.indexOfFirst { it is ProviderSetting.SdCppLocal }
-                                .let {
-                                    when {
-                                        it >= 0 -> it + 1
-                                        else -> providers.indexOfFirst { p -> p is ProviderSetting.LlamaCppLocal }
                                             .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
                                     }
                                 }
@@ -799,7 +812,10 @@ class SettingsStore(
                     )
                 } else provider
             }.toMutableList()
-            var assistants = it.assistants.ifEmpty { DEFAULT_ASSISTANTS }.toMutableList()
+            // v0.6: the two donor skeletons are filtered out here (retireDefaultAssistants);
+            // their conversations were re-homed to Albedo in Migration_39_40.
+            var assistants = retireDefaultAssistants(it.assistants)
+                .ifEmpty { DEFAULT_ASSISTANTS }.toMutableList()
             DEFAULT_ASSISTANTS.forEach { defaultAssistant ->
                 if (assistants.none { it.id == defaultAssistant.id }) {
                     assistants.add(defaultAssistant.copy())
@@ -834,6 +850,7 @@ class SettingsStore(
             // context refs all had to be discovered. They are on for built-ins once, then the
             // user's own choices win (the version marker records that the upgrade happened).
             val needsAgentDefaults = it.agentDefaultsVersion < CURRENT_AGENT_DEFAULTS_VERSION
+            val needsThemeRetag = it.themeRetagVersion < CURRENT_THEME_RETAG_VERSION
             if (needsAgentDefaults) {
                 assistants = assistants.map { assistant ->
                     if (DEFAULT_ASSISTANTS.any { default -> default.id == assistant.id }) {
@@ -863,6 +880,19 @@ class SettingsStore(
                     CURRENT_AGENT_DEFAULTS_VERSION
                 } else {
                     it.agentDefaultsVersion
+                },
+                // v0.6 Nazarick retag, once — see CURRENT_THEME_RETAG_VERSION. After this
+                // pass the marker sticks and both toggles belong to the user again.
+                dynamicColor = if (needsThemeRetag) false else it.dynamicColor,
+                themeId = if (needsThemeRetag && it.themeId == LEGACY_DEFAULT_THEME_ID) {
+                    NazarickThemePreset.id
+                } else {
+                    it.themeId
+                },
+                themeRetagVersion = if (needsThemeRetag) {
+                    CURRENT_THEME_RETAG_VERSION
+                } else {
+                    it.themeRetagVersion
                 },
             )
         }
@@ -1133,7 +1163,9 @@ class SettingsStore(
 data class Settings(
     @Transient
     val init: Boolean = false,
-    val dynamicColor: Boolean = true,
+    // v0.6: Material You is opt-in now (was the donor default). The theme page keeps the
+    // toggle; the house palette is what greets a fresh install.
+    val dynamicColor: Boolean = false,
     val themeId: String = PresetThemes[0].id,
     val customThemes: List<CustomTheme> = emptyList(),
     val developerMode: Boolean = false,
@@ -1181,6 +1213,12 @@ data class Settings(
      * Kept so a user who later turns any of those off is not re-opted-in on the next launch.
      */
     val agentDefaultsVersion: Int = 0,
+    /**
+     * One-shot Nazarick palette retag marker (v0.6): 0 = donor defaults, 1 = the install has
+     * been moved onto the house theme once. Same shape as [agentDefaultsVersion]; see
+     * CURRENT_THEME_RETAG_VERSION for why a marker (and not key absence) carries the upgrade.
+     */
+    val themeRetagVersion: Int = 0,
     /**
      * AURA-014 — one-shot marker for seeding the Floor Guardians as chat assistants at
      * first boot (see `GuardianSeed`). Same shape as [agentDefaultsVersion] and
@@ -1654,7 +1692,13 @@ fun Settings.getSelectedASRProvider(): ASRProviderSetting? {
 }
 
 
-internal val DEFAULT_ASSISTANT_ID = Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa36b4e")
+// v0.6 (owner: "delete the 2 default assistants, we don't want them"): the donor's two
+// unnamed skeletons are retired and the fallback for new conversations becomes Albedo —
+// Overseer of the Floor Guardians, first of the seeded pack. The id is deliberately NOT
+// hand-picked: it is the same slug-derived id GuardianSeed gives Albedo's card, so new
+// conversations land on a real assistant instead of an id the resolver has to rescue.
+internal val DEFAULT_ASSISTANT_ID: Uuid =
+    me.rerere.rikkahub.data.guardians.GuardianSeed.assistantId("albedo")
 
 /**
  * Bundled skills shipped enabled-by-default on top of agent-core. The behavioral
@@ -1669,26 +1713,30 @@ internal val DEFAULT_ASSISTANT_ID = Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa3
  */
 internal val DEFAULT_AUTO_ENABLED_SKILLS = setOf("autonomous-agent")
 
-internal val DEFAULT_ASSISTANTS = listOf(
-    Assistant(
-        id = DEFAULT_ASSISTANT_ID,
-        name = "",
-        // A short, generic skeleton. Mechanics come from SystemInjections and <app_environment>,
-        // so this prompt stays small and does not need editing when a capability ships.
-        systemPrompt = DefaultAssistantPrompt.SKELETON,
-        // The agent-core skill bundle (SOUL/HEARTBEAT/TOOLS) ships with the app and is what
-        // teaches every model "you are running on RikkaHub, here are the tools, here is how
-        // to avoid loops". Auto-enabling it on default assistants means new users get an
-        // agent-aware model out of the box without having to discover the skill toggle.
-        enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
-    ),
-    Assistant(
-        id = Uuid.parse("3d47790c-c415-4b90-9388-751128adb0a0"),
-        name = "",
-        systemPrompt = DefaultAssistantPrompt.SKELETON,
-        enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
-    ),
+/**
+ * v0.6: the donor's two unnamed skeleton assistants are gone (owner ruling — the Floor
+ * Guardians are the roster now, see GuardianSeed). The list and the re-add/upgrade loops
+ * below stay as machinery for a hypothetical future bundled assistant; with an empty
+ * list every one of them is a no-op.
+ */
+internal val DEFAULT_ASSISTANTS = emptyList<Assistant>()
+
+/**
+ * Ids of the two retired donor skeletons, pinned as the literals they always were.
+ * Two consumers:
+ *  - [retireDefaultAssistants] on the read path — the old loop re-adds every missing
+ *    DEFAULT_ASSISTANTS member on *every* load, so merely removing them from the list
+ *    would leave existing installs' copies undeletable ghosts; they must be filtered.
+ *  - Migration_39_40 in Room, which re-homes their conversations to Albedo.
+ */
+internal val RETIRED_DEFAULT_ASSISTANT_IDS = setOf(
+    Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa36b4e"), // the old DEFAULT_ASSISTANT_ID
+    Uuid.parse("3d47790c-c415-4b90-9388-751128adb0a0"), // the second skeleton
 )
+
+/** Pure retire-filter used by the settings read path; unit-tested without Android. */
+internal fun retireDefaultAssistants(assistants: List<Assistant>): List<Assistant> =
+    assistants.filterNot { it.id in RETIRED_DEFAULT_ASSISTANT_IDS }
 
 val DEFAULT_SYSTEM_TTS_ID = Uuid.parse("026a01a2-c3a0-4fd5-8075-80e03bdef200")
 private val DEFAULT_TTS_PROVIDERS = listOf(

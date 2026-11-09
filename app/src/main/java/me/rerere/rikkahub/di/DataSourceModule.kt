@@ -791,16 +791,11 @@ val dataSourceModule = module {
                     prefs = get(),
                 ),
             )
-            // sd.cpp is registered lazily: the library's System.loadLibrary runs when the
-            // engine is first touched, not here, so a device missing the native bits still
-            // starts and only fails when an image is actually requested.
-            pm.registerProvider(
-                "local_sdcpp",
-                me.rerere.sdcpp.SdCppProvider(
-                    context = get(),
-                ),
-            )
-            // local-dream is lazily touched like sd.cpp: the subprocess only spawns when a
+            // sd.cpp retired in v0.6: no engine registered. The ProviderSetting.SdCppLocal
+            // data class stays as a deserialization tombstone (old DataStores carry a
+            // local_sdcpp row), and PreferencesStore drops the row on load, so nothing ever
+            // resolves through this name again.
+            // local-dream is lazy: the subprocess only spawns when a
             // model loads, so registering it here costs nothing on non-Qualcomm devices.
             pm.registerProvider(
                 "local_dream",

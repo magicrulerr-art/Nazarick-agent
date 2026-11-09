@@ -72,24 +72,14 @@ val DEFAULT_PROVIDERS = listOf(
             Text("On-device - llama.cpp")
         },
     ),
-    ProviderSetting.SdCppLocal(
-        // sd.cpp — the fourth on-device tile, and the first that draws instead of talking.
-        // Disabled by default like its siblings: nothing downloads and no engine loads until
-        // the user opens the tile and picks a diffusion model, because those weights are
-        // ~1.5 GB and this is a phone.
-        enabled = false,
-        builtIn = true,
-        description = {
-            Text("Generates images on-device via sd.cpp (Stable Diffusion GGUF). No API key, no network once the weights are downloaded.")
-        },
-        shortDescription = {
-            Text("On-device - images")
-        },
-    ),
+    // sd.cpp retired in v0.6: no seed, no tile. The ProviderSetting.SdCppLocal class
+    // survives only as a deserialization tombstone, and PreferencesStore drops any
+    // persisted local_sdcpp row on load (old installs converge to tile-less).
     ProviderSetting.LocalDream(
         // The NPU drawing tile (QNN context binaries, MNN fallback). Disabled by default for
-        // the same reason as its siblings — its packs are ~1 GB each — and it ships beside
-        // sd.cpp rather than replacing it until on-device numbers say which wins.
+        // the same reason as its siblings — its packs are ~1 GB each. It inherited the image
+        // lane from sd.cpp after on-device numbers (512x512 in ~6.5 s on HTP vs minutes on
+        // CPU sd.cpp) made the choice for us.
         enabled = false,
         builtIn = true,
         description = {

@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import me.rerere.sdcpp.PngEncoder
+// PngEncoder lives in this package since the v0.6 sd.cpp retirement (was me.rerere.sdcpp).
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient

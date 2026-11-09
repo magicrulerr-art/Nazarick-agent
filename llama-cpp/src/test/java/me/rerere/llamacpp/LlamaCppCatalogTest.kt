@@ -45,4 +45,21 @@ class LlamaCppCatalogTest {
             assertTrue(url, url.endsWith(".gguf"))
         }
     }
+
+    /**
+     * v0.6 owner ruling: "use lfm3 as the recommended top option, the 1.7b for daily and
+     * the 2vl for vision". Order IS the recommendation in this picker — pinned so a future
+     * reshuffle has to be a decision, not an accident.
+     */
+    @Test
+    fun `lfm3 leads the picker`() {
+        assertEquals(
+            listOf("LFM3 1.7B", "LFM3 VL 2B"),
+            LlamaCppCatalog.ENTRIES.take(2).map { it.displayName },
+        )
+        val daily = LlamaCppCatalog.ENTRIES.first()
+        assertEquals("LiquidAI/LFM3-1.7B-GGUF", daily.repo)
+        assertEquals(1099627808L, daily.sizeBytes)
+        assertTrue(LlamaCppCatalog.ENTRIES[1].tags.contains("vision"))
+    }
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -142,7 +143,14 @@ fun ProviderConfigure(
             }
 
             is ProviderSetting.SdCppLocal -> {
-                ProviderConfigureSdCpp(provider, onEdit)
+                // sd.cpp retired in v0.6 (module gone, rows dropped by PreferencesStore).
+                // Unreachable in practice; kept so the dispatch stays exhaustive and a
+                // straggler row says so instead of crashing.
+                Text(
+                    text = "sd.cpp is retired — image generation runs on Local · QNN NPU.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             is ProviderSetting.LocalDream -> {
@@ -1170,207 +1178,9 @@ private fun ColumnScope.ProviderConfigureLiteRT(
     }
 }
 
-/**
- * sd.cpp — the image engine's settings tile.
- *
- * Structured like [ProviderConfigureLlamaCpp] and deliberately not built on
- * `SettingLocalLlmViewModel`: that VM is keyed on [LocalRuntime], whose
- * `runtimeForExtension("gguf")` already answers "llama.cpp" and cannot answer twice. So this
- * tile drives [SdModelInstaller] directly — same directory (`local-models/`), same
- * download-then-register flow, one less enum pretending two engines are the same thing.
- */
-@Composable
-private fun ColumnScope.ProviderConfigureSdCpp(
-    provider: ProviderSetting.SdCppLocal,
-    onEdit: (ProviderSetting.SdCppLocal) -> Unit,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val installer = remember { me.rerere.sdcpp.SdModelInstaller(context) }
-
-    // Progress and errors are tile-local state: only one download can be in flight from here,
-    // and nothing outside this screen has any business reading it.
-    var progress by remember { mutableStateOf<Pair<String, Float>?>(null) }
-    var failure by remember { mutableStateOf<String?>(null) }
-    var installed by remember { mutableStateOf(installer.installedEntries().map { it.id }.toSet()) }
-    var refresh by remember { mutableStateOf(0) }
-    LaunchedEffect(refresh) { installed = installer.installedEntries().map { it.id }.toSet() }
-
-    // AURA-014 bug #1 — self-healing for installs the download flow left behind: the v0.03
-    // ship registered the model row only in the download button's onSuccess and shipped the
-    // provider disabled, so a killed app or a lost write left a whole GGUF on disk that no
-    // Model pointed at — invisible to a picker that lists Models, not files. Disk truth wins:
-    // every catalog file in the runtime directory gets its row, and a provider carrying
-    // models stops being disabled behind the user's back only in the sense that the repair
-    // does what the enable-on-download should always have done. The plan is pure
-    // (reconcileSdLibrary, unit-tested); an already-consistent provider changes nothing.
-    //
-    // The write goes through SettingsStore, NOT just the onEdit callback: this pane is a
-    // draft — every onEdit here (the Enable checkbox included) only mutates
-    // internalProvider, and the draft dies on back-navigation unless the user presses
-    // Save. A heal that lives in a draft is no heal at all; it must persist on its own.
-    // onEdit is still called so the visible draft agrees with the store immediately.
-    val settingsStore = org.koin.compose.koinInject<me.rerere.rikkahub.data.datastore.SettingsStore>()
-    LaunchedEffect(refresh, provider.models, provider.enabled) {
-        val diskNames = withContext(Dispatchers.IO) {
-            installer.libraryEntries().map { it.fileName }.toSet()
-        }
-        val repair = me.rerere.sdcpp.reconcileSdLibrary(
-            registeredModelIds = provider.models.map { it.modelId }.toSet(),
-            diskFileNames = diskNames,
-            enabled = provider.enabled,
-        )
-        if (repair.changed) {
-            var updated: ProviderSetting = provider
-            repair.register.forEach { entry ->
-                updated = registerInstalledModel(updated, me.rerere.sdcpp.SdCppCatalog.modelFor(entry))
-            }
-            if (repair.enable && updated is ProviderSetting.SdCppLocal) {
-                updated = updated.copy(enabled = true)
-            }
-            val healed = updated as ProviderSetting.SdCppLocal
-            settingsStore.update { s ->
-                s.copy(providers = s.providers.map { p ->
-                    if (p is ProviderSetting.SdCppLocal && p.id == healed.id) healed else p
-                })
-            }
-            onEdit(healed)
-        }
-    }
-
-    provider.description()
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            stringResource(id = R.string.setting_provider_page_enable),
-            modifier = Modifier.weight(1f),
-        )
-        Checkbox(checked = provider.enabled, onCheckedChange = { onEdit(provider.copy(enabled = it)) })
-    }
-
-    OutlinedTextField(
-        value = provider.name,
-        onValueChange = { onEdit(provider.copy(name = it.trim())) },
-        label = { Text(stringResource(id = R.string.setting_provider_page_name)) },
-        modifier = Modifier.fillMaxWidth(),
-        maxLines = 3,
-    )
-
-    Text(
-        text = stringResource(R.string.sd_cpp_catalog_subtitle),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-
-    SdModelEntryRow(
-        title = stringResource(R.string.sd_cpp_catalog_title),
-        entries = me.rerere.sdcpp.SdCppCatalog.models,
-        installed = installed,
-        progress = progress,
-        onInstall = { entry ->
-            failure = null
-            scope.launch {
-                runCatching {
-                    installer.install(entry) { done, total ->
-                        progress = entry.id to (if (total > 0) done.toFloat() / total else 0f)
-                    }
-                }.onSuccess {
-                    progress = null
-                    refresh++
-                    // Registering the row is what makes the model selectable in the image
-                    // picker; a file on disk that no Model points at is invisible to a chat.
-                    // enableAfterFirstDownload closes the other half of AURA-014 bug #1 — a
-                    // registered model under a disabled provider still fails the picker's
-                    // filteredProviders, which is why "downloaded" used to mean "unselectable".
-                    onEdit(
-                        enableAfterFirstDownload(
-                            registerInstalledModel(
-                                provider,
-                                me.rerere.sdcpp.SdCppCatalog.modelFor(entry),
-                            ),
-                        ) as ProviderSetting.SdCppLocal,
-                    )
-                }.onFailure { e ->
-                    progress = null
-                    failure = e.message ?: e.javaClass.simpleName
-                }
-            }
-        },
-        onDelete = { entry ->
-            scope.launch {
-                if (installer.delete(entry)) {
-                    refresh++
-                    onEdit(
-                        provider.copy(
-                            models = provider.models.filterNot { it.modelId == entry.fileName },
-                        ),
-                    )
-                } else {
-                    failure = "Could not delete ${entry.fileName} — is it in use?"
-                }
-            }
-        },
-    )
-
-    failure?.let { message ->
-        Text(
-            text = message,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-        )
-    }
-}
-
-@Composable
-private fun SdModelEntryRow(
-    title: String,
-    entries: List<me.rerere.sdcpp.SdModelEntry>,
-    installed: Set<String>,
-    progress: Pair<String, Float>?,
-    onInstall: (me.rerere.sdcpp.SdModelEntry) -> Unit,
-    onDelete: (me.rerere.sdcpp.SdModelEntry) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall)
-        entries.forEach { entry ->
-            val isInstalled = entry.id in installed
-            val busy = progress?.first == entry.id
-            // Local stable copy: `progress` is a mutable state-delegated var, and the
-            // progress lambda cannot smart-cast across a capture (the extracted
-            // SdModelEntryRow got this for free with its parameter).
-            val bar = progress?.second ?: 0f
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(entry.displayName, style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = "${entry.baseSize}px · ${(entry.sizeBytes / (1024 * 1024)).let { "%,d".format(it) }} MB" +
-                            if (entry.note.isNotBlank()) " · ${entry.note}" else "",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (busy) {
-                        LinearProgressIndicator(
-                            progress = { progress.second },
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        )
-                    }
-                }
-                if (isInstalled) {
-                    OutlinedButton(onClick = { onDelete(entry) }, enabled = progress == null) {
-                        Text(stringResource(R.string.sd_cpp_delete_action))
-                    }
-                } else {
-                    Button(onClick = { onInstall(entry) }, enabled = progress == null) {
-                        Text(stringResource(R.string.sd_cpp_install_action))
-                    }
-                }
-            }
-        }
-    }
-}
 
 /**
- * The QNN NPU image tile. Structured like [ProviderConfigureSdCpp] — direct installer
+ * The QNN NPU image tile. Direct installer
  * driving, tile-local progress, register-on-success — with one deliberate omission: no
  * library-reconcile self-heal. sd-cpp needed one because a whole GGUF *file* can exist while
  * its Model row went missing; here the installed test is "marker file under
@@ -1544,6 +1354,10 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
     val errorMessage by vm.errorMessage.collectAsStateWithLifecycle()
     val installedModelFiles by vm.installedModelFiles.collectAsStateWithLifecycle()
     val perfTelemetry by vm.perfTelemetry.collectAsStateWithLifecycle()
+    // Owner-facing GPU lane - identical control to the local runtimes' switch. The engine
+    // resolves it at every model load (LlamaCppProvider.resolveGpuLayers); the default is
+    // device-dependent exactly like LiteRT's (CPU only for the Tensor crash class).
+    val forceCpu by vm.forceCpu.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val filePicker = rememberLauncherForActivityResult(
@@ -1584,6 +1398,39 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
         style = MaterialTheme.typography.bodySmall,
     )
 
+    // GPU acceleration opt-in (owner request, v0.6): same Switch and strings as the local
+    // runtimes' lane. Engine side this maps to n_gpu_layers -1 (all layers to the shipped
+    // OpenCL backend); flipping it takes effect on the next chat (read per load). If a device
+    // runs slower or unstable on GPU (my CPU-vs-OpenCL A/B on the owner's model will tell),
+    // flip this off - CPU is byte-identical to the pre-v0.6 path.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(
+                text = stringResource(id = R.string.local_llm_try_gpu_label),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = stringResource(id = R.string.local_llm_try_gpu_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = !forceCpu,
+            onCheckedChange = { checked -> vm.setForceCpu(force = !checked) },
+        )
+    }
+
     // Install a GGUF the user already has on-device, via the storage file picker.
     OutlinedButton(
         onClick = { filePicker.launch(arrayOf("application/octet-stream")) },
@@ -1602,9 +1449,10 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
         provider.models.forEach { model ->
             InstalledModelRow(
                 model = model,
-                // llama.cpp is CPU-only with no vision support in this build (vision and
-                // mmproj are a spec non-goal) — there is no vision encoder that could
-                // fail, so this row never shows the vision caption or retry button.
+                // llama.cpp has no vision support in this build (vision and mmproj are a
+                // spec non-goal; the GPU lane changes compute, not modality) — there is no
+                // vision encoder that could fail, so this row never shows the vision caption
+                // or retry button.
                 visionUnavailable = false,
                 allowVisionRetry = false,
                 perfSample = perfTelemetry[model.modelId],

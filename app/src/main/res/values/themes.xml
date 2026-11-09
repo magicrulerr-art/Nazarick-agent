@@ -3,6 +3,17 @@
 
 <style name="Theme.Rikkahub" parent="Theme.Material3.DayNight.NoActionBar" />
 
+<!-- v0.6 cold-start splash (owner: "splash i like"): the wave-Ainz sprite on obsidian,
+     via androidx.core:core-splashscreen — the system splash on 31+, a compatible window
+     overlay below. postSplashScreenTheme hands the window straight back to the normal
+     app theme, so there is no color flash between splash and first Compose frame. -->
+<style name="Theme.Rikkahub.Starting" parent="Theme.SplashScreen">
+    <item name="windowSplashScreenBackground">#FF0B0A10</item>
+    <item name="windowSplashScreenAnimatedIcon">@drawable/splash_ainz</item>
+    <item name="windowSplashScreenIconBackgroundColor">#FF14121C</item>
+    <item name="postSplashScreenTheme">@style/Theme.Rikkahub</item>
+</style>
+
 <style name="Theme.Rikkahub.ToolHost" parent="Theme.Rikkahub">
     <item name="android:windowBackground">@android:color/transparent</item>
     <item name="android:windowIsTranslucent">true</item>

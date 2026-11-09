@@ -274,7 +274,9 @@ jobs:
           # (:local-dream added with the QNN transplant: its suites pin the segfault-shaped
           # CLI invariants and the exact HF pack sizes — the two things a refactor can break
           # silently and a device session would only find the hard way.)
-          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest :sd-cpp:testDebugUnitTest :local-dream:testDebugUnitTest $FLAGS --stacktrace
+          # (:sd-cpp dropped from this line in v0.6: the module left the build graph when the
+          # sd.cpp provider was retired. Its PngEncoderTest moved to :local-dream, which stays.)
+          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest :local-dream:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
@@ -608,7 +610,11 @@ jobs:
   # is precondition, not proof (device 512x512 gen with non-white pixels is).
   hexagon:
     name: sd-cpp hexagon NPU native (sd.gpu=hexagon)
-    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/hexagon-npu'
+    # DEAD since v0.6: sd.cpp is retired and :sd-cpp is no longer in the build graph, so
+    # `:sd-cpp:assembleRelease` below would fail. Gate pinned false to keep the (vendored
+    # ggml-hexagon) steps as history without running them. Physical job + module removal is
+    # the follow-up cleanup ticket.
+    if: false && (github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/hexagon-npu')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     concurrency:
