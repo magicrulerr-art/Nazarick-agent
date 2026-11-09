@@ -25,9 +25,10 @@ import kotlin.uuid.Uuid
  * the deliberate "the pack changed, take another copy" signal.
  *
  * The pack arrives in Ainz's image: the sub-agent pack lists nine and Ainz fronts
- * them. The two default assistants already *are* Ainz (unnamed, locale renders the
- * name), so the tenth card would be a duplicate — the seed takes the Nine and lets
- * the defaults keep the master of the tomb.
+ * them. v0.6 retired the two donor defaults (owner ruling — see
+ * RETIRED_DEFAULT_ASSISTANT_IDS in PreferencesStore), so the seeded Nine ARE the roster
+ * and the tomb master keeps the mascot duties; the fallback assistant id now points at
+ * Albedo, derived from this same slug scheme.
  */
 data class GuardianSeedSpec(
     val name: String,
