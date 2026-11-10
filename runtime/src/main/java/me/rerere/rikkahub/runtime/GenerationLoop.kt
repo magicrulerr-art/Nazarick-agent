@@ -35,6 +35,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.providers.openai.ResponseStreamErrorException
 import me.rerere.ai.registry.ModelRegistry
+import me.rerere.ai.ui.ServerToolStatus
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
@@ -350,15 +351,27 @@ internal const val STALL_NUDGE_INSTRUCTION =
         "Do not stop after thinking again — this reply must contain a tool call or an answer."
 
 /**
- * True when [msg] is an assistant step that carries no user-visible reply and no tool
- * progress: no non-blank Text, no Tool/ServerTool part (executed or not — either way there
- * is progress on record), no media part. A message with zero parts counts as stalled too
- * (the stream opened and closed with nothing in it — same silent shape). Reasoning-only
- * messages — the exact bug #5 shape — and empty messages are stalled.
+ * True when the CURRENT step of [msg] carries no user-visible reply and no fresh tool
+ * progress. A turn accumulates every step into ONE assistant message, so the parts list
+ * mixes history: executed tool envelopes (Tool with output / ServerTool COMPLETED or
+ * FAILED) are step boundaries, and only the parts AFTER the last boundary belong to the
+ * step that just finished. Inside that window, stalled means: no non-blank Text, no
+ * Tool/ServerTool part, no media part. An empty window (the step appended nothing after
+ * its tool result) and reasoning-only windows — the exact bug #5 shape the owner
+ * reproduced post-web_fetch ("Called tool web_fetch / Thought / let me try searching…"
+ * then silence, 2026-11-10) — are stalled. Parts before the boundary are earlier steps'
+ * progress and must NOT mask the current step's silence: that masking was the
+ * first-fix miss (z7 repro 2026-11-10, run158: clean reasoning-only stop after
+ * memory_lookup, no nudge logged, silent break).
  */
 internal fun stalledWithoutReply(msg: UIMessage?): Boolean {
     if (msg == null || msg.role != MessageRole.ASSISTANT) return false
-    return msg.parts.none { part ->
+    val parts = msg.parts
+    val boundary = parts.indexOfLast { part ->
+        (part is UIMessagePart.Tool && part.isExecuted) ||
+            (part is UIMessagePart.ServerTool && part.status != ServerToolStatus.IN_PROGRESS)
+    }
+    return parts.asSequence().drop(boundary + 1).none { part ->
         when (part) {
             is UIMessagePart.Text -> part.text.isNotBlank()
             is UIMessagePart.Tool -> true

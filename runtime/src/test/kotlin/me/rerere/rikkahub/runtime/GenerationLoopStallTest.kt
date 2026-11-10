@@ -61,24 +61,117 @@ class GenerationLoopStallTest {
     }
 
     @Test
-    fun `tool part is not stalled whether executed or not`() {
-        val pending = UIMessagePart.Tool(toolCallId = "c1", toolName = "memory_lookup", input = "{}")
-        val executed = pending.copy(
+    fun `turn ending on an executed tool envelope with no follow-up text is stalled`() {
+        // The turn accumulated one message; the step that just ended produced a tool result
+        // and nothing after it. The user sees a tool card and silence — same wound, so it
+        // must nudge. (First fix said no; z7 device repro 2026-11-10 proved it wrong.)
+        val executed = UIMessagePart.Tool(
+            toolCallId = "c1",
+            toolName = "memory_lookup",
+            input = "{}",
             approvalState = ToolApprovalState.Auto,
             output = listOf(UIMessagePart.Text("result")),
         )
-        assertFalse(stalledWithoutReply(msg(parts = listOf(pending))))
-        assertFalse(stalledWithoutReply(msg(parts = listOf(executed))))
+        assertTrue(stalledWithoutReply(msg(parts = listOf(executed))))
     }
 
     @Test
-    fun `server tool and media parts are not stalled`() {
-        val serverTool = UIMessagePart.ServerTool(
+    fun `pending tool part is not stalled`() {
+        val pending = UIMessagePart.Tool(toolCallId = "c1", toolName = "memory_lookup", input = "{}")
+        assertFalse(stalledWithoutReply(msg(parts = listOf(pending))))
+    }
+
+    // ---- post-tool recurrence (owner report 2026-11-10, "the bug is still there") -----
+    // A turn accumulates all steps into ONE assistant message. After web_fetch executed and
+    // the next step closed its think block, the message is [Tool(executed), Reasoning] —
+    // the executed envelope must NOT count as the current step's progress.
+
+    @Test
+    fun `executed tool followed by reasoning-only step is stalled`() {
+        val executed = UIMessagePart.Tool(
+            toolCallId = "c1",
+            toolName = "web_fetch",
+            input = "{}",
+            approvalState = ToolApprovalState.Auto,
+            output = listOf(UIMessagePart.Text("Google search results page")),
+        )
+        val m = msg(
+            parts = listOf(
+                executed,
+                reasoning("The web fetch returned a Google search page, but it's just the search results page. Let me try searching more specifically."),
+            ),
+        )
+        assertTrue(stalledWithoutReply(m))
+    }
+
+    @Test
+    fun `executed tool followed by answer text is not stalled`() {
+        val executed = UIMessagePart.Tool(
+            toolCallId = "c1",
+            toolName = "web_fetch",
+            input = "{}",
+            approvalState = ToolApprovalState.Auto,
+            output = listOf(UIMessagePart.Text("Google search results page")),
+        )
+        val m = msg(
+            parts = listOf(
+                executed,
+                reasoning("Now I have the facts."),
+                UIMessagePart.Text("Deep Water Horizon was a 2010 offshore drilling rig disaster."),
+            ),
+        )
+        assertFalse(stalledWithoutReply(m))
+    }
+
+    @Test
+    fun `executed tool followed by a fresh pending tool is not stalled`() {
+        val executed = UIMessagePart.Tool(
+            toolCallId = "c1",
+            toolName = "web_fetch",
+            input = "{}",
+            approvalState = ToolApprovalState.Auto,
+            output = listOf(UIMessagePart.Text("results")),
+        )
+        val fresh = UIMessagePart.Tool(toolCallId = "c2", toolName = "web_search", input = "{}")
+        assertFalse(stalledWithoutReply(msg(parts = listOf(executed, fresh))))
+    }
+
+    @Test
+    fun `completed server tool with nothing after is stalled but in-progress is not`() {
+        val completed = UIMessagePart.ServerTool(
             toolCallId = "s1",
             toolName = "web_search",
             status = ServerToolStatus.COMPLETED,
         )
-        assertFalse(stalledWithoutReply(msg(parts = listOf(serverTool))))
+        val inProgress = UIMessagePart.ServerTool(
+            toolCallId = "s2",
+            toolName = "web_search",
+            status = ServerToolStatus.IN_PROGRESS,
+        )
+        assertTrue(stalledWithoutReply(msg(parts = listOf(completed))))
+        assertFalse(stalledWithoutReply(msg(parts = listOf(inProgress))))
+    }
+
+    @Test
+    fun `media parts after an executed tool are not stalled`() {
+        val executed = UIMessagePart.Tool(
+            toolCallId = "c1",
+            toolName = "img_gen",
+            input = "{}",
+            approvalState = ToolApprovalState.Auto,
+            output = listOf(UIMessagePart.Text("saved")),
+        )
+        assertFalse(stalledWithoutReply(msg(parts = listOf(executed, UIMessagePart.Image("file:///x.png")))))
+    }
+
+    @Test
+    fun `server tool and media parts alone are not stalled`() {
+        val inProgress = UIMessagePart.ServerTool(
+            toolCallId = "s1",
+            toolName = "web_search",
+            status = ServerToolStatus.IN_PROGRESS,
+        )
+        assertFalse(stalledWithoutReply(msg(parts = listOf(inProgress))))
         assertFalse(stalledWithoutReply(msg(parts = listOf(UIMessagePart.Image("file:///x.png")))))
         assertFalse(stalledWithoutReply(msg(parts = listOf(UIMessagePart.Document("file:///d.pdf", fileName = "d.pdf")))))
     }
