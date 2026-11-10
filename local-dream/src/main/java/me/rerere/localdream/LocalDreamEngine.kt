@@ -91,10 +91,9 @@ class LocalDreamEngine(private val context: Context) {
         internal const val INSTALL_MNN_HINT =
             "No QNN runtime is bundled for this chip's Hexagon generation. Open Providers -> " +
                 "Local · QNN NPU -> Models and install the \"ChilloutMix · MNN (CPU/GPU)\" pack: " +
-                "auto-mode then falls back to CPU/GPU and generation works. On recent chips " +
-                "(Snapdragon 8s Gen 4 / 8 Elite Gen 5 and newer, e.g. Galaxy Z Fold 8) this is " +
-                "currently the only runnable path — a QNN pack matching the chip can be added " +
-                "from the same page later."
+                "auto-mode then falls back to CPU/GPU and generation works. A QNN pack matching " +
+                "the chip can be added from the same page once the app ships that generation's " +
+                "runtime (current families: v73/v79/v81)."
 
 
         /** Any SM-prefixed Qualcomm chip is HTP-capable in this engine's book (OGAM rule). */
@@ -105,10 +104,15 @@ class LocalDreamEngine(private val context: Context) {
          * don't know the chip: the caller attempts QNN and lets the runtime decide (OGAM's
          * open-world behaviour).
          *
-         * The v81 entries are the run-142 owner report: a Galaxy Z Fold 8 Ultra (SM-F976B,
-         * SM8850 — Snapdragon 8 Elite Gen 5) failed every QNN start, and the vendored 2.28
-         * runtime only carries V73/V79 skeletons, so the attempt could never have worked.
-         * The attempt also burned the full 120 s warm-up budget before the UI said anything.
+         * The v81 entries come from the run-142 owner report: a Galaxy Z Fold 8 Ultra
+         * (SM-F976B, SM8850 — Snapdragon 8 Elite Gen 5) failed every QNN start and burned
+         * the full 120 s warm-up budget before the UI said anything. Root cause, traced
+         * 2026-11-09 against OGAM 0957b72: off-grid ships the **whole** V68..V81 QNN
+         * family and maps SM8850 to the flagship `8gen2` context packs — our port had
+         * simply dropped the V81 trio. Those libraries are vendored now (byte-identical
+         * to OGAM's, hashes in the v0.7 ticket), so SM8850 gets a real QNN attempt.
+         * Fast-fail stays for chips beyond the vendored families: an unmapped future
+         * generation must not pay 120 s before saying so.
          */
         fun bundledHtpFor(socModel: String): String? = when {
             socModel.startsWith("SM8550") || socModel.startsWith("SM8650") -> "v73"
@@ -118,14 +122,19 @@ class LocalDreamEngine(private val context: Context) {
         }
 
         /**
-         * HTP architectures with a `libQnnHtp<arch>Skel.so` vendored under
-         * `assets/qnnlibs` — the DSP-side half of the QNN stack. Kept as a parameter so the
-         * map above is testable without touching a real asset tree.
+         * HTP architectures with a vendored QNN runtime (`libQnnHtpV<arch>Stub.so` host-side
+         * and, where OGAM ships one, the matching `Skel.so`/`<arch>.so`) under
+         * `assets/qnnlibs`. Kept as a parameter so the map above is testable without
+         * touching a real asset tree. v81 landed 2026-11-09 (Fold 8 Ultra / SM8850 fix);
+         * v68/v69/v75 are still gaps — off-grid vendors them, we have not needed them yet.
          */
-        val VENDOR_HTP_ARCHES = setOf("v73", "v79")
-        fun hasVendoredRuntime(socModel: String): Boolean {
+        val VENDOR_HTP_ARCHES = setOf("v73", "v79", "v81")
+        fun hasVendoredRuntime(
+            socModel: String,
+            vendored: Set<String> = VENDOR_HTP_ARCHES,
+        ): Boolean {
             val arch = bundledHtpFor(socModel) ?: return true // unknown chip: optimistically yes
-            return arch in VENDOR_HTP_ARCHES
+            return arch in vendored
         }
 
 

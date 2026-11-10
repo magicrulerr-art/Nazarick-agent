@@ -165,8 +165,8 @@ class LocalDreamEngineLogicTest {
     }
 
     @Test fun bundledHtpFor_namesKnownSocsAndStaysSilentOnUnknown() {
-        // Run 142 root cause: SM8850 (Z Fold 8 Ultra, Snapdragon 8 Elite Gen 5) needs v81,
-        // which the vendored 2.28-era runtime has no skeleton for.
+        // Run 142: SM8850 (Z Fold 8 Ultra, Snapdragon 8 Elite Gen 5) needs v81 — mapped here
+        // and vendored in assets/qnnlibs since 2026-11-09 (off-grid ships the same V81 trio).
         assertEquals("v73", LocalDreamEngine.bundledHtpFor("SM8550"))
         assertEquals("v73", LocalDreamEngine.bundledHtpFor("SM8650P"))
         assertEquals("v79", LocalDreamEngine.bundledHtpFor("SM8750"))
@@ -176,10 +176,14 @@ class LocalDreamEngineLogicTest {
         assertNull(LocalDreamEngine.bundledHtpFor("")) // pre-API-31 sentinel: unknown
     }
 
-    @Test fun hasVendoredRuntime_failsFastOnUncoveredChipsOnly() {
+    @Test fun hasVendoredRuntime_coversVendoredFamiliesAndSkipsTheRest() {
         assertTrue(LocalDreamEngine.hasVendoredRuntime("SM8750"))   // v79 vendored
-        assertFalse(LocalDreamEngine.hasVendoredRuntime("SM8850"))  // v81 missing -> skip 120 s attempt
+        assertTrue(LocalDreamEngine.hasVendoredRuntime("SM8850"))   // v81 vendored 2026-11-09 (Fold 8 Ultra)
         assertTrue(LocalDreamEngine.hasVendoredRuntime("SM9999"))   // unknown -> optimistic, keep old behaviour
+        // The fast-fail logic itself stays nailed even while every mapped chip is covered:
+        // with v81 pulled from the set, SM8850 must skip the doomed 120 s attempt again.
+        assertFalse(LocalDreamEngine.hasVendoredRuntime("SM8850", vendored = setOf("v73", "v79")))
+        assertTrue(LocalDreamEngine.VENDOR_HTP_ARCHES.containsAll(setOf("v73", "v79", "v81")))
     }
 
     @Test fun rgbToPng_roundTripsDimensionsAndRejectsShortRasters() {
