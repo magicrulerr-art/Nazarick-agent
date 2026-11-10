@@ -156,7 +156,7 @@ suspend fun seedGuardianAssistants(
     store.update { settings ->
         if (settings.guardiansSeedVersion >= version) settings
         else settings.copy(
-            assistants = withPackDescriptions(settings.assistants, pack) + plan.inserts,
+            assistants = GuardianSeed.withPackDescriptions(settings.assistants, pack) + plan.inserts,
             guardiansSeedVersion = version,
         )
     }
