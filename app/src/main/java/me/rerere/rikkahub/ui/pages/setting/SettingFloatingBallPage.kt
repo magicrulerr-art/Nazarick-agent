@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,17 +42,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.geometry.toIntSize
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -493,9 +491,10 @@ fun SettingFloatingBallPage(vm: SettingVM = koinViewModel()) {
 /**
  * Miniature of the ball, so the appearance rows show what the user is about to get: the
  * master's face medallion (v0.8) in the theme / picked colour's glow, or the picked image
- * cropped into the circle. The face crop mirrors
- * [me.rerere.rikkahub.service.AinzFaceSprite]'s head rect on the real overlay (the bloom and
- * the working-state orbit only show there).
+ * cropped into the circle. The medallion is composed once with plain Android canvas drawing
+ * and shown through [Image] + asImageBitmap — the proven pattern of [QRCode] — because this
+ * project's Compose layer has no DrawScope.clipCircle and the resource-image helpers differ
+ * across Compose versions. The head fractions are the real ball's (see AinzFaceSprite).
  */
 @Composable
 private fun FloatingBallPreview(
@@ -503,6 +502,48 @@ private fun FloatingBallPreview(
     iconPath: String,
     boxSize: Dp = 36.dp,
 ) {
+    val context = LocalContext.current
+    val argb = color.toArgb()
+    val medallion = remember(argb, boxSize) {
+        runCatching {
+            val full = android.graphics.BitmapFactory.decodeResource(
+                context.resources, R.drawable.ainz_idle,
+            ) ?: return@runCatching null
+            val px = (boxSize.value * context.resources.displayMetrics.density)
+                .toInt().coerceIn(24, 256)
+            val out = android.graphics.Bitmap.createBitmap(
+                px, px, android.graphics.Bitmap.Config.ARGB_8888,
+            )
+            val cv = android.graphics.Canvas(out)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            // Glow disc = the ball's bloom in the accent colour, soft.
+            paint.color = (argb and 0x00FFFFFF) or (64 shl 24)
+            cv.drawCircle(px / 2f, px / 2f, px / 2f, paint)
+            // Head crop, clipped to the medallion circle — same fractions AinzFaceSprite crops by.
+            val w = full.width
+            val h = full.height
+            val face = me.rerere.rikkahub.service.AinzFaceView
+            val left = (w * face.HEAD_X_FRACTION).toInt().coerceIn(0, w - 1)
+            val top = (h * face.HEAD_Y_FRACTION).toInt().coerceAtLeast(0).coerceAtMost(h - 1)
+            val right = (w * (face.HEAD_X_FRACTION + face.HEAD_W_FRACTION)).toInt().coerceIn(left + 1, w)
+            val bottom = (h * (face.HEAD_Y_FRACTION + face.HEAD_H_FRACTION)).toInt().coerceIn(top + 1, h)
+            cv.save()
+            cv.clipPath(
+                android.graphics.Path().apply {
+                    addCircle(px / 2f, px / 2f, px / 2f * 0.94f, android.graphics.Path.Direction.CW)
+                },
+            )
+            cv.drawBitmap(
+                full,
+                android.graphics.Rect(left, top, right, bottom),
+                android.graphics.RectF(0f, 0f, px.toFloat(), px.toFloat()),
+                paint,
+            )
+            cv.restore()
+            full.recycle()
+            out
+        }.getOrNull()
+    }
     Box(modifier = Modifier.size(boxSize)) {
         if (iconPath.isNotBlank()) {
             AsyncImage(
@@ -513,30 +554,12 @@ private fun FloatingBallPreview(
                     .clip(CircleShape),
                 contentScale = ContentScale.Crop,
             )
-        } else {
-            val head = imageResource(R.drawable.ainz_idle)
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawCircle(
-                    color = color.copy(alpha = 0.25f),
-                    radius = this.size.minDimension / 2f,
-                )
-                clipCircle(radius = this.size.minDimension / 2f * 0.94f) {
-                    val w = head.width
-                    val h = head.height
-                    drawImage(
-                        image = head,
-                        srcOffset = IntOffset(
-                            (w * me.rerere.rikkahub.service.AinzFaceView.HEAD_X_FRACTION).toInt().coerceIn(0, w - 1),
-                            (h * me.rerere.rikkahub.service.AinzFaceView.HEAD_Y_FRACTION).toInt().coerceAtLeast(0),
-                        ),
-                        srcSize = IntSize(
-                            (w * me.rerere.rikkahub.service.AinzFaceView.HEAD_W_FRACTION).toInt().coerceAtLeast(1),
-                            (h * me.rerere.rikkahub.service.AinzFaceView.HEAD_H_FRACTION).toInt().coerceAtLeast(1),
-                        ),
-                        dstSize = this@Canvas.size.toIntSize(),
-                    )
-                }
-            }
+        } else if (medallion != null) {
+            Image(
+                bitmap = medallion.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
