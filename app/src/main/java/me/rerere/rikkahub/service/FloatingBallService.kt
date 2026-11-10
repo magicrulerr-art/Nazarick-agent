@@ -91,6 +91,10 @@ class FloatingBallService : Service(), KoinComponent {
         /** A generation turn started / finished: the ball becomes the "agent is working" light. */
         const val ACTION_WORKING_ON = "me.rerere.rikkahub.action.FLOATING_BALL_WORKING_ON"
         const val ACTION_WORKING_OFF = "me.rerere.rikkahub.action.FLOATING_BALL_WORKING_OFF"
+
+        /** v0.8: one-shot Ainz emote on the face ball (CHEER on a won turn, FAIL on a lost one). */
+        const val ACTION_EMOTE = "me.rerere.rikkahub.action.FLOATING_BALL_EMOTE"
+        const val EXTRA_EMOTE = "emote"
         const val NOTIFICATION_ID = 2003
 
         private const val PREF_X = "floating_ball_x"
@@ -192,6 +196,20 @@ class FloatingBallService : Service(), KoinComponent {
         }
 
         /**
+         * v0.8 — plays a one-shot Ainz emote on the face ball (see [ACTION_EMOTE]). No-op
+         * while the ball is down, exactly like [setWorking]: nobody animates an invisible ball.
+         */
+        fun setEmote(context: Context, mood: me.rerere.rikkahub.ui.components.ui.AinzMood) {
+            if (!isShowing) return
+            val intent = Intent(context, FloatingBallService::class.java).apply {
+                action = ACTION_EMOTE
+                putExtra(EXTRA_EMOTE, mood.name)
+            }
+            runCatching { context.startService(intent) }
+                .onFailure { Log.w(TAG, "setEmote failed", it) }
+        }
+
+        /**
          * True while the user is holding the ball down to talk.
          *
          * The ball's long-press opens the quick-chat panel and starts recording; recording ends the
@@ -208,7 +226,7 @@ class FloatingBallService : Service(), KoinComponent {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var ballView: HaloBallView? = null
+    private var ballView: AinzFaceView? = null
     private var ballParams: WindowManager.LayoutParams? = null
     private var longPressFired = false
 
@@ -350,6 +368,20 @@ class FloatingBallService : Service(), KoinComponent {
                 return START_NOT_STICKY
             }
 
+            ACTION_EMOTE -> {
+                if (ballView == null) {
+                    stopSelf()
+                } else {
+                    val mood = runCatching {
+                        me.rerere.rikkahub.ui.components.ui.AinzMood.valueOf(
+                            intent.getStringExtra(EXTRA_EMOTE) ?: ""
+                        )
+                    }.getOrNull()
+                    ballView?.playEmote(mood)
+                }
+                return START_NOT_STICKY
+            }
+
             else -> {
                 if (!Settings.canDrawOverlays(this)) {
                     Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted — stopping")
@@ -407,7 +439,7 @@ class FloatingBallService : Service(), KoinComponent {
         val density = resources.displayMetrics.density
         val size = (BALL_SIZE_DP * density).toInt()
 
-        val container = HaloBallView(this).apply {
+        val container = AinzFaceView(this).apply {
             contentDescription = getString(R.string.quick_chat_title)
             isClickable = true
         }

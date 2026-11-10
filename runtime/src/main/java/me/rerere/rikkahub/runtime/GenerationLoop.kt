@@ -1283,8 +1283,11 @@ class GenerationLoop(
             AutomationRecorder.reset()
             host.showOverlay()
         }
-        .onCompletion {
+        .onCompletion { cause ->
             host.hideOverlay()
+            // v0.8: the floating ball reads the turn's outcome as emotion (cheer / fail).
+            // After hideOverlay so the working-orbit always closes before an emote opens.
+            host.turnFinished(turnOutcomeOf(cause))
             handleAutoReturnAfterTurn()
             // Screen-automation screenshots are working artifacts: unless the model asked to
             // keep one (keep=true), drop the files now that the turn is over. Gated on the turn

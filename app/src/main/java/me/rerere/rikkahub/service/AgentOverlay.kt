@@ -13,6 +13,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.TextView
+import me.rerere.rikkahub.ui.components.ui.AinzMood
 
 /**
  * Lightweight top-of-screen pill that shows while a generation turn is active so the
@@ -52,6 +53,16 @@ object AgentOverlay {
         // No-op unless the ball is actually up (see setWorking), so this is safe unconditionally.
         FloatingBallService.setWorking(app, false)
         mainHandler.post { hideInternal(app) }
+    }
+
+    /**
+     * v0.8 — the turn's outcome, shown on the ball as an Ainz emote (cheer / fail).
+     * Only the ball can emote; without it the pill has no face and this is a no-op.
+     */
+    fun emote(context: Context, mood: AinzMood) {
+        val app = context.applicationContext
+        if (!FloatingBallService.isShowing) return
+        FloatingBallService.setEmote(app, mood)
     }
 
     @SuppressLint("RtlHardcoded")
