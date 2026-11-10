@@ -51,8 +51,10 @@ data class GuardianSeedPlan(
 /** Pure part: pack + current assistants -> the assistants to add. No Android, no IO. */
 object GuardianSeed {
 
-    /** Bump only when the bundled pack changes and installs should receive it again. */
-    const val SEED_VERSION: Int = 1
+    /** Bump when the bundled pack changes and installs should receive it again.
+     *  v2 = v0.7 pack: descriptions rewritten user-facing; the bump also routes existing
+     *  installs through [withPackDescriptions] to fill the blank v1 rows. */
+    const val SEED_VERSION: Int = 2
 
     /** Slug-derived stable ids: the same guardian gets the same Uuid on every device,
      *  so a re-seed after a version bump matches the old row by name and a test can
@@ -76,10 +78,27 @@ object GuardianSeed {
         avatar = avatarOf(spec.portrait),
         useAssistantAvatar = spec.portrait != null,
         systemPrompt = spec.prompt,
+        // The pack's "what to expect" line, shown under the name in the assistant lists
+        // (owner request v0.7). Was silently dropped before the field existed.
+        description = spec.description,
         // Same kit as the defaults: the guardian persona rides on the agent skills,
         // it does not replace them.
         enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
     )
+
+    /**
+     * Refresh [current] rows that belong to the pack (id-derived match) with the pack's
+     * descriptions. Pure, and deliberately description-only: prompts and every other field
+     * are the user's to edit, the subtitle is pack content. v1 seeds shipped blank rows —
+     * the SEED_VERSION 2 bump routes existing installs through here.
+     */
+    fun withPackDescriptions(current: List<Assistant>, pack: List<GuardianSeedSpec>): List<Assistant> {
+        val byId = pack.associateBy { assistantId(it) }
+        return current.map { a ->
+            val spec = byId[a.id]
+            if (spec != null && a.description != spec.description) a.copy(description = spec.description) else a
+        }
+    }
 
     /**
      * Guardians missing from [current]. Matching is by trimmed name, case-insensitive —
@@ -137,7 +156,7 @@ suspend fun seedGuardianAssistants(
     store.update { settings ->
         if (settings.guardiansSeedVersion >= version) settings
         else settings.copy(
-            assistants = settings.assistants + plan.inserts,
+            assistants = withPackDescriptions(settings.assistants, pack) + plan.inserts,
             guardiansSeedVersion = version,
         )
     }

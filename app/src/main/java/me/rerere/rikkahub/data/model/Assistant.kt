@@ -188,6 +188,14 @@ data class Assistant(
     // pointing it at a whole workspace survivable.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val libraryDir: String = "",
+    // v0.7 (owner request) — one-line "what to expect" shown under the name in the assistant
+    // lists; the seeded guardians fill it from the pack ("the mini guardians should have better
+    // descriptions that tell the users what to expect from each"). Blank = no subtitle, so every
+    // pre-v0.7 assistant renders exactly as before. @EncodeDefault(NEVER) keeps old payloads
+    // byte-identical in the store.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val description: String = "",
 )
 
 @Serializable

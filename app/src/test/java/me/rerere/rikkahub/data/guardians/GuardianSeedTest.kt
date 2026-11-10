@@ -95,4 +95,35 @@ class GuardianSeedTest {
             )
         }
     }
+
+    @Test
+    fun `assistantOf carries the pack description into the assistant`() {
+        // v0.7 owner request: the lists show what to expect from each guardian; the seed
+        // silently dropped the pack description before the Assistant field existed.
+        val assistant = GuardianSeed.assistantOf(spec("Aura"))
+        assertEquals("title of Aura", assistant.description)
+    }
+
+    @Test
+    fun `withPackDescriptions refreshes blank v1 rows and nothing else`() {
+        val seededV1 = GuardianSeed.plan(emptyList(), pack).inserts
+            .map { it.copy(description = "") } // what shipped in v1
+        val custom = Assistant(name = "My helper", description = "user's own words")
+        val refreshed = GuardianSeed.withPackDescriptions(seededV1 + custom, pack)
+
+        // every guardian row got its pack line back
+        assertEquals(
+            pack.map { "title of ${it.name}" },
+            refreshed.take(9).map { it.description },
+        )
+        // the non-guardian row passed through untouched, identity and all
+        assertTrue(refreshed.last() === custom)
+        // idempotent: a second pass allocates nothing new to change
+        assertTrue(GuardianSeed.withPackDescriptions(refreshed, pack) == refreshed)
+        // user edits to OTHER fields survive a refresh (description-only by contract)
+        val edited = refreshed.take(1).map { it.copy(systemPrompt = "user words") }
+        val again = GuardianSeed.withPackDescriptions(edited + refreshed.drop(1), pack)
+        assertEquals("user words", again.first().systemPrompt)
+        assertEquals("title of Albedo", again.first().description)
+    }
 }

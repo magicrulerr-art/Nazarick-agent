@@ -465,6 +465,18 @@ private fun AssistantItem(
                     overflow = TextOverflow.Ellipsis
                 )
 
+                // "What to expect" subtitle (owner request v0.7) — the guardians describe
+                // themselves now instead of sitting under their names unexplained.
+                if (assistant.description.isNotBlank()) {
+                    Text(
+                        text = assistant.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
