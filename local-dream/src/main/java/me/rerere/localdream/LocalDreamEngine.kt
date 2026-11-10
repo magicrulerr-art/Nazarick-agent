@@ -87,8 +87,47 @@ class LocalDreamEngine(private val context: Context) {
         const val SERVER_PORT = 18081
         private const val MNN_OPENCL_TUNING_MODE = "WIDE"
 
+        /** Shown to the owner in the toast — tell them the button to press, not just that it died. */
+        internal const val INSTALL_MNN_HINT =
+            "No QNN runtime is bundled for this chip's Hexagon generation. Open Providers -> " +
+                "Local · QNN NPU -> Models and install the \"ChilloutMix · MNN (CPU/GPU)\" pack: " +
+                "auto-mode then falls back to CPU/GPU and generation works. On recent chips " +
+                "(Snapdragon 8s Gen 4 / 8 Elite Gen 5 and newer, e.g. Galaxy Z Fold 8) this is " +
+                "currently the only runnable path — a QNN pack matching the chip can be added " +
+                "from the same page later."
+
+
         /** Any SM-prefixed Qualcomm chip is HTP-capable in this engine's book (OGAM rule). */
         fun isNpuSupported(socModel: String): Boolean = socModel.startsWith("SM")
+
+        /**
+         * Which HTP architecture a SoC model needs, for the SoCs we can name. `null` = we
+         * don't know the chip: the caller attempts QNN and lets the runtime decide (OGAM's
+         * open-world behaviour).
+         *
+         * The v81 entries are the run-142 owner report: a Galaxy Z Fold 8 Ultra (SM-F976B,
+         * SM8850 — Snapdragon 8 Elite Gen 5) failed every QNN start, and the vendored 2.28
+         * runtime only carries V73/V79 skeletons, so the attempt could never have worked.
+         * The attempt also burned the full 120 s warm-up budget before the UI said anything.
+         */
+        fun bundledHtpFor(socModel: String): String? = when {
+            socModel.startsWith("SM8550") || socModel.startsWith("SM8650") -> "v73"
+            socModel.startsWith("SM8750") -> "v79"
+            socModel.startsWith("SM8850") || socModel.startsWith("SM8845") -> "v81"
+            else -> null
+        }
+
+        /**
+         * HTP architectures with a `libQnnHtp<arch>Skel.so` vendored under
+         * `assets/qnnlibs` — the DSP-side half of the QNN stack. Kept as a parameter so the
+         * map above is testable without touching a real asset tree.
+         */
+        val VENDOR_HTP_ARCHES = setOf("v73", "v79")
+        fun hasVendoredRuntime(socModel: String): Boolean {
+            val arch = bundledHtpFor(socModel) ?: return true // unknown chip: optimistically yes
+            return arch in VENDOR_HTP_ARCHES
+        }
+
 
         fun normalizeBackend(raw: String?): String = when (raw?.lowercase()) {
             "mnn", "cpu" -> "mnn"
@@ -345,8 +384,10 @@ class LocalDreamEngine(private val context: Context) {
         val cpuDir = resolveModelDir(modelRoot, isCpu = true)
         val qnnDir = resolveModelDir(modelRoot, isCpu = false)
             ?: error("no QNN context model (unet.bin) under ${modelRoot.absolutePath}")
-        val npuSupported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-            isNpuSupported(Build.SOC_MODEL) else false
+        // Build.SOC_MODEL is API 31+; minSdk here is 26, so read it once through a guard
+        // (empty string = "unknown chip", which hasVendoredRuntime treats as optimistic).
+        val soc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL ?: "" else ""
+        val npuSupported = isNpuSupported(soc)
         val (backend, modelDir) = when (normalized) {
             "mnn" -> (cpuDir ?: error("no MNN model (unet.mnn) under ${modelRoot.absolutePath}"))
                 .let { "mnn" to it }
@@ -360,7 +401,14 @@ class LocalDreamEngine(private val context: Context) {
         val runtimeDir = prepareRuntimeDir()
 
         if (backend == "qnn") {
-            val ok = runCatching { startServer(modelDir, runtimeDir, "qnn", isCpu = false) }
+            // Run 142 (owner, Fold 8 Ultra / SM8850): when the vendored runtime can't cover
+            // this SoC's HTP, the attempt can only burn 120 s and die. Skip it and say so.
+            val knownUnsupported = !hasVendoredRuntime(soc)
+            val ok = if (knownUnsupported) {
+                Log.w(TAG, "no vendored QNN runtime for $soc " +
+                    "(${bundledHtpFor(soc)} HTP, vendored: $VENDOR_HTP_ARCHES); skipping QNN")
+                false
+            } else runCatching { startServer(modelDir, runtimeDir, "qnn", isCpu = false) }
                 .onFailure { Log.w(TAG, "QNN start failed: ${it.message}") }
                 .getOrDefault(false)
             if (ok) {
@@ -368,9 +416,17 @@ class LocalDreamEngine(private val context: Context) {
                 currentBackend = "qnn"
                 return "qnn"
             }
-            if (normalized == "qnn") error("QNN backend failed to start (explicit request, no fallback)")
+            val why = if (knownUnsupported) {
+                "this chip ($soc, ${bundledHtpFor(soc)} HTP) has no vendored QNN runtime " +
+                    "(ships " + VENDOR_HTP_ARCHES.sorted().joinToString("/") + ")"
+            } else "QNN backend failed to start"
+            if (normalized == "qnn") {
+                error("$why, and backend \"qnn\" was requested explicitly so no fallback was tried")
+            }
             stop()
-            val cpuModel = cpuDir ?: error("QNN failed and no MNN fallback model exists")
+            val cpuModel = cpuDir ?: error(
+                "$why, and no MNN fallback model exists. $INSTALL_MNN_HINT",
+            )
             startServer(cpuModel, runtimeDir, "mnn", isCpu = true).also {
                 if (!it) error("both QNN and MNN/CPU backends failed for ${modelRoot.name}")
             }

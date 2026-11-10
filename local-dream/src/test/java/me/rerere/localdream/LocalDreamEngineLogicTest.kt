@@ -164,6 +164,24 @@ class LocalDreamEngineLogicTest {
         assertNull(LocalDreamEngine.parseSseData("""{"type":"progress","step":1}""")) // total_steps missing
     }
 
+    @Test fun bundledHtpFor_namesKnownSocsAndStaysSilentOnUnknown() {
+        // Run 142 root cause: SM8850 (Z Fold 8 Ultra, Snapdragon 8 Elite Gen 5) needs v81,
+        // which the vendored 2.28-era runtime has no skeleton for.
+        assertEquals("v73", LocalDreamEngine.bundledHtpFor("SM8550"))
+        assertEquals("v73", LocalDreamEngine.bundledHtpFor("SM8650P"))
+        assertEquals("v79", LocalDreamEngine.bundledHtpFor("SM8750"))
+        assertEquals("v81", LocalDreamEngine.bundledHtpFor("SM8850-1-AD"))
+        assertEquals("v81", LocalDreamEngine.bundledHtpFor("SM8845"))
+        assertNull(LocalDreamEngine.bundledHtpFor("Tensor G5"))
+        assertNull(LocalDreamEngine.bundledHtpFor("")) // pre-API-31 sentinel: unknown
+    }
+
+    @Test fun hasVendoredRuntime_failsFastOnUncoveredChipsOnly() {
+        assertTrue(LocalDreamEngine.hasVendoredRuntime("SM8750"))   // v79 vendored
+        assertFalse(LocalDreamEngine.hasVendoredRuntime("SM8850"))  // v81 missing -> skip 120 s attempt
+        assertTrue(LocalDreamEngine.hasVendoredRuntime("SM9999"))   // unknown -> optimistic, keep old behaviour
+    }
+
     @Test fun rgbToPng_roundTripsDimensionsAndRejectsShortRasters() {
         // 2x1 RGB red|green
         val rgb = byteArrayOf(-1, 0, 0, 0, -1, 0)
