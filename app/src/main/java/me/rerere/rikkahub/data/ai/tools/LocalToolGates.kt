@@ -89,9 +89,26 @@ object LocalToolGates {
      * The groups a turn's surface is actually assembled from: every non-gated group, plus the
      * gated ones the stored list still names. Deduplicated and catalogue-ordered, so two callers
      * holding the same stored list build the same surface.
+     *
+     * v0.8 (guardian curation): [allowlist] is the optional hard ceiling from
+     * [me.rerere.rikkahub.data.model.Assistant.toolAllowlist]. Null (every pre-v0.8 assistant,
+     * and every path that never had one) leaves the behaviour byte-identical. Non-null intersects:
+     * only groups named by BOTH the allowlist and the normal assembly survive — a gated group
+     * the user never switched on stays out even when the allowlist names it (the allowlist
+     * grants, the gate still conditions), and an empty allowlist means no local groups at all.
      */
-    fun effective(stored: Collection<LocalToolOption>): List<LocalToolOption> =
-        LocalToolGroups.order(alwaysOn + stored)
+    fun effective(
+        stored: Collection<LocalToolOption>,
+        allowlist: Collection<LocalToolOption>? = null,
+    ): List<LocalToolOption> {
+        val base = alwaysOn + stored
+        return if (allowlist == null) {
+            LocalToolGroups.order(base)
+        } else {
+            val allowed = allowlist.toSet()
+            LocalToolGroups.order(base.filter { it in allowed })
+        }
+    }
 
     /**
      * The stored list reduced to the choices that still mean something — the gated groups. Used by

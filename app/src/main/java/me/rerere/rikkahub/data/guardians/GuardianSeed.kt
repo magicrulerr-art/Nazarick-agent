@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.guardians
 
 import kotlinx.coroutines.flow.first
+import me.rerere.rikkahub.data.ai.tools.LocalToolOption
 import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANTS_IDS
 import me.rerere.rikkahub.data.datastore.DEFAULT_AUTO_ENABLED_SKILLS
 import me.rerere.rikkahub.data.model.Assistant
@@ -36,6 +37,13 @@ data class GuardianSeedSpec(
     val prompt: String,
     /** Asset path inside the APK, e.g. "guardians/portraits/albedo.jpg". */
     val portrait: String?,
+    /**
+     * The pack's tool grants (raw [LocalToolOption] ids, same vocabulary as the sub-agent pack).
+     * Null = no allowlist (catalogue-wide); a list — even empty — becomes
+     * [Assistant.toolAllowlist] via [packToolOptions], which is the v0.8 curation ruling:
+     * each guardian gets ONLY the tools its job needs, in the chat form as much as dispatched.
+     */
+    val tools: List<String>? = null,
 )
 
 data class GuardianSeedPlan(
@@ -53,8 +61,23 @@ object GuardianSeed {
 
     /** Bump when the bundled pack changes and installs should receive it again.
      *  v2 = v0.7 pack: descriptions rewritten user-facing; the bump also routes existing
-     *  installs through [withPackDescriptions] to fill the blank v1 rows. */
-    const val SEED_VERSION: Int = 2
+     *  installs through [withPackDescriptions] to fill the blank v1 rows.
+     *  v3 = v0.8 curation: every guardian carries an explicit tool allowlist (owner ruling
+     *  2026-11-10); the bump routes existing rows through [withPackToolGrants], which fills
+     *  the grant only where the user never set one. */
+    const val SEED_VERSION: Int = 3
+
+    /**
+     * Pack tool ids -> this build's [LocalToolOption]s, unknown ids dropped.
+     *
+     * Forward compatibility, mirroring [LenientLocalToolListSerializer] at storage time: a pack
+     * authored for a newer build must not brick the seed on an older one. Null stays null —
+     * "no allowlist, catalogue-wide" is a real choice, distinct from the empty list's
+     * "owns an empty surface".
+     */
+    fun packToolOptions(names: List<String>?): List<LocalToolOption>? = names?.mapNotNull { name ->
+        if (FloorGuardians.resolvesTool(name)) FloorGuardians.decodeTool(name) else null
+    }
 
     /** Slug-derived stable ids: the same guardian gets the same Uuid on every device,
      *  so a re-seed after a version bump matches the old row by name and a test can
@@ -72,19 +95,29 @@ object GuardianSeed {
         if (portrait == null) Avatar.Dummy
         else Avatar.Image("file:///android_asset/$portrait")
 
-    fun assistantOf(spec: GuardianSeedSpec): Assistant = Assistant(
-        id = assistantId(spec.name.lowercase()),
-        name = spec.name.trim(),
-        avatar = avatarOf(spec.portrait),
-        useAssistantAvatar = spec.portrait != null,
-        systemPrompt = spec.prompt,
-        // The pack's "what to expect" line, shown under the name in the assistant lists
-        // (owner request v0.7). Was silently dropped before the field existed.
-        description = spec.description,
-        // Same kit as the defaults: the guardian persona rides on the agent skills,
-        // it does not replace them.
-        enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
-    )
+    fun assistantOf(spec: GuardianSeedSpec): Assistant {
+        val allow = packToolOptions(spec.tools)
+        return Assistant(
+            id = assistantId(spec.name.lowercase()),
+            name = spec.name.trim(),
+            avatar = avatarOf(spec.portrait),
+            useAssistantAvatar = spec.portrait != null,
+            systemPrompt = spec.prompt,
+            // The pack's "what to expect" line, shown under the name in the assistant lists
+            // (owner request v0.7). Was silently dropped before the field existed.
+            description = spec.description,
+            // Same kit as the defaults: the guardian persona rides on the agent skills,
+            // it does not replace them.
+            enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
+            // v0.8 curation: the pack's grants are the hard ceiling of this assistant's
+            // catalogue (see Assistant.toolAllowlist). localTools rides along so the GATED
+            // groups the pack grants (Termux, Telegram, …) count as "user switched on" —
+            // the gate still refuses them until the external prerequisite exists; non-gated
+            // entries in there are inert by LocalToolGates' redefinition.
+            localTools = allow ?: listOf(LocalToolOption.TimeInfo),
+            toolAllowlist = allow,
+        )
+    }
 
     /**
      * Refresh [current] rows that belong to the pack (id-derived match) with the pack's
@@ -97,6 +130,24 @@ object GuardianSeed {
         return current.map { a ->
             val spec = byId[a.id]
             if (spec != null && a.description != spec.description) a.copy(description = spec.description) else a
+        }
+    }
+
+    /**
+     * Fill [Assistant.toolAllowlist] on pack-owned rows that have none (v0.8 upgrade path,
+     * companion to the SEED_VERSION 3 bump). Deliberately allowlist-only and null-only: prompts,
+     * skills and every other field stay the user's; a guardian whose surface the user already
+     * curated (allowlist set, including an owned-empty one) is never touched. [withPackDescriptions]
+     * owns the description, this owns the grant — one field per function so the two refreshes
+     * cannot argue over a row.
+     */
+    fun withPackToolGrants(current: List<Assistant>, pack: List<GuardianSeedSpec>): List<Assistant> {
+        val byId = pack.associateBy { assistantId(it) }
+        return current.map { a ->
+            val spec = byId[a.id] ?: return@map a
+            if (a.toolAllowlist != null) return@map a
+            val allow = packToolOptions(spec.tools) ?: return@map a
+            a.copy(toolAllowlist = allow, localTools = allow)
         }
     }
 
@@ -150,13 +201,16 @@ suspend fun seedGuardianAssistants(
     val pack = runCatching { FloorGuardians.parse(assetText) }
         .getOrNull()
         ?.guardians
-        ?.map { GuardianSeedSpec(it.name, it.description, it.prompt, it.portrait) }
+        ?.map { GuardianSeedSpec(it.name, it.description, it.prompt, it.portrait, it.tools) }
         ?: return false
     val plan = GuardianSeed.plan(current.assistants, pack)
     store.update { settings ->
         if (settings.guardiansSeedVersion >= version) settings
         else settings.copy(
-            assistants = GuardianSeed.withPackDescriptions(settings.assistants, pack) + plan.inserts,
+            assistants = GuardianSeed.withPackToolGrants(
+                GuardianSeed.withPackDescriptions(settings.assistants, pack),
+                pack,
+            ) + plan.inserts,
             guardiansSeedVersion = version,
         )
     }

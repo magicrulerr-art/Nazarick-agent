@@ -106,4 +106,47 @@ class LocalToolGatesTest {
         assertFalse(LocalToolGates.isGated(LocalToolOption.Contacts))
         assertFalse(LocalToolGates.isGated(LocalToolOption.Location))
     }
+
+    // ── v0.8 guardian curation: the per-assistant allow-list ───────────────────────────────
+
+    @Test
+    fun `a null allow-list leaves the surface byte-identical`() {
+        assertEquals(
+            LocalToolGates.effective(emptyList()),
+            LocalToolGates.effective(emptyList(), null),
+        )
+        assertEquals(
+            LocalToolGates.effective(listOf(LocalToolOption.Termux)),
+            LocalToolGates.effective(listOf(LocalToolOption.Termux), null),
+        )
+    }
+
+    @Test
+    fun `an allow-list intersects and a left-out group cannot come back`() {
+        val allow = listOf(LocalToolOption.TimeInfo, LocalToolOption.Files)
+        val surface = LocalToolGates.effective(emptyList(), allow)
+        assertEquals(LocalToolGroups.order(allow), surface)
+        // a stored gated group OUTSIDE the allow-list is still out — the ceiling wins
+        val withOutsideGated = LocalToolGates.effective(listOf(LocalToolOption.Termux), allow)
+        assertEquals(surface, withOutsideGated)
+    }
+
+    @Test
+    fun `a gated group inside the allow-list still needs the user's switch`() {
+        // The allow-list grants, the gate still conditions: Termux is in the allow-list but the
+        // user never switched it on, so it must not appear.
+        val allow = listOf(LocalToolOption.TimeInfo, LocalToolOption.Termux)
+        val notSwitched = LocalToolGates.effective(emptyList(), allow)
+        assertFalse(LocalToolOption.Termux in notSwitched)
+        assertTrue(LocalToolOption.TimeInfo in notSwitched)
+        // switched on (and still allowed) it does.
+        val switched = LocalToolGates.effective(listOf(LocalToolOption.Termux), allow)
+        assertTrue(LocalToolOption.Termux in switched)
+    }
+
+    @Test
+    fun `an empty allow-list is an owned-empty surface`() {
+        assertEquals(emptyList<LocalToolOption>(), LocalToolGates.effective(emptyList(), emptyList()))
+        assertEquals(emptyList<LocalToolOption>(), LocalToolGates.effective(listOf(LocalToolOption.Termux), emptyList()))
+    }
 }

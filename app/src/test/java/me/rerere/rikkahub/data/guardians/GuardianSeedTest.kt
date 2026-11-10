@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.guardians
 
+import me.rerere.rikkahub.data.ai.tools.LocalToolOption
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Avatar
 import org.junit.Assert.assertEquals
@@ -125,5 +126,59 @@ class GuardianSeedTest {
         val again = GuardianSeed.withPackDescriptions(edited + refreshed.drop(1), pack)
         assertEquals("user words", again.first().systemPrompt)
         assertEquals("title of Albedo", again.first().description)
+    }
+
+    // ── v0.8 curation: the pack's grants become the chat surface's ceiling ──────────────────
+
+    @Test
+    fun `assistantOf carries the pack grants into the tool allow-list and the gated switches`() {
+        val withTools = GuardianSeed.assistantOf(
+            GuardianSeedSpec("Aura", "t", "p", null, listOf("time_info", "termux", "files")),
+        )
+        assertEquals(
+            listOf(LocalToolOption.TimeInfo, LocalToolOption.Termux, LocalToolOption.Files),
+            withTools.toolAllowlist,
+        )
+        // localTools rides along so the pack-granted GATED groups count as switched-on (the
+        // gate still conditions them); the allow-list is the same set.
+        assertEquals(withTools.toolAllowlist, withTools.localTools)
+        // no grants = no allow-list: catalogue-wide, exactly the pre-v0.8 assistant
+        val legacy = GuardianSeed.assistantOf(spec("Nobody"))
+        assertTrue(legacy.toolAllowlist == null)
+    }
+
+    @Test
+    fun `packToolOptions drops ids this build does not define and keeps null distinct from empty`() {
+        assertTrue(GuardianSeed.packToolOptions(null) == null)
+        assertEquals(emptyList<LocalToolOption>(), GuardianSeed.packToolOptions(emptyList()))
+        assertEquals(
+            listOf(LocalToolOption.Files),
+            GuardianSeed.packToolOptions(listOf("files", "totally_made_up_tool")),
+        )
+    }
+
+    @Test
+    fun `withPackToolGrants fills only rows the user never curated`() {
+        val grantPack = listOf(GuardianSeedSpec("Aura", "t", "p", null, listOf("time_info", "files")))
+        val curatedPack = grantPack + GuardianSeedSpec("Mare", "t", "p", null, listOf("files"))
+        val uncurated = GuardianSeed.assistantOf(GuardianSeedSpec("Aura", "t", "p", null))
+        val userCurated = GuardianSeed.assistantOf(GuardianSeedSpec("Mare", "t", "p", null))
+            .copy(toolAllowlist = listOf(LocalToolOption.CameraPhoto)) // the user's own surface
+        val foreign = Assistant(name = "My helper")
+
+        val out = GuardianSeed.withPackToolGrants(listOf(uncurated, userCurated, foreign), grantPack)
+
+        // the never-curated guardian got the pack grant
+        assertEquals(listOf(LocalToolOption.TimeInfo, LocalToolOption.Files), out[0].toolAllowlist)
+        // a curated guardian is NOT overwritten — even when the pack still ships her
+        assertEquals(listOf(LocalToolOption.CameraPhoto), out[1].toolAllowlist)
+        // a non-guardian row passes through by identity
+        assertTrue(out[2] === foreign)
+        // idempotent
+        assertTrue(GuardianSeed.withPackToolGrants(out, grantPack) == out)
+        // a spec without grants (null) fills nothing
+        val noGrants = listOf(GuardianSeed.assistantOf(GuardianSeedSpec("Aura", "t", "p", null)))
+        val filled = GuardianSeed.withPackToolGrants(noGrants, grantPack.map { it.copy(tools = null) })
+        assertTrue(filled.first() === noGrants.first())
     }
 }

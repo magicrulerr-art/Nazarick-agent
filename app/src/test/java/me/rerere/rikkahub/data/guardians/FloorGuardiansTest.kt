@@ -111,6 +111,24 @@ class FloorGuardiansTest {
     }
 
     @Test
+    fun `every guardian declares an explicit minimal tool surface`() {
+        // v0.8 curation ruling (owner, 2026-11-10): each guardian gets ONLY the tools its job
+        // needs, and "inherits the parent's whole surface" (null) is no longer allowed for the
+        // Nine — Demiurge inherited everything under the old pack. An explicit non-empty list,
+        // time_info included, is the floor; validate() already proved every id resolves.
+        val pack = bundledPack()
+        for (g in pack.guardians) {
+            val tools = g.tools
+            assertTrue("${g.name}: tools must be an explicit list, not null", tools != null)
+            assertTrue("${g.name}: tools must not be empty", tools!!.isNotEmpty())
+            assertTrue("${g.name}: tools must include time_info", "time_info" in tools!!)
+        }
+        // The coordinator without sub_agents is just a monologue.
+        val demiurge = pack.guardians.first { it.name == "Demiurge" }
+        assertTrue("Demiurge delegates: sub_agents required", "sub_agents" in demiurge.tools!!)
+    }
+
+    @Test
     fun `a mistyped key is refused rather than silently ignored`() {
         val json = """
             {"version":1,"guardians":[{"name":"X","promt":"oops"}]}

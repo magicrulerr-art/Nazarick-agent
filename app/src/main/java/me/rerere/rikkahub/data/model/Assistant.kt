@@ -196,6 +196,19 @@ data class Assistant(
     // Appended last on purpose: a new field may never shift the position of an existing one.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val description: String = "",
+    // v0.8 (owner ruling 2026-11-10, guardian curation) — when set, the assistant's COMPLETE
+    // local-tool-group allow-list: the assembled surface is intersected with it at the single
+    // assembly point (ToolSurfaceResolver.resolve), and the tool_search/tool_open catalogue is
+    // built from that surface — so a group left out is unfindable and uncallable, not merely
+    // deprioritised. This is the "ONLY the tools necessary to do their job" knob the guardian
+    // pack uses; null means catalogue-wide, which is what every pre-v0.8 assistant keeps.
+    // Infrastructure outside the group system (tool_search/tool_open, memory tools, skill and
+    // workspace tools) is untouched by an allow-list, and disabledLocalTools still removes
+    // individual tools inside the allowed groups. [] = no local tool groups at all.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    @Serializable(with = LenientLocalToolListSerializer::class)
+    val toolAllowlist: List<LocalToolOption>? = null,
 )
 
 @Serializable
