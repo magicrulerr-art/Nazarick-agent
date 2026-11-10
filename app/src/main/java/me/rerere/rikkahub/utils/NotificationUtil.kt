@@ -19,7 +19,9 @@ class NotificationConfig {
     var title: String = ""
     var content: String = ""
     var subText: String? = null
-    var smallIcon: Int = R.drawable.ic_stat_rikkahub
+    // v0.7: was R.drawable.ic_stat_rikkahub (the donor's rabbit silhouette). small_icon is the
+    // app's own status-bar glyph, same one every service already uses.
+    var smallIcon: Int = R.drawable.small_icon
     var autoCancel: Boolean = false
     var ongoing: Boolean = false
     var onlyAlertOnce: Boolean = false

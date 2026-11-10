@@ -62,6 +62,8 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.message.tools.ToolUIContext
 import me.rerere.rikkahub.ui.components.message.tools.ToolUIRegistry
 import me.rerere.rikkahub.ui.components.message.tools.ToolResultImage
+import me.rerere.rikkahub.ui.components.ui.AinzMascot
+import me.rerere.rikkahub.ui.components.ui.AinzMood
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
 import me.rerere.rikkahub.ui.components.ui.DotLoading
 import me.rerere.rikkahub.ui.context.LocalToaster
@@ -181,9 +183,9 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
         onExpandedChange = { userExpanded = it },
         icon = {
             if (loading) {
-                DotLoading(
-                    size = 10.dp
-                )
+                // Ainz off and running the tool (v0.7 mascot request; matches the QuickChat
+                // chip). The per-tool renderer icon returns as soon as it's done.
+                AinzMascot(mood = AinzMood.TOOLS, size = 18.dp)
             } else {
                 Icon(
                     imageVector = renderer.icon(context),

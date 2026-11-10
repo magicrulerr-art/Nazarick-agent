@@ -47,6 +47,8 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.ui.AinzMascot
+import me.rerere.rikkahub.ui.components.ui.AinzMood
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.modifier.shimmer
@@ -212,12 +214,18 @@ fun ChainOfThoughtScope.ChatMessageReasoningStep(
         expanded = state.expandState == ReasoningCardState.Expanded,
         onExpandedChange = { state.onExpandedChange(it, loading) },
         icon = {
-            Icon(
-                imageVector = HugeIcons.Idea01,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.secondary,
-            )
+            // The thinking lean while reasoning streams (v0.7 mascot request); the idea
+            // bulb stays for finished reasoning steps.
+            if (loading) {
+                AinzMascot(mood = AinzMood.THINK, size = 18.dp)
+            } else {
+                Icon(
+                    imageVector = HugeIcons.Idea01,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.secondary,
+                )
+            }
         },
         label = {
             if (showThinkingTitle) {
