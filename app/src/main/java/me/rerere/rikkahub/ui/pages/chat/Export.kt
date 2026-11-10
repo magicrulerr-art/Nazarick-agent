@@ -484,7 +484,7 @@ private fun ExportedChatImage(
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                             )
                             Text(
-                                text = "${LocalDateTime.now().toLocalString()}  github.com/wuyhong715/rikkahub-agent-pure",
+                                text = "${LocalDateTime.now().toLocalString()}  github.com/magicrulerr-art/Nazarick-agent",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

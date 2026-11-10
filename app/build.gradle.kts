@@ -108,8 +108,11 @@ android {
             resValue("string", "app_name", "Nazarick Agent")
             buildConfigField("String", "BRAND_NAME", "\"Nazarick\"")
             buildConfigField("String", "BRAND_ID", "\"nazarick\"")
-            buildConfigField("String", "VERSION_NAME", "\"0.0.1\"")
-            buildConfigField("String", "VERSION_CODE", "\"12\"")
+            // v0.7: the hand-copied VERSION_NAME/VERSION_CODE fields are gone. They shadowed
+            // AGP's auto-generated BuildConfig values and had been frozen at "0.0.1"/"12" for
+            // five releases — the About page showed 0.0.1 while Play served v0.6 (owner bug
+            // report with screenshot). The flavour's versionCode/versionName above are now the
+            // single source; anything that prints a version prints the release truth.
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
             // The version line now matches the tags (v0.03 == 0.0.3), which it did not: this
             // flavour used to carry the donor's 0.7.x, so an APK labelled 0.7.0 shipped out of a

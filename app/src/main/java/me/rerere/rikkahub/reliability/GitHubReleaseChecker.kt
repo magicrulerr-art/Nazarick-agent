@@ -155,7 +155,7 @@ class GitHubReleaseChecker(
 
     companion object {
         /** The fork's own repository — releases here are the ones this build can install. */
-        const val DEFAULT_REPO = "wuyhong715/rikkahub-agent-pure"
+        const val DEFAULT_REPO = "magicrulerr-art/Nazarick-agent"
     }
 }
 

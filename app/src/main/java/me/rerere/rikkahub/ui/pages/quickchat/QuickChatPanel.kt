@@ -81,7 +81,6 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.AiBrain01
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.hugeicons.stroke.ArrowUp01
@@ -91,7 +90,6 @@ import me.rerere.hugeicons.stroke.Mic01
 import me.rerere.hugeicons.stroke.PlusSign
 import me.rerere.hugeicons.stroke.Stop
 import me.rerere.hugeicons.stroke.VolumeHigh
-import me.rerere.hugeicons.stroke.Wrench01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -103,7 +101,10 @@ import me.rerere.rikkahub.ui.components.message.MessagePartBlock
 import me.rerere.rikkahub.ui.components.message.ThinkingStep
 import me.rerere.rikkahub.ui.components.message.groupMessageParts
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
+import me.rerere.rikkahub.ui.components.ui.AinzMascot
+import me.rerere.rikkahub.ui.components.ui.AinzMood
 import me.rerere.rikkahub.ui.components.ui.AssistantAvatar
+import me.rerere.rikkahub.ui.components.ui.rememberAinzIdleMood
 import me.rerere.rikkahub.ui.hooks.readStringPreference
 import me.rerere.rikkahub.ui.hooks.rememberCustomAsrState
 import me.rerere.rikkahub.ui.hooks.rememberCustomTtsState
@@ -141,8 +142,13 @@ private val PANEL_SHAPE = RoundedCornerShape(28.dp)
  * Deliberately below 1: the app underneath shows through softened, so the panel reads as frosted
  * glass rather than an opaque slab. Without that blur the same alpha would just wash the panel out
  * over a busy app, so [PANEL_SURFACE_ALPHA_OPAQUE] takes over — see `blurredBackdrop`.
+ *
+ * 0.94, not the v0.5 0.86: the One UI build in the owner's report *reported* cross-window blur
+ * as enabled but rendered the backdrop near-sharp, and the app behind (Settings) was readable
+ * through the panel through. Frosted-glass is a nice-to-have; a page of ghost text under the
+ * answer is not.
  */
-private const val PANEL_SURFACE_ALPHA = 0.86f
+private const val PANEL_SURFACE_ALPHA = 0.94f
 
 /** Colour alpha used when there is no backdrop blur to lean on: nearly opaque, still not flat. */
 private const val PANEL_SURFACE_ALPHA_OPAQUE = 0.97f
@@ -539,6 +545,11 @@ fun QuickChatPanel(
             color = MaterialTheme.colorScheme.surface.copy(
                 alpha = if (blurredBackdrop) PANEL_SURFACE_ALPHA else PANEL_SURFACE_ALPHA_OPAQUE,
             ),
+            // An explicit content colour, not the inherited one: this Surface passes a *copied*
+            // scheme colour, so Compose can't map it back to an "on" slot and the whole panel —
+            // Markdown prose especially, which never sets its own colour — fell back to Compose's
+            // default dark text and was unreadable on the dark glass (owner report v0.7, bug #2).
+            contentColor = MaterialTheme.colorScheme.onSurface,
             border = BorderStroke(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
@@ -611,15 +622,27 @@ fun QuickChatPanel(
                 ) {
                     if (messages.isEmpty()) {
                         item {
-                            Text(
-                                text = stringResource(R.string.quick_chat_empty),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
+                            // Empty panel = the master standing around: Ainz fronts the greeting
+                            // and waves on his own timer (owner request v0.7 — the sprite set
+                            // earns its keep showing emotion instead of a bare sentence).
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 24.dp),
-                            )
+                                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                AinzMascot(
+                                    mood = rememberAinzIdleMood(),
+                                    size = 84.dp,
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = stringResource(R.string.quick_chat_empty),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                         }
                     }
                     items(messages, key = { it.id.toString() }) { message ->
@@ -630,7 +653,9 @@ fun QuickChatPanel(
                 if (asr.isRecording) {
                     StatusRow(text = stringResource(R.string.quick_chat_listening))
                 } else if (isGenerating) {
-                    StatusRow(text = processingStatus.orEmpty())
+                    // Ainz out walking = the master is busy. Same signal as the main chat's
+                    // streaming state, shrunk to a status line.
+                    StatusRow(text = processingStatus.orEmpty(), mood = AinzMood.WALK)
                 }
 
                 // One composer row carries everything: the two shortcuts and mic/send sit in a
@@ -667,9 +692,14 @@ fun QuickChatPanel(
 }
 
 @Composable
-private fun StatusRow(text: String) {
+private fun StatusRow(text: String, mood: AinzMood? = null) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+        if (mood != null) {
+            // A tiny busy Ainz instead of the spinner — the walking gait is the "working" signal.
+            AinzMascot(mood = mood, size = 22.dp)
+        } else {
+            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+        }
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
@@ -835,11 +865,13 @@ private fun ThinkingChip(steps: List<ThinkingStep>) {
     ) {
         Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (hasTools) HugeIcons.Wrench01 else HugeIcons.AiBrain01,
-                    contentDescription = null,
-                    modifier = Modifier.size(13.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                // The chip's icon is Ainz in the matching pose — tools means he's off running
+                // them, reasoning means the thinking lean. Static (animated = false): these are
+                // history markers, not status lights.
+                AinzMascot(
+                    mood = if (hasTools) AinzMood.TOOLS else AinzMood.THINK,
+                    size = 18.dp,
+                    animated = false,
                 )
                 Text(
                     text = label,
