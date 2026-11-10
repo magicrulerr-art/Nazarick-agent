@@ -964,11 +964,12 @@ private fun SettingsBottomSheet(
                 label = { Text(stringResource(R.string.imggen_page_width_label)) }
             ) {
                 Select(
-                    options = listOf(null, 256, 384, 512, 768, 1024),
+                    options = listOf(ImgGenVM.AUTO_PX, 256, 384, 512, 768, 1024),
                     selectedOption = widthPx,
                     onOptionSelected = vm::updateWidthPx,
                     optionToString = { px ->
-                        px?.toString() ?: stringResource(R.string.imggen_page_size_auto)
+                        if (px == ImgGenVM.AUTO_PX) stringResource(R.string.imggen_page_size_auto)
+                        else px.toString()
                     },
                     modifier = Modifier.width(200.dp)
                 )
@@ -978,11 +979,12 @@ private fun SettingsBottomSheet(
                 label = { Text(stringResource(R.string.imggen_page_height_label)) }
             ) {
                 Select(
-                    options = listOf(null, 256, 384, 512, 768, 1024),
+                    options = listOf(ImgGenVM.AUTO_PX, 256, 384, 512, 768, 1024),
                     selectedOption = heightPx,
                     onOptionSelected = vm::updateHeightPx,
                     optionToString = { px ->
-                        px?.toString() ?: stringResource(R.string.imggen_page_size_auto)
+                        if (px == ImgGenVM.AUTO_PX) stringResource(R.string.imggen_page_size_auto)
+                        else px.toString()
                     },
                     modifier = Modifier.width(200.dp)
                 )

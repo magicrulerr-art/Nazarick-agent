@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.toIntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -500,9 +501,9 @@ fun SettingFloatingBallPage(vm: SettingVM = koinViewModel()) {
 private fun FloatingBallPreview(
     color: Color,
     iconPath: String,
-    size: Dp = 36.dp,
+    boxSize: Dp = 36.dp,
 ) {
-    Box(modifier = Modifier.size(size)) {
+    Box(modifier = Modifier.size(boxSize)) {
         if (iconPath.isNotBlank()) {
             AsyncImage(
                 model = File(iconPath),
@@ -513,13 +514,13 @@ private fun FloatingBallPreview(
                 contentScale = ContentScale.Crop,
             )
         } else {
-            val head = imageResource(me.rerere.rikkahub.R.drawable.ainz_idle)
+            val head = imageResource(R.drawable.ainz_idle)
             Canvas(modifier = Modifier.fillMaxSize()) {
                 drawCircle(
                     color = color.copy(alpha = 0.25f),
-                    radius = size.minDimension / 2f,
+                    radius = this.size.minDimension / 2f,
                 )
-                clipCircle(radius = size.minDimension / 2f * 0.94f) {
+                clipCircle(radius = this.size.minDimension / 2f * 0.94f) {
                     val w = head.width
                     val h = head.height
                     drawImage(
@@ -532,7 +533,7 @@ private fun FloatingBallPreview(
                             (w * me.rerere.rikkahub.service.AinzFaceView.HEAD_W_FRACTION).toInt().coerceAtLeast(1),
                             (h * me.rerere.rikkahub.service.AinzFaceView.HEAD_H_FRACTION).toInt().coerceAtLeast(1),
                         ),
-                        dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+                        dstSize = this@Canvas.size.toIntSize(),
                     )
                 }
             }

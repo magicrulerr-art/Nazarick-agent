@@ -372,11 +372,13 @@ class FloatingBallService : Service(), KoinComponent {
                 if (ballView == null) {
                     stopSelf()
                 } else {
+                    // The wire carries the in-app mascot enum (that is where outcomes are born);
+                    // the face view speaks its own subset — AinzFaceMood.of folds the rest.
                     val mood = runCatching {
                         me.rerere.rikkahub.ui.components.ui.AinzMood.valueOf(
                             intent.getStringExtra(EXTRA_EMOTE) ?: ""
                         )
-                    }.getOrNull()
+                    }.getOrNull()?.let { me.rerere.rikkahub.service.AinzFaceMood.of(it) }
                     ballView?.playEmote(mood)
                 }
                 return START_NOT_STICKY

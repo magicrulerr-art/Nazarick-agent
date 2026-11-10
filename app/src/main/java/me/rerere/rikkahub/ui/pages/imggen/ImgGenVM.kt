@@ -181,12 +181,12 @@ class ImgGenVM(
     private val _seedText = MutableStateFlow("")
     val seedText: StateFlow<String> = _seedText
 
-    /** null = follow the aspect ratio; explicit px otherwise. */
-    private val _widthPx = MutableStateFlow<Int?>(null)
-    val widthPx: StateFlow<Int?> = _widthPx
+    /** Explicit pixel side; [AUTO_PX] (sentinel — MutableStateFlow forbids nullable T) means follow the aspect ratio. */
+    private val _widthPx = MutableStateFlow(AUTO_PX)
+    val widthPx: StateFlow<Int> = _widthPx
 
-    private val _heightPx = MutableStateFlow<Int?>(null)
-    val heightPx: StateFlow<Int?> = _heightPx
+    private val _heightPx = MutableStateFlow(AUTO_PX)
+    val heightPx: StateFlow<Int> = _heightPx
 
     /** 1 = off; 2/4 resize the finished image (see local-dream upscalePng). */
     private val _upscaleFactor = MutableStateFlow(1)
@@ -200,8 +200,8 @@ class ImgGenVM(
     fun updateStepsText(text: String) { _stepsText.value = text }
     fun updateCfgText(text: String) { _cfgText.value = text }
     fun updateSeedText(text: String) { _seedText.value = text }
-    fun updateWidthPx(px: Int?) { _widthPx.value = px }
-    fun updateHeightPx(px: Int?) { _heightPx.value = px }
+    fun updateWidthPx(px: Int) { _widthPx.value = px }
+    fun updateHeightPx(px: Int) { _heightPx.value = px }
     fun updateUpscaleFactor(factor: Int) { _upscaleFactor.value = factor.coerceIn(1, 4) }
 
     val pager = Pager(
@@ -323,8 +323,8 @@ class ImgGenVM(
                     steps = levers.steps,
                     guidanceScale = levers.guidanceScale,
                     seed = levers.seed,
-                    width = _widthPx.value,
-                    height = _heightPx.value,
+                    width = _widthPx.value.takeIf { it != AUTO_PX },
+                    height = _heightPx.value.takeIf { it != AUTO_PX },
                     upscaleFactor = _upscaleFactor.value.takeIf { it > 1 },
                     engineBackend = _engineBackend.value.takeIf { it != "auto" },
                 )
@@ -543,5 +543,8 @@ class ImgGenVM(
     companion object {
         private const val TAG = "ImgGenVM"
         private const val MAX_REFERENCE_IMAGES = 16
+
+        /** Width/height sentinel: follow the aspect ratio (see _widthPx). */
+        const val AUTO_PX = -1
     }
 }
