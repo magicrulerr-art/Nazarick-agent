@@ -331,6 +331,47 @@ private val FRESHNESS_TTL_MS_BY_TOOL: Map<String, Long> = mapOf(
 private val READ_ONLY_OBSERVATION_TOOLS: Set<String> =
     FRESHNESS_TTL_MS_BY_TOOL.keys + "find_node"
 
+/**
+ * Bug #5 (owner report 2026-11-10, "model stops mid thought-stream", screenshot
+ * media/387b9f6547c3480f857fab50b1a11e08_image.png): local thinking models sometimes end a
+ * step right after closing their think block — provider reports a clean stop, no text, no
+ * tool call — and the loop's `toolCalls.isEmpty()` break treated that as a completed turn.
+ * The user sees a thought bubble ending in "let me check..." with no answer and no error.
+ *
+ * [stalledWithoutReply] is the pure predicate; [STALL_NUDGE_INSTRUCTION] is the request-only
+ * retry prompt the loop appends when it trips, budgeted by [MAX_STALL_NUDGES] per user turn.
+ */
+internal const val MAX_STALL_NUDGES = 2
+
+internal const val STALL_NUDGE_INSTRUCTION =
+    "Please continue: act on what you were thinking just now. " +
+        "If you were about to call a tool, emit the tool call now. " +
+        "If you already have the answer, write it for the user directly. " +
+        "Do not stop after thinking again — this reply must contain a tool call or an answer."
+
+/**
+ * True when [msg] is an assistant step that carries no user-visible reply and no tool
+ * progress: no non-blank Text, no Tool/ServerTool part (executed or not — either way there
+ * is progress on record), no media part. A message with zero parts counts as stalled too
+ * (the stream opened and closed with nothing in it — same silent shape). Reasoning-only
+ * messages — the exact bug #5 shape — and empty messages are stalled.
+ */
+internal fun stalledWithoutReply(msg: UIMessage?): Boolean {
+    if (msg == null || msg.role != MessageRole.ASSISTANT) return false
+    return msg.parts.none { part ->
+        when (part) {
+            is UIMessagePart.Text -> part.text.isNotBlank()
+            is UIMessagePart.Tool -> true
+            is UIMessagePart.ServerTool -> true
+            is UIMessagePart.Image -> true
+            is UIMessagePart.Video -> true
+            is UIMessagePart.Audio -> true
+            is UIMessagePart.Document -> true
+            else -> false
+        }
+    }
+}
+
 /** One prior executed tool call in the current turn, in chronological order. */
 internal data class PriorToolCall(
     val toolName: String,
@@ -520,6 +561,12 @@ class GenerationLoop(
 
         val turnStartMs = android.os.SystemClock.elapsedRealtime()
         var loopGuardTripCount = 0
+        // v0.7 owner report (bug #5): local thinking models sometimes close a step right after
+        // the think block — no visible text, no tool call — and the old code treated that as a
+        // completed turn: the chat went silent with no error. Retry budget for nudging those
+        // steps back to life; see stalledWithoutReply + STALL_NUDGE_INSTRUCTION below.
+        var stallNudgesUsed = 0
+        var pendingStallNudge = false
 
         for (stepIndex in 0 until maxSteps) {
             // Wall-clock cap: any single user turn that has been running longer than the
@@ -621,9 +668,17 @@ class GenerationLoop(
                     // instruction). They must NOT be added to the loop's `messages` var:
                     // generateInternal writes that list back via onUpdateMessages, and
                     // anything in it ends up rendered and persisted in the chat page.
-                    val injections = conversationId
-                        ?.let { ConversationInjections.drain(it) }
-                        .orEmpty()
+                    val injections = buildList {
+                        conversationId
+                            ?.let { ConversationInjections.drain(it) }
+                            ?.let(this::addAll)
+                        // A nudge queued by the stall check below rides this request only —
+                        // same request-only contract as every other synthetic message here.
+                        if (pendingStallNudge) {
+                            add(STALL_NUDGE_INSTRUCTION)
+                            pendingStallNudge = false
+                        }
+                    }
                     generateInternal(
                         assistant = assistant,
                         systemInjection = systemInjection,
@@ -733,6 +788,18 @@ class GenerationLoop(
 
                 val toolCalls = messages.last().getTools().filter { !it.isExecuted }
                 if (toolCalls.isEmpty()) {
+                    // Bug #5 stall check: a clean stream end with no visible answer and no
+                    // tool call is NOT a completed turn — it is the silent-stop shape the
+                    // owner reported on local thinking models. Nudge the step back to life
+                    // with a request-only instruction (budget MAX_STALL_NUDGES per turn);
+                    // old break behavior resumes when the budget is spent or the step
+                    // produced real output.
+                    if (stalledWithoutReply(messages.lastOrNull()) && stallNudgesUsed < MAX_STALL_NUDGES) {
+                        stallNudgesUsed += 1
+                        pendingStallNudge = true
+                        Log.w(TAG, "stalled step (no reply, no tool call) — auto-nudge $stallNudgesUsed/$MAX_STALL_NUDGES")
+                        continue
+                    }
                     // no tool calls, break
                     break
                 }
