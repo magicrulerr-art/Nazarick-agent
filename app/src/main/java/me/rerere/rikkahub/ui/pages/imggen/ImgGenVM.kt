@@ -26,6 +26,7 @@ import me.rerere.ai.provider.ProviderManager
 import me.rerere.ai.ui.ImageAspectRatio
 import me.rerere.ai.ui.ImageGenerationItem
 import me.rerere.common.android.appTempFolder
+import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.runtime.findProvider
@@ -80,6 +81,60 @@ internal fun sanitizeFilenameComponent(name: String): String =
 
 private val FILENAME_UNSAFE_CHARS = charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
 
+/**
+ * v0.8 lever validation problem (owner request 2026-11-10, the full sampling panel).
+ * The page maps these to localized strings; the VM stays resource-free by design.
+ */
+internal enum class ImgGenLeverProblem { STEPS, CFG, SEED }
+
+/** Parsed text levers; a null field means "leave it to the model/engine default". */
+internal data class ParsedImgGenLevers(
+    val steps: Int?,
+    val guidanceScale: Double?,
+    val seed: Long?,
+)
+
+/**
+ * Parse the sheet's three text levers. Blank is always legal (= default). Seed follows the
+ * engine convention: blank or anything <= 0 (the screenshot's -1) means random. Steps and CFG
+ * are range-checked against the engine's sane envelope so a typo surfaces as a form error
+ * instead of a silent coercion or a wasted on-device generation.
+ *
+ * Returns (problem, parsed); on a problem the parsed value is meaningless. Last valid input
+ * wins per field independently — one bad lever does not discard the others.
+ */
+internal fun parseImgGenLevers(
+    stepsText: String,
+    cfgText: String,
+    seedText: String,
+): Pair<ImgGenLeverProblem?, ParsedImgGenLevers> {
+    val steps: Int?
+    if (stepsText.isBlank()) {
+        steps = null
+    } else {
+        val s = stepsText.trim().toIntOrNull()
+        if (s == null || s !in 1..150) return ImgGenLeverProblem.STEPS to ParsedImgGenLevers(null, null, null)
+        steps = s
+    }
+    val cfg: Double?
+    if (cfgText.isBlank()) {
+        cfg = null
+    } else {
+        val c = cfgText.trim().toDoubleOrNull()
+        if (c == null || c !in 0.0..30.0) return ImgGenLeverProblem.CFG to ParsedImgGenLevers(steps, null, null)
+        cfg = c
+    }
+    val seed: Long?
+    if (seedText.isBlank()) {
+        seed = null
+    } else {
+        val s = seedText.trim().toLongOrNull()
+        if (s == null) return ImgGenLeverProblem.SEED to ParsedImgGenLevers(steps, cfg, null)
+        seed = s
+    }
+    return null to ParsedImgGenLevers(steps, cfg, seed?.takeIf { it > 0 })
+}
+
 class ImgGenVM(
     context: Application,
     val settingsStore: SettingsStore,
@@ -108,6 +163,46 @@ class ImgGenVM(
 
     private val _referenceImages = MutableStateFlow<List<String>>(emptyList())
     val referenceImages: StateFlow<List<String>> = _referenceImages
+
+    // ---- v0.8 sampling levers (owner request 2026-11-10, the screenshot panel) ------------
+    // Every default here reproduces v0.7 exactly: blank texts = model catalog defaults,
+    // null sizes = aspect-derived, upscale 1 = off, backend "auto". The levers reach the
+    // engine through ImageGenerationParams; providers without such knobs ignore them.
+
+    private val _engineBackend = MutableStateFlow("auto")
+    val engineBackend: StateFlow<String> = _engineBackend
+
+    private val _stepsText = MutableStateFlow("")
+    val stepsText: StateFlow<String> = _stepsText
+
+    private val _cfgText = MutableStateFlow("")
+    val cfgText: StateFlow<String> = _cfgText
+
+    private val _seedText = MutableStateFlow("")
+    val seedText: StateFlow<String> = _seedText
+
+    /** null = follow the aspect ratio; explicit px otherwise. */
+    private val _widthPx = MutableStateFlow<Int?>(null)
+    val widthPx: StateFlow<Int?> = _widthPx
+
+    private val _heightPx = MutableStateFlow<Int?>(null)
+    val heightPx: StateFlow<Int?> = _heightPx
+
+    /** 1 = off; 2/4 resize the finished image (see local-dream upscalePng). */
+    private val _upscaleFactor = MutableStateFlow(1)
+    val upscaleFactor: StateFlow<Int> = _upscaleFactor
+
+    fun updateEngineBackend(backend: String) {
+        require(backend == "auto" || backend == "qnn" || backend == "mnn")
+        _engineBackend.value = backend
+    }
+
+    fun updateStepsText(text: String) { _stepsText.value = text }
+    fun updateCfgText(text: String) { _cfgText.value = text }
+    fun updateSeedText(text: String) { _seedText.value = text }
+    fun updateWidthPx(px: Int?) { _widthPx.value = px }
+    fun updateHeightPx(px: Int?) { _heightPx.value = px }
+    fun updateUpscaleFactor(factor: Int) { _upscaleFactor.value = factor.coerceIn(1, 4) }
 
     val pager = Pager(
         config = PagingConfig(pageSize = 20, enablePlaceholders = false),
@@ -180,8 +275,28 @@ class ImgGenVM(
         _isGenerating.value = false
     }
 
+    /** Localized message for a lever validation problem (the page shows [_error] verbatim). */
+    private fun leverProblemMessage(problem: ImgGenLeverProblem): String = when (problem) {
+        ImgGenLeverProblem.STEPS -> getApplication<Application>().getString(
+            R.string.imggen_page_steps_invalid, 1, 150,
+        )
+
+        ImgGenLeverProblem.CFG -> getApplication<Application>().getString(
+            R.string.imggen_page_cfg_invalid, 0, 30,
+        )
+
+        ImgGenLeverProblem.SEED -> getApplication<Application>().getString(
+            R.string.imggen_page_seed_invalid,
+        )
+    }
+
     fun generateImage() {
         if(prompt.value.isBlank()) return
+        val (problem, levers) = parseImgGenLevers(_stepsText.value, _cfgText.value, _seedText.value)
+        if (problem != null) {
+            _error.value = leverProblemMessage(problem)
+            return
+        }
         cancelJob?.cancel()
         cancelJob = viewModelScope.launch {
             try {
@@ -203,7 +318,15 @@ class ImgGenVM(
                     numOfImages = _numberOfImages.value,
                     aspectRatio = _aspectRatio.value,
                     customHeaders = model.customHeaders,
-                    customBody = model.customBodies
+                    customBody = model.customBodies,
+                    // v0.8 levers — nulls and "auto"/1 are exactly what v0.7 sent implicitly.
+                    steps = levers.steps,
+                    guidanceScale = levers.guidanceScale,
+                    seed = levers.seed,
+                    width = _widthPx.value,
+                    height = _heightPx.value,
+                    upscaleFactor = _upscaleFactor.value.takeIf { it > 1 },
+                    engineBackend = _engineBackend.value.takeIf { it != "auto" },
                 )
 
                 val images = providerManager.getProviderByType(provider)

@@ -33,6 +33,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
@@ -74,6 +75,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -108,6 +110,7 @@ import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.ImagePreviewDialog
 import me.rerere.rikkahub.ui.components.ui.OutlinedNumberInput
+import me.rerere.rikkahub.ui.components.ui.Select
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.utils.ImageUtils
 import org.koin.androidx.compose.koinViewModel
@@ -808,6 +811,16 @@ private fun SettingsBottomSheet(
     sheetState: SheetState,
     onDismiss: () -> Unit
 ) {
+    // v0.8 sampling levers (owner screenshot 2026-11-10): mode / steps / cfg / width /
+    // height / seed / upscale. Collected here rather than passed down — the sheet already
+    // owns the vm, and threading seven more parameters through would be noise.
+    val engineBackend by vm.engineBackend.collectAsStateWithLifecycle()
+    val stepsText by vm.stepsText.collectAsStateWithLifecycle()
+    val cfgText by vm.cfgText.collectAsStateWithLifecycle()
+    val seedText by vm.seedText.collectAsStateWithLifecycle()
+    val widthPx by vm.widthPx.collectAsStateWithLifecycle()
+    val heightPx by vm.heightPx.collectAsStateWithLifecycle()
+    val upscaleFactor by vm.upscaleFactor.collectAsStateWithLifecycle()
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -877,6 +890,139 @@ private fun SettingsBottomSheet(
                                             ImageAspectRatio.PORTRAIT -> R.string.imggen_page_aspect_ratio_portrait
                                         }
                                     )
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+
+            // ---- v0.8 sampling levers (the owner's screenshot panel) ----
+            Text(
+                text = stringResource(R.string.imggen_page_advanced_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.imggen_page_advanced_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_mode_label)) },
+                description = { Text(stringResource(R.string.imggen_page_mode_desc)) }
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = engineBackend == "auto",
+                        onClick = { vm.updateEngineBackend("auto") },
+                        label = { Text(stringResource(R.string.imggen_page_mode_auto)) }
+                    )
+                    FilterChip(
+                        selected = engineBackend == "qnn",
+                        onClick = { vm.updateEngineBackend("qnn") },
+                        label = { Text(stringResource(R.string.imggen_page_mode_npu)) }
+                    )
+                    FilterChip(
+                        selected = engineBackend == "mnn",
+                        onClick = { vm.updateEngineBackend("mnn") },
+                        label = { Text(stringResource(R.string.imggen_page_mode_cpu)) }
+                    )
+                }
+            }
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_steps_label)) },
+                description = { Text(stringResource(R.string.imggen_page_steps_desc)) }
+            ) {
+                OutlinedTextField(
+                    value = stepsText,
+                    onValueChange = vm::updateStepsText,
+                    singleLine = true,
+                    placeholder = { Text("20") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.width(140.dp)
+                )
+            }
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_cfg_label)) },
+                description = { Text(stringResource(R.string.imggen_page_cfg_desc)) }
+            ) {
+                OutlinedTextField(
+                    value = cfgText,
+                    onValueChange = vm::updateCfgText,
+                    singleLine = true,
+                    placeholder = { Text("7.5") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.width(140.dp)
+                )
+            }
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_width_label)) }
+            ) {
+                Select(
+                    options = listOf(null, 256, 384, 512, 768, 1024),
+                    selectedOption = widthPx,
+                    onOptionSelected = vm::updateWidthPx,
+                    optionToString = { px ->
+                        px?.toString() ?: stringResource(R.string.imggen_page_size_auto)
+                    },
+                    modifier = Modifier.width(200.dp)
+                )
+            }
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_height_label)) }
+            ) {
+                Select(
+                    options = listOf(null, 256, 384, 512, 768, 1024),
+                    selectedOption = heightPx,
+                    onOptionSelected = vm::updateHeightPx,
+                    optionToString = { px ->
+                        px?.toString() ?: stringResource(R.string.imggen_page_size_auto)
+                    },
+                    modifier = Modifier.width(200.dp)
+                )
+            }
+            Text(
+                text = stringResource(R.string.imggen_page_size_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_seed_label)) },
+                description = { Text(stringResource(R.string.imggen_page_seed_desc)) }
+            ) {
+                OutlinedTextField(
+                    value = seedText,
+                    onValueChange = vm::updateSeedText,
+                    singleLine = true,
+                    placeholder = { Text("-1") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.width(180.dp)
+                )
+            }
+
+            FormItem(
+                label = { Text(stringResource(R.string.imggen_page_upscale_label)) },
+                description = { Text(stringResource(R.string.imggen_page_upscale_desc)) }
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(1, 2, 4).forEach { factor ->
+                        FilterChip(
+                            selected = upscaleFactor == factor,
+                            onClick = { vm.updateUpscaleFactor(factor) },
+                            label = {
+                                Text(
+                                    when (factor) {
+                                        1 -> stringResource(R.string.imggen_page_upscale_off)
+                                        2 -> stringResource(R.string.imggen_page_upscale_2x)
+                                        else -> stringResource(R.string.imggen_page_upscale_4x)
+                                    }
                                 )
                             }
                         )

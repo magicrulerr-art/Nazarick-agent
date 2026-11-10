@@ -23,10 +23,9 @@ import kotlin.math.sin
  * and hook the emotions to it").
  *
  * The ball's canvas is the sprite **head**, not the chibi: the bundled `ainz_*.png` frames are
- * 192×208 with a big centred skull (~56% of the width across the horns, centred at ~21% of the
- * height), so drawing a source rect of the head scales and centres it for free on every frame —
- * one geometry rule, no per-sprite tuning, and the crown tips clip at the circle exactly like a
- * portrait medallion.
+ * 192×208 with a big centred skull (measured bounds in the companion), so drawing a source
+ * rect of the head scales and centres it for free on every frame — one geometry rule, no
+ * per-sprite tuning, exactly like a portrait medallion.
  *
  * Mood mapping rides [AinzFaceMood] (face crops of the very sprites the in-app mascot uses):
  *  - **working** — THINK (studying the problem) with the orbiting light dot kept from the old
@@ -42,11 +41,17 @@ import kotlin.math.sin
 internal class AinzFaceView(context: Context) : View(context) {
 
     companion object {
-        /** Head source rect over the 192×208 sprites, as fractions (see class doc). */
+        /**
+         * Head source rect over the 192×208 sprites, as fractions. Measured, not guessed:
+         * the opaque bounds of idle/review/jump/failed centre at x≈0.50 and the skull runs
+         * from the crown tips (y≈0.08) to the chin (y≈0.50) — so x 0.22..0.78 across the
+         * horns, y -0.02..0.53 (the negative top eats a few empty rows so the same rect
+         * never clips the crown in any mood; the medallion circle clips the rest).
+         */
         const val HEAD_X_FRACTION = 0.22f
-        const val HEAD_Y_FRACTION = -0.08f
+        const val HEAD_Y_FRACTION = -0.02f
         const val HEAD_W_FRACTION = 0.56f
-        const val HEAD_H_FRACTION = 0.50f
+        const val HEAD_H_FRACTION = 0.55f
 
         /** Bloom around the medallion, out of 255. */
         const val BLOOM_ALPHA = 96

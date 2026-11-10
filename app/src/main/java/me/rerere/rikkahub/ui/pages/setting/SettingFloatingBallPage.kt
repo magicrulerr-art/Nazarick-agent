@@ -46,8 +46,11 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -57,7 +60,6 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import me.rerere.rikkahub.service.HaloBallView
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.service.FloatingBallService
 import me.rerere.rikkahub.ui.components.nav.BackButton
@@ -488,10 +490,11 @@ fun SettingFloatingBallPage(vm: SettingVM = koinViewModel()) {
 }
 
 /**
- * Miniature of the ball, so the appearance rows show what the user is about to get: a halo ring
- * in the theme / picked colour, or the picked image cropped into the circle. Mirrors the ring
- * geometry [me.rerere.rikkahub.service.HaloBallView] draws (the glow and the working-state orbit
- * only show on the real overlay).
+ * Miniature of the ball, so the appearance rows show what the user is about to get: the
+ * master's face medallion (v0.8) in the theme / picked colour's glow, or the picked image
+ * cropped into the circle. The face crop mirrors
+ * [me.rerere.rikkahub.service.AinzFaceSprite]'s head rect on the real overlay (the bloom and
+ * the working-state orbit only show there).
  */
 @Composable
 private fun FloatingBallPreview(
@@ -510,13 +513,28 @@ private fun FloatingBallPreview(
                 contentScale = ContentScale.Crop,
             )
         } else {
+            val head = imageResource(me.rerere.rikkahub.R.drawable.ainz_idle)
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val half = this.size.minDimension / 2f
                 drawCircle(
-                    color = color,
-                    radius = half * HaloBallView.RING_RADIUS_FRACTION,
-                    style = Stroke(width = half * HaloBallView.STROKE_FRACTION),
+                    color = color.copy(alpha = 0.25f),
+                    radius = size.minDimension / 2f,
                 )
+                clipCircle(radius = size.minDimension / 2f * 0.94f) {
+                    val w = head.width
+                    val h = head.height
+                    drawImage(
+                        image = head,
+                        srcOffset = IntOffset(
+                            (w * me.rerere.rikkahub.service.AinzFaceView.HEAD_X_FRACTION).toInt().coerceIn(0, w - 1),
+                            (h * me.rerere.rikkahub.service.AinzFaceView.HEAD_Y_FRACTION).toInt().coerceAtLeast(0),
+                        ),
+                        srcSize = IntSize(
+                            (w * me.rerere.rikkahub.service.AinzFaceView.HEAD_W_FRACTION).toInt().coerceAtLeast(1),
+                            (h * me.rerere.rikkahub.service.AinzFaceView.HEAD_H_FRACTION).toInt().coerceAtLeast(1),
+                        ),
+                        dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+                    )
+                }
             }
         }
     }

@@ -43,6 +43,22 @@ internal object AinzFaceSprite {
     }
 
     /**
+     * Head crop per mood. One shared rect (the [AinzFaceView] constants) is the rule; FAIL
+     * is the measured exception — that sprite slumps (opaque bounds sit lower than the other
+     * frames), so the shared rect catches the hood instead of the face. Verified against a
+     * rendered mockup of all four frames, 2026-11-10.
+     */
+    private fun cropFor(mood: AinzFaceMood): FloatArray = when (mood) {
+        AinzFaceMood.FAIL -> floatArrayOf(0.22f, 0.12f, 0.56f, 0.55f)
+        else -> floatArrayOf(
+            AinzFaceView.HEAD_X_FRACTION,
+            AinzFaceView.HEAD_Y_FRACTION,
+            AinzFaceView.HEAD_W_FRACTION,
+            AinzFaceView.HEAD_H_FRACTION,
+        )
+    }
+
+    /**
      * Decode every face frame once per view, downsampled to roughly ball size (same
      * sample-size trick the picked-image icon uses in FloatingBallService.loadIcon).
      * Returns an empty map on any decode failure — the view degrades to bloom-only
@@ -64,12 +80,13 @@ internal object AinzFaceSprite {
                     context.resources, res, BitmapFactory.Options().apply { inSampleSize = sample }
                 ) ?: return@runCatching null
                 // Crop once, at load, so onDraw only ever scales the head rect of a small bitmap.
+                val (fx, fy, fw, fh) = cropFor(mood)
                 val w = full.width
                 val h = full.height
-                val left = (w * AinzFaceView.HEAD_X_FRACTION).toInt().coerceIn(0, w - 1)
-                val top = (h * AinzFaceView.HEAD_Y_FRACTION).toInt().coerceIn(0, h - 1)
-                val right = (w * (AinzFaceView.HEAD_X_FRACTION + AinzFaceView.HEAD_W_FRACTION)).toInt().coerceIn(left + 1, w)
-                val bottom = (h * (AinzFaceView.HEAD_Y_FRACTION + AinzFaceView.HEAD_H_FRACTION)).toInt().coerceIn(top + 1, h)
+                val left = (w * fx).toInt().coerceIn(0, w - 1)
+                val top = (h * fy).toInt().coerceIn(0, h - 1)
+                val right = (w * (fx + fw)).toInt().coerceIn(left + 1, w)
+                val bottom = (h * (fy + fh)).toInt().coerceIn(top + 1, h)
                 val head = Bitmap.createBitmap(full, left, top, right - left, bottom - top)
                 if (head !== full) full.recycle()
                 mood to head

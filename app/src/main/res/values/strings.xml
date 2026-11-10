@@ -3015,6 +3015,32 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="imggen_page_deleting">Deleting…</string>
   <string name="imggen_page_selected_count">Selected: %1$d</string>
   <string name="imggen_page_select_image">Select image</string>
+  <!-- v0.8 sampling levers (owner screenshot 2026-11-10) -->
+  <string name="imggen_page_advanced_title">Sampling settings</string>
+  <string name="imggen_page_advanced_desc">Leave fields empty to use the model defaults. Levers apply to on-device engines; remote providers may ignore them.</string>
+  <string name="imggen_page_mode_label">Mode</string>
+  <string name="imggen_page_mode_desc">Which chip the on-device engine runs on</string>
+  <string name="imggen_page_mode_auto">Auto (NPU when available)</string>
+  <string name="imggen_page_mode_npu">NPU (force)</string>
+  <string name="imggen_page_mode_cpu">CPU / GPU</string>
+  <string name="imggen_page_steps_label">Steps</string>
+  <string name="imggen_page_steps_desc">More steps = better detail, slower (1–150)</string>
+  <string name="imggen_page_steps_invalid">Steps must be a whole number between %1$d and %2$d</string>
+  <string name="imggen_page_cfg_label">CFG scale</string>
+  <string name="imggen_page_cfg_desc">How strictly the prompt is followed (0–30)</string>
+  <string name="imggen_page_cfg_invalid">CFG scale must be a number between %1$d and %2$d</string>
+  <string name="imggen_page_width_label">Width</string>
+  <string name="imggen_page_height_label">Height</string>
+  <string name="imggen_page_size_auto">Follow aspect ratio</string>
+  <string name="imggen_page_size_desc">On-device NPU models are compiled for 512-class sizes; other values run on CPU/MNN and may be slower or unsupported</string>
+  <string name="imggen_page_seed_label">Seed</string>
+  <string name="imggen_page_seed_desc">Same seed + same prompt = same image. -1 or empty = random</string>
+  <string name="imggen_page_seed_invalid">Seed must be a whole number (use -1 for random)</string>
+  <string name="imggen_page_upscale_label">Upscale</string>
+  <string name="imggen_page_upscale_desc">Resize the finished image (not AI upscaling)</string>
+  <string name="imggen_page_upscale_off">Off</string>
+  <string name="imggen_page_upscale_2x">2×</string>
+  <string name="imggen_page_upscale_4x">4×</string>
   <string name="workspace_detail_compatibility_mode">Compatibility mode</string>
   <string name="workspace_detail_compatibility_mode_desc">Try enabling this if the terminal fails to start. It may reduce performance. Applies to new terminal tabs and subsequent commands.</string>
   <string name="workspace_detail_settings_save_failed">Failed to save settings</string>
