@@ -131,7 +131,8 @@ object LlamaCppJni {
         appliedTemplateJson: ByteArray,
         maxTokens: Int,
         sink: TokenSink,
-    )
+        armToolGrammar: Boolean,
+    ): Int
 
     /**
      * Parses generated text into an OpenAI-shaped message. Safe on partial text.
@@ -151,14 +152,20 @@ object LlamaCppJni {
     /**
      * [nativeGenerate] with String in and out. Decoding each piece separately is safe because
      * native only ever emits whole characters.
+     *
+     * [armToolGrammar] decides whether this step is sampler-constrained by the blob's
+     * tool-call grammar; the blob itself always passes through whole. Returns the number of
+     * tokens decoded — [maxTokens] means the budget was exhausted, anything less is a
+     * natural end (or a stop/cancel), see the native loop.
      */
     fun generate(
         ctxHandle: Long,
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) = nativeGenerate(
+    ): Int = nativeGenerate(
         ctxHandle,
         modelHandle,
         appliedTemplateJson.toByteArray(Charsets.UTF_8),
@@ -167,6 +174,7 @@ object LlamaCppJni {
             override fun onToken(pieceUtf8: ByteArray): Boolean =
                 onPiece(String(pieceUtf8, Charsets.UTF_8))
         },
+        armToolGrammar,
     )
 
     /** [nativeParseChat] with String in and out. */

@@ -34,11 +34,14 @@ class LlamaCppProviderTest {
         override fun applyTemplate(modelHandle: Long, requestJson: String): String = "{}"
         override fun generate(
             ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
-            maxTokens: Int, onPiece: (String) -> Boolean,
-        ) {
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
+            var emitted = 0
             for (piece in pieces) {
-                if (!onPiece(piece)) return
+                if (!onPiece(piece)) return emitted
+                emitted++
             }
+            return emitted
         }
         // Mirrors llama.cpp: each parse restates the whole message so far.
         override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String =
@@ -70,9 +73,10 @@ class LlamaCppProviderTest {
         override fun applyTemplate(modelHandle: Long, requestJson: String): String = "{}"
         override fun generate(
             ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
-            maxTokens: Int, onPiece: (String) -> Boolean,
-        ) {
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
             onPiece("ok")
+            return 1
         }
         override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String =
             """{"role":"assistant","content":"$text","reasoning_content":"","tool_calls":[]}"""
@@ -158,9 +162,10 @@ class LlamaCppProviderTest {
         }
         override fun generate(
             ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
-            maxTokens: Int, onPiece: (String) -> Boolean,
-        ) {
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
             onPiece("ok")
+            return 1
         }
         override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String =
             """{"role":"assistant","content":"$text","reasoning_content":"","tool_calls":[]}"""
@@ -314,9 +319,10 @@ class LlamaCppProviderTest {
         override fun applyTemplate(modelHandle: Long, requestJson: String): String = "{}"
         override fun generate(
             ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
-            maxTokens: Int, onPiece: (String) -> Boolean,
-        ) {
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
             onPiece("ok")
+            return 1
         }
         override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String =
             """{"role":"assistant","content":"$text","reasoning_content":"","tool_calls":[]}"""
@@ -426,9 +432,10 @@ class LlamaCppProviderTest {
         override fun applyTemplate(modelHandle: Long, requestJson: String): String = "{}"
         override fun generate(
             ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
-            maxTokens: Int, onPiece: (String) -> Boolean,
-        ) {
-            for (i in 0 until parses.size - 1) if (!onPiece("piece")) return
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
+            for (i in 0 until parses.size - 1) if (!onPiece("piece")) return i
+            return parses.size - 1
         }
         override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String {
             val (content, reasoning) = parses[call.coerceAtMost(parses.size - 1)]
@@ -555,4 +562,62 @@ class LlamaCppProviderTest {
 
             runtime.unload()
         }
+
+    // Bug #5 F3/F4 — post-generation notice decision table ------------------------------
+
+    @Test
+    fun `budget cut mid-answer gets exactly one resume notice`() {
+        val cut = LlamaCppProvider.postGenerationNotices(
+            decoded = 2048, maxTokens = 2048, textForwarded = true,
+            toolCallsForwarded = 0, rawOutput = StringBuilder("a long answer that sto"),
+        )
+        assertEquals(1, cut.size)
+        assertTrue("notice must name the limit: ${cut[0]}", cut[0].contains("output limit"))
+        assertTrue("notice must be resumable by the user", cut[0].contains("continue"))
+    }
+
+    @Test
+    fun `natural end, bare cut, and pending tool call all stay silent`() {
+        // A step that finished under budget.
+        assertTrue(
+            LlamaCppProvider.postGenerationNotices(
+                decoded = 120, maxTokens = 2048, textForwarded = true,
+                toolCallsForwarded = 0, rawOutput = StringBuilder("done"),
+            ).isEmpty(),
+        )
+        // Budget exhausted with nothing visible: the generation loop's own stall-nudge
+        // resumes this silently — a notice would mark the step answered and rob it of it.
+        assertTrue(
+            LlamaCppProvider.postGenerationNotices(
+                decoded = 2048, maxTokens = 2048, textForwarded = false,
+                toolCallsForwarded = 0, rawOutput = StringBuilder("thought only"),
+            ).isEmpty(),
+        )
+        // A carried tool call fails louder through its own result envelope downstream.
+        assertTrue(
+            LlamaCppProvider.postGenerationNotices(
+                decoded = 2048, maxTokens = 2048, textForwarded = true,
+                toolCallsForwarded = 1, rawOutput = StringBuilder("calling"),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun `an opened-but-unparseable tool call is announced and both notices can fire`() {
+        val dropped = LlamaCppProvider.postGenerationNotices(
+            decoded = 42, maxTokens = 2048, textForwarded = true,
+            toolCallsForwarded = 0, rawOutput = StringBuilder("sure<tool_call>{\"name\":"),
+        )
+        assertEquals(1, dropped.size)
+        assertTrue(dropped[0].contains("tool call"))
+
+        assertEquals(
+            "a budget cut AND a dropped call must produce both notices",
+            2,
+            LlamaCppProvider.postGenerationNotices(
+                decoded = 2048, maxTokens = 2048, textForwarded = true,
+                toolCallsForwarded = 0, rawOutput = StringBuilder("x<tool_call"),
+            ).size,
+        )
+    }
 }

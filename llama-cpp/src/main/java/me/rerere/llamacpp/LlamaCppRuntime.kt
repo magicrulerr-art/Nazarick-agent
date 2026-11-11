@@ -42,14 +42,22 @@ interface LlamaCppNative {
      * Mirrors [LlamaCppJni.generate]. [appliedTemplateJson] is the opaque blob
      * [LlamaCppJni.nativeApplyTemplate] returned, carrying the prompt, the grammar and
      * the grammar's triggers together; it must be passed through unchanged.
+     *
+     * [armToolGrammar] decides whether the sampler is constrained by the blob's tool-call
+     * grammar for this step (Bug #5 — the phone build armed it from token one and the
+     * reference path that ran 13/13 clean did not; see [EngineTunables.toolGrammar]).
+     *
+     * Returns the number of tokens actually decoded — the caller compares it against
+     * [maxTokens] to tell a truncated step from a completed one.
      */
     fun generate(
         ctxHandle: Long,
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    )
+    ): Int
 
     fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String
 }
@@ -82,8 +90,9 @@ object RealLlamaCppNative : LlamaCppNative {
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) = LlamaCppJni.generate(ctxHandle, modelHandle, appliedTemplateJson, maxTokens, onPiece)
+    ): Int = LlamaCppJni.generate(ctxHandle, modelHandle, appliedTemplateJson, maxTokens, armToolGrammar, onPiece)
 
     override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String) =
         LlamaCppJni.parseChat(text, isPartial, appliedTemplateJson)
@@ -253,6 +262,15 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
             .coerceAtLeast(0)
     }
 
+    /** Tokens one generation step may decode in the response half of the planned context —
+     *  the explicit ceiling that replaces the old unannounced `DEFAULT_MAX_TOKENS = 2048`
+     *  (Bug #5: a thought longer than 2048 tokens was cut off at a point no log line
+     *  named). Throws if no model is loaded, like [inputBudgetBytes]. */
+    fun outputTokenBudget(): Int {
+        val current = plan ?: error("no model is loaded")
+        return ContextPlanner.outputTokenBudget(current.nCtx)
+    }
+
     /**
      * The tools the planner could not fit into the loaded context's input budget.
      * [LlamaCppProvider] must omit these from the request it renders: [ContextPlanner]
@@ -308,13 +326,16 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
      * Runs one generation, blocking the calling thread until it completes. Returning
      * false from [onPiece] stops it; so does [cancelGeneration] called from another
      * thread. Throws [IllegalStateException] if no model is loaded, or if another
-     * generation is already running.
+     * generation is already running. Returns the number of tokens actually decoded,
+     * which equals the requested ceiling only when the step consumed the whole
+     * budget (see [LlamaCppNative.generate]).
      */
     fun generate(
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) {
+    ): Int {
         if (!mutex.tryLock()) {
             throw IllegalStateException("this model is busy with another operation (load, unload, or generate)")
         }
@@ -322,7 +343,7 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
             val model = modelHandle
             val ctx = contextHandle
             check(model != 0L && ctx != 0L) { "no model is loaded" }
-            native.generate(ctx, model, appliedTemplateJson, maxTokens, onPiece)
+            return native.generate(ctx, model, appliedTemplateJson, maxTokens, armToolGrammar, onPiece)
         } finally {
             mutex.unlock()
         }

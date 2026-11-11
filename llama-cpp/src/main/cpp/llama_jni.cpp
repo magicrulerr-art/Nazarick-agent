@@ -557,11 +557,12 @@ static common_grammar_trigger_type grammarTriggerTypeFromName(const std::string 
 // Rebuilds sampling parameters from what nativeApplyTemplate produced, mirroring what
 // llama.cpp's own server does with the same fields (tools/server/server-schema.cpp).
 static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &applied,
-                                                  const llama_vocab            *vocab) {
+                                                  const llama_vocab            *vocab,
+                                                  bool                          armToolGrammar) {
     common_params_sampling sparams;
 
     const std::string grammar = applied.value("grammar", std::string());
-    if (!grammar.empty()) {
+    if (!grammar.empty() && armToolGrammar) {
         // Typed as a tool-call grammar because that is the only kind nativeApplyTemplate can
         // produce: it passes neither a json_schema nor a user grammar, so anything here came
         // from the template's tool declarations. The type is not decoration; it is what
@@ -573,8 +574,12 @@ static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &
         // a GGML_ASSERT aborts the process rather than throwing something catchable.
         sparams.grammar = common_grammar(COMMON_GRAMMAR_TYPE_TOOL_CALLS, grammar);
     }
-    sparams.grammar_lazy      = applied.value("grammar_lazy", false);
     sparams.generation_prompt = applied.value("generation_prompt", std::string());
+    // Disarmed (armToolGrammar == false, the shipped default since Bug #5) must leave
+    // grammar_lazy false, grammar_triggers empty and no throw below — that combination is
+    // exactly what a tools-free request has always produced, which is the shape that ran
+    // 13/13 clean on the z13 control build.
+    sparams.grammar_lazy      = armToolGrammar && applied.value("grammar_lazy", false);
 
     // Preserved tokens are resolved first: the trigger conversion below refuses a single-token
     // trigger word that is not in this set, exactly as the server does.
@@ -587,7 +592,7 @@ static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &
         }
     }
 
-    if (applied.contains("grammar_triggers")) {
+    if (armToolGrammar && applied.contains("grammar_triggers")) {
         for (const auto &entry : applied.at("grammar_triggers")) {
             common_grammar_trigger trigger;
             trigger.type  = grammarTriggerTypeFromName(entry.at("type").get<std::string>());
@@ -624,25 +629,27 @@ static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &
 // extra macro argument.
 using SamplerPtr = std::unique_ptr<common_sampler, void (*)(common_sampler *)>;
 
-extern "C" JNIEXPORT void JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         JNIEnv *env, jobject, jlong ctxHandle, jlong modelHandle, jbyteArray appliedIn,
-        jint maxTokens, jobject sink) {
-    JNI_GUARD_VOID(env, {
+        jint maxTokens, jobject sink, jboolean armToolGrammar) {
+    JNI_GUARD(env, 0, {
         auto *gen   = reinterpret_cast<GenerationContext *>(ctxHandle);
         auto *model = reinterpret_cast<llama_model *>(modelHandle);
-        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf", "gen: begin maxTokens=%d", (int)maxTokens);
+        jint decoded = 0;   // returned to Kotlin: == maxTokens means the budget ran out
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf", "gen: begin maxTokens=%d arm_grammar=%d",
+                (int)maxTokens, (int)armToolGrammar);
         if (gen == nullptr || gen->ctx == nullptr || model == nullptr) {
             throwJava(env, "context or model handle is null");
-            return;
+            return 0;
         }
         if (sink == nullptr) {
             throwJava(env, "token sink is null");
-            return;
+            return 0;
         }
         if (maxTokens <= 0) {
             throwJava(env, "maxTokens must be positive");
-            return;
+            return 0;
         }
 
         llama_context     *ctx   = gen->ctx;
@@ -659,7 +666,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         if (onToken == nullptr) {
             // GetMethodID has already raised NoSuchMethodError. Throwing a second exception on
             // top of a pending one is not allowed, so just unwind.
-            return;
+            return 0;
         }
 
         const nlohmann::ordered_json applied =
@@ -683,14 +690,14 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         }
         if (nPrompt <= 0) {
             throwJava(env, "prompt tokenization failed");
-            return;
+            return 0;
         }
         tokens.resize(static_cast<size_t>(nPrompt));
 
         // Built before the prefill, not after, so an unusable grammar costs nothing: the check
         // that a lazy grammar has triggers is cheap and the prefill it would otherwise follow
         // is the single most expensive thing here.
-        common_params_sampling sparams = samplingFromApplied(applied, vocab);
+        common_params_sampling sparams = samplingFromApplied(applied, vocab, armToolGrammar != JNI_FALSE);
         // common_sampler_init takes its params by non-const reference and may adjust them, so
         // sparams above is a mutable local rather than a temporary. unique_ptr owns the result
         // from here on: every exit below, including the throwing ones and a Kotlin sink that
@@ -698,7 +705,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         SamplerPtr smpl(common_sampler_init(model, sparams), &common_sampler_free);
         if (!smpl) {
             throwJava(env, "failed to initialise the sampler");
-            return;
+            return 0;
         }
 
         // Each generation starts from an empty cache. llama_batch_get_one continues from
@@ -725,7 +732,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
             if (gen->cancelled.load(std::memory_order_relaxed)) {
                 __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                         "gen: cancelled before prefill slice %d of %d", (int)start, (int)nPrompt);
-                return;
+                return decoded;
             }
             const int32_t count = std::min(batchSize, nPrompt - start);
             const auto  tSlice0 = std::chrono::steady_clock::now();
@@ -741,7 +748,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 if (gen->cancelled.load(std::memory_order_relaxed)) {
                     __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                             "gen: cancelled mid-prefill decode (rc=%d)", (int)rc);
-                    return;
+                    return decoded;
                 }
                 if (rc == 1) {
                     // The token count is worth saying: the caller planned the context from the
@@ -752,7 +759,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 } else {
                     throwJava(env, "failed to evaluate the prompt");
                 }
-                return;
+                return 0;
             }
         }
 
@@ -761,7 +768,6 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         const auto  tDecode0 = std::chrono::steady_clock::now();
         const double prefillMs =
                 std::chrono::duration_cast<NazarickMs>(tDecode0 - tPrefill0).count();
-        jint decoded = 0;
         __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                 "gen: prefill done %d tokens %.0f ms", (int)nPrompt, prefillMs);
 
@@ -780,7 +786,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 pending.erase(0, pending.size() - hold);
                 if (piece == nullptr) {
                     throwJava(env, "failed to allocate a token buffer");
-                    return;
+                    return decoded;
                 }
                 const jboolean keepGoing = env->CallBooleanMethod(sink, onToken, piece);
                 env->DeleteLocalRef(piece);
@@ -790,7 +796,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                     // unwind; the sampler is still freed on the way out.
                     __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
                             "gen: sink threw at decoded=%d", (int)decoded);
-                    return;
+                    return decoded;
                 }
                 if (keepGoing == JNI_FALSE) {
                     __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
@@ -822,7 +828,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 throwJava(env, rc == 1
                         ? "ran out of context while generating"
                         : "failed to evaluate a generated token");
-                return;
+                return decoded;
             }
         }
 
@@ -848,6 +854,17 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 "prefill %d tok %.0f ms (%.1f tok/s) | decode %d tok %.0f ms (%.1f tok/s)",
                 nPrompt, prefillMs, prefillMs > 0 ? nPrompt * 1000.0 / prefillMs : 0.0,
                 (int)decoded, decodeMs, decodeMs > 0 && decoded > 0 ? decoded * 1000.0 / decodeMs : 0.0);
+
+        // The loud cap (Bug #5): running the loop's full length used to fall out of it
+        // without a word, and nothing downstream could tell a step cut off mid-thought
+        // from a step that had finished. ERROR level because the app surfaces it to the
+        // user the same way — a truncated answer must never read as a complete one.
+        if (!stopped && decoded >= maxTokens) {
+            __android_log_print(ANDROID_LOG_ERROR, "nazarick-perf",
+                    "gen: budget exhausted — decoded==max_tokens==%d, output may be truncated (resumable)",
+                    (int)maxTokens);
+        }
+        return decoded;
     })
 }
 

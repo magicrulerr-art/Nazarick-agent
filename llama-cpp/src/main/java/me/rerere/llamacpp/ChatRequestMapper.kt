@@ -196,12 +196,28 @@ object ChatRequestMapper {
         assistantMessage(contentBuffer, emptyList())?.let { array.put(it) }
     }
 
-    /** Null when there is nothing to say and nothing was called, matching the reference. */
+    /** Null when there is nothing to say and nothing was called, matching the reference.
+     *
+     *  Reasoning is echoed back through `reasoning_content`, not dropped (Bug #5): the engine's
+     *  OAICOMPAT message parser reads that field (`common/chat.cpp`, `msg.reasoning_content =
+     *  message.at("reasoning_content")`) and `common_chat_templates_apply` renders it as the
+     *  model's own thinking block, which is llama.cpp server's default "preserve reasoning"
+     *  behaviour. Dropping it was the dominant stall cause: a step that produced only thinking
+     *  made the next request byte-identical to the one that had just produced it (proven by
+     *  matching request-hash log lines 48900=48900, 48995=48995, 52050=52050), and identical
+     *  input under greedy sampling reproduces the same dead step forever. A template that does
+     *  not know the field simply ignores it, so the echo can only ever add information.
+     */
     private fun assistantMessage(contentParts: List<UIMessagePart>, tools: List<UIMessagePart.Tool>): JSONObject? {
         val text = contentParts.filterIsInstance<UIMessagePart.Text>().joinToString("") { it.text }
-        if (text.isBlank() && tools.isEmpty()) return null
+        val reasoning = contentParts.filterIsInstance<UIMessagePart.Reasoning>()
+            .joinToString("") { it.reasoning }
+        if (text.isBlank() && tools.isEmpty() && reasoning.isBlank()) return null
 
         val obj = JSONObject().put("role", "assistant").put("content", text)
+        if (reasoning.isNotEmpty()) {
+            obj.put("reasoning_content", reasoning)
+        }
         if (tools.isNotEmpty()) {
             val calls = JSONArray()
             for (part in tools) {

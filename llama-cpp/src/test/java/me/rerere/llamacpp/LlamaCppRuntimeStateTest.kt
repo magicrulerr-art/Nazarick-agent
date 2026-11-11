@@ -43,10 +43,11 @@ class LlamaCppRuntimeStateTest {
         override fun applyTemplate(modelHandle: Long, requestJson: String): String = "{}"
         override fun generate(
             ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
-            maxTokens: Int, onPiece: (String) -> Boolean,
-        ) {
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
             blockOnGenerate?.invoke()
             onPiece("hi")
+            return 1
         }
         override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String = "{}"
     }
@@ -77,7 +78,7 @@ class LlamaCppRuntimeStateTest {
     fun `generating without a loaded model fails loudly`() {
         val runtime = LlamaCppRuntime(FakeNative())
         val error = runCatching {
-            runtime.generate("{}", 8) { true }
+            runtime.generate("{}", 8, false) { true }
         }.exceptionOrNull()
         assertTrue("expected IllegalStateException, got $error", error is IllegalStateException)
     }
@@ -116,10 +117,10 @@ class LlamaCppRuntimeStateTest {
         val release = CountDownLatch(1)
         native.blockOnGenerate = { started.countDown(); release.await() }
 
-        val worker = thread(name = "first-generation") { runtime.generate("{}", 8) { true } }
+        val worker = thread(name = "first-generation") { runtime.generate("{}", 8, false) { true } }
         assertTrue("first generation must start", started.await(5, TimeUnit.SECONDS))
 
-        val error = runCatching { runtime.generate("{}", 8) { true } }.exceptionOrNull()
+        val error = runCatching { runtime.generate("{}", 8, false) { true } }.exceptionOrNull()
         assertTrue("expected IllegalStateException, got $error", error is IllegalStateException)
 
         release.countDown()
@@ -138,7 +139,7 @@ class LlamaCppRuntimeStateTest {
         native.blockOnGenerate = { started.countDown(); release.await() }
 
         val worker = thread(name = "generation-under-apply-template") {
-            runtime.generate("{}", 8) { true }
+            runtime.generate("{}", 8, false) { true }
         }
         assertTrue("generation must start", started.await(5, TimeUnit.SECONDS))
 
@@ -163,7 +164,7 @@ class LlamaCppRuntimeStateTest {
         val release = CountDownLatch(1)
         native.blockOnGenerate = { started.countDown(); release.await() }
 
-        val worker = thread(name = "generation-under-unload") { runtime.generate("{}", 8) { true } }
+        val worker = thread(name = "generation-under-unload") { runtime.generate("{}", 8, false) { true } }
         assertTrue("generation must start", started.await(5, TimeUnit.SECONDS))
 
         val unloadFinished = CountDownLatch(1)

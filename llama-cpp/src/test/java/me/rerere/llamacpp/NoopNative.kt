@@ -27,9 +27,9 @@ class NoopNative : LlamaCppNative {
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) {
-    }
+    ): Int = 0
 
     override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String = "{}"
 }

@@ -150,4 +150,95 @@ class ChatRequestMapperTest {
             assertEquals(value, json.getBoolean("enable_thinking"))
         }
     }
+
+    // Bug #5 F1 — reasoning must survive into the next request -------------------------
+
+    @Test
+    fun `a reasoning-only assistant turn is echoed with reasoning_content instead of dropped`() {
+        // The dominant stall cause: a step that thought but said nothing produced NO
+        // assistant message, making the next request byte-identical to the previous one —
+        // greedy sampling then replayed the same dead step forever (log hashes 48995=48995).
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Reasoning("The user wants the battery level.")),
+        )
+
+        val messages = JSONObject(
+            ChatRequestMapper.toRequestJson(listOf(message), emptyList())
+        ).getJSONArray("messages")
+
+        assertEquals("a thought-only turn must produce a message, not silence", 1, messages.length())
+        val turn = messages.getJSONObject(0)
+        assertEquals("assistant", turn.getString("role"))
+        assertEquals("", turn.getString("content"))
+        assertEquals(
+            "The user wants the battery level.",
+            turn.getString("reasoning_content"),
+        )
+    }
+
+    @Test
+    fun `reasoning is echoed alongside text and survives across a tool boundary`() {
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Reasoning("Check first, then answer."),
+                UIMessagePart.Text("Let me check."),
+                UIMessagePart.Tool(
+                    toolCallId = "1",
+                    toolName = "get_battery",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("87%")),
+                ),
+                UIMessagePart.Reasoning("Now report it."),
+                UIMessagePart.Text("Battery is 87%."),
+            ),
+        )
+
+        val messages = JSONObject(
+            ChatRequestMapper.toRequestJson(listOf(message), emptyList())
+        ).getJSONArray("messages")
+
+        // assistant (thought+text+call) / tool / assistant (thought+text)
+        assertEquals(3, messages.length())
+        assertEquals("Check first, then answer.", messages.getJSONObject(0).getString("reasoning_content"))
+        assertEquals("Let me check.", messages.getJSONObject(0).getString("content"))
+        assertEquals("tool", messages.getJSONObject(1).getString("role"))
+        assertEquals("Now report it.", messages.getJSONObject(2).getString("reasoning_content"))
+        assertEquals("Battery is 87%.", messages.getJSONObject(2).getString("content"))
+    }
+
+    @Test
+    fun `a truly empty assistant turn still emits nothing`() {
+        // The F1 echo must not resurrect the blank-message case: no text, no thought,
+        // no call → no wire message, exactly as before.
+        val message = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Text(""), UIMessagePart.Reasoning("")),
+        )
+
+        val messages = JSONObject(
+            ChatRequestMapper.toRequestJson(listOf(message), emptyList())
+        ).getJSONArray("messages")
+
+        assertEquals(0, messages.length())
+    }
+
+    @Test
+    fun `a message with no reasoning carries no reasoning_content key`() {
+        // Absent, not empty: templates that do know the field must see an unchanged
+        // request shape for non-thinking models.
+        val messages = JSONObject(
+            ChatRequestMapper.toRequestJson(
+                listOf(UIMessage(role = MessageRole.ASSISTANT, parts = listOf(UIMessagePart.Text("plain answer")))),
+                emptyList(),
+            )
+        ).getJSONArray("messages")
+
+        assertEquals(1, messages.length())
+        assertFalse(
+            "no Reasoning part means no reasoning_content field",
+            messages.getJSONObject(0).has("reasoning_content"),
+        )
+    }
 }

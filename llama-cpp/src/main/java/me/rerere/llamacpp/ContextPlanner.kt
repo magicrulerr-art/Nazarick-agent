@@ -159,6 +159,12 @@ object ContextPlanner {
         return inputTokens * BYTES_PER_TOKEN
     }
 
+    /** Tokens one generation step may decode against an [nCtx]-sized context: the response
+     *  half of the plan, mirroring [inputByteBudget] rather than the old fixed 2048, which
+     *  was smaller than a long thought on this model class and cut steps off mid-reasoning
+     *  with no log line anywhere (Bug #5, "hidden limits"). */
+    fun outputTokenBudget(nCtx: Int): Int = (nCtx * RESPONSE_RESERVE).toInt()
+
     /** The per-request outcome of fitting [tools] and the system prompt into [nCtx]'s input
      *  budget: which tools had to be dropped, and how many of the input budget's bytes the
      *  system prompt plus the surviving tools reserve - the two figures a request-specific

@@ -101,6 +101,7 @@ class LlamaCppGenerateTest {
             modelHandle = model,
             appliedTemplateJson = appliedJson.toByteArray(Charsets.UTF_8),
             maxTokens = maxTokens,
+            armToolGrammar = false,
             sink = object : LlamaCppJni.TokenSink {
                 override fun onToken(pieceUtf8: ByteArray): Boolean {
                     assertWholeCharacters(pieceUtf8)
@@ -227,6 +228,7 @@ class LlamaCppGenerateTest {
                     appliedTemplateJson = applied(model, "Write a long essay.")
                         .toByteArray(Charsets.UTF_8),
                     maxTokens = 4096,
+                    armToolGrammar = false,
                     sink = object : LlamaCppJni.TokenSink {
                         override fun onToken(pieceUtf8: ByteArray): Boolean {
                             count++
@@ -271,6 +273,7 @@ class LlamaCppGenerateTest {
                     modelHandle = model,
                     appliedTemplateJson = blob,
                     maxTokens = budget,
+                    armToolGrammar = false,
                     sink = object : LlamaCppJni.TokenSink {
                         override fun onToken(pieceUtf8: ByteArray): Boolean {
                             count++
@@ -468,7 +471,7 @@ class LlamaCppGenerateTest {
     @Test
     fun generateOnAZeroHandleThrows() {
         val error = assertThrows(RuntimeException::class.java) {
-            LlamaCppJni.generate(0L, 0L, """{"prompt":"hi"}""", 4) { true }
+            LlamaCppJni.generate(0L, 0L, """{"prompt":"hi"}""", 4, false) { true }
         }
         assertTrue(
             "expected the null-handle message, got: ${error.message}",
@@ -489,7 +492,9 @@ class LlamaCppGenerateTest {
                 .put("grammar_triggers", JSONArray())
                 .toString()
             val error = assertThrows(RuntimeException::class.java) {
-                LlamaCppJni.generate(ctx, model, blob, 4) { true }
+                // armToolGrammar = true: the refusal under test is an armed-grammar check.
+                // Disarmed, the sampler never sees this grammar at all.
+                LlamaCppJni.generate(ctx, model, blob, 4, true) { true }
             }
             assertTrue(
                 "expected the inert-grammar error, got: ${error.message}",

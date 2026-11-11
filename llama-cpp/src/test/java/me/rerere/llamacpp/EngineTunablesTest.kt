@@ -41,12 +41,13 @@ class EngineTunablesTest {
         assertEquals(1.2, tunables.headroomWithoutMetadata, 1e-9)
         assertEquals(0.8, tunables.ramSafetyFraction, 1e-9)
         assertEquals(null, tunables.reasoning)
+        assertEquals("Bug #5: the forced tool grammar ships DISARMED", false, tunables.toolGrammar)
     }
 
     @Test
     fun `every knob is reachable and separators are interchangeable`() {
         val spec = "ctx_max=8192,response_reserve=0.25 history_headroom=64;n_batch=1024;" +
-            "n_ubatch=256,headroom_metadata=1.3;headroom_coarse=1.4 ram_safety=0.65;reasoning=false"
+            "n_ubatch=256,headroom_metadata=1.3;headroom_coarse=1.4 ram_safety=0.65;reasoning=false;tool_grammar=true"
         val (t, rejected) = EngineTunables.parse(spec)
         assertEquals("nothing should be rejected: $rejected", emptyList<String>(), rejected)
         assertEquals(8192, t.ctxMax)
@@ -58,6 +59,7 @@ class EngineTunablesTest {
         assertEquals(1.4, t.headroomWithoutMetadata, 1e-9)
         assertEquals(0.65, t.ramSafetyFraction, 1e-9)
         assertEquals(false, t.reasoning)
+        assertEquals(true, t.toolGrammar)
     }
 
     @Test
@@ -69,6 +71,15 @@ class EngineTunablesTest {
         assertEquals(false, EngineTunables.parse("reasoning=false").first.reasoning)
         assertEquals(null, EngineTunables.parse("reasoning=1").first.reasoning)
         assertEquals(listOf("reasoning=1"), EngineTunables.parse("reasoning=1").second)
+    }
+
+    @Test
+    fun `tool_grammar is strict about its words`() {
+        // Same rule as reasoning: a mistyped value must surface as rejected rather than
+        // silently mean the opposite of what the bench note said.
+        assertEquals(true, EngineTunables.parse("tool_grammar=true").first.toolGrammar)
+        assertEquals(false, EngineTunables.parse("tool_grammar=false").first.toolGrammar)
+        assertEquals(listOf("tool_grammar=1"), EngineTunables.parse("tool_grammar=1").second)
     }
 
     @Test
@@ -149,6 +160,16 @@ class EngineTunablesTest {
         ContextPlanner.tunables = EngineTunables.parse("response_reserve=0.25;history_headroom=0").first
         // (4096 * 0.75) - 0 = 3072 tokens: three quarters of the window spendable on input.
         assertEquals(3072 * 4, ContextPlanner.inputByteBudget(4096))
+    }
+
+    @Test
+    fun `output token budget is the response half of the window`() {
+        // Bug #5 F3: the per-step generation ceiling the provider now asks for, replacing
+        // the silent 2048. Default reserve 0.5 of 4096 → 2048; no headroom subtraction —
+        // headroom is history growth, i.e. an input concern.
+        assertEquals(2048, ContextPlanner.outputTokenBudget(4096))
+        ContextPlanner.tunables = EngineTunables.parse("response_reserve=0.35").first
+        assertEquals((4096 * 0.35).toInt(), ContextPlanner.outputTokenBudget(4096))
     }
 
     @Test

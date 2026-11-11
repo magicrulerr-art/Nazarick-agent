@@ -56,6 +56,16 @@ data class EngineTunables(
      * the value belongs to the bench rather than to the code.
      */
     val reasoning: Boolean? = null,
+    /** Arm the template's forced tool-call grammar when generating (Bug #5).
+     *
+     *  Shipped default is **false**: the same fork on the same model class completed 13/13
+     *  tool-calling variants on z13 with no forced grammar at all (control run, RCA
+     *  `floor/ticket-2026-11-10-aura012-bug5-rca-hidden-limits.md`), while the phone build
+     *  armed the grammar from the first token of every step — logs full of "Grammar still
+     *  awaiting trigger" — and the same steps suppressed valid stops and valid empty calls.
+     *  The parse side does not need the grammar: tool calls are extracted by the template
+     *  parser carried in the same applied blob. `true` re-arms it for A/B benches. */
+    val toolGrammar: Boolean = false,
 ) {
     companion object {
         const val PROPERTY = "debug.nazarick.tune"
@@ -102,6 +112,10 @@ data class EngineTunables(
                         val b = value.toBooleanStrictOrNull()
                         if (b != null) t = t.copy(reasoning = b) else rejected += pair
                     }
+                    "tool_grammar" -> {
+                        val b = value.toBooleanStrictOrNull()
+                        if (b != null) t = t.copy(toolGrammar = b) else rejected += pair
+                    }
                     else -> rejected += pair
                 }
             }
@@ -144,6 +158,7 @@ data class EngineTunables(
             append(" headroom=").append(headroomWithMetadata).append('/').append(headroomWithoutMetadata)
             append(" ram_safety=").append(ramSafetyFraction)
             append(" reasoning=").append(reasoning ?: "template")
+            append(" tool_grammar=").append(toolGrammar)
         }
         return if (this == DEFAULT) s else "$s   (OVERRIDDEN)"
     }

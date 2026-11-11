@@ -210,7 +210,39 @@ class LlamaCppProvider(
     ): Flow<ImageGenerationItem> = error("llama.cpp does not support image generation")
 
     companion object {
+        /** Floor for the output budget ([ContextPlanner.outputTokenBudget] is the real
+         *  ceiling). Since Bug #5 this is no longer the silent default every step got —
+         *  it only holds the line when a tiny planned context would allow less. */
         private const val DEFAULT_MAX_TOKENS = 2048
+
+        /**
+         * The user-visible notices for the two step shapes that used to end a generation
+         * stream looking exactly like a finished answer (Bug #5 F3/F4). Pure so CI can
+         * prove the decision table without a native runtime.
+         *
+         *  - **budget cut mid-answer**: [decoded] consumed the whole ceiling with visible
+         *    text already streamed and no tool call pending. A pending call fails louder
+         *    through its own envelope downstream, and a text-free step is left to the
+         *    generation loop's silent stall-nudge — a notice there would mark the step
+         *    answered and rob it of that resume.
+         *  - **tool call the parser never completed**: the raw output opened a call but
+         *    nothing valid came out of it. Previously the step produced nothing at all
+         *    with nothing said about it — the "search token loop" shape from the RCA.
+         */
+        internal fun postGenerationNotices(
+            decoded: Int,
+            maxTokens: Int,
+            textForwarded: Boolean,
+            toolCallsForwarded: Int,
+            rawOutput: CharSequence,
+        ): List<String> = buildList {
+            if (decoded >= maxTokens && textForwarded && toolCallsForwarded == 0) {
+                add("\n\n⚠️ Stopped at the local output limit ($maxTokens tokens) — say \"continue\" to resume.")
+            }
+            if (toolCallsForwarded == 0 && rawOutput.contains("<tool_call")) {
+                add("\n\n⚠️ The model opened a tool call but emitted nothing the parser could execute — it was skipped.")
+            }
+        }
 
         /**
          * Resolves [modelId] - a bare file name, never a path - against [installed], the
@@ -338,6 +370,15 @@ class LlamaCppProvider(
             Log.i("nazarick-perf", "diag: request json built bytes=${requestJson.toByteArray(Charsets.UTF_8).size}")
             val appliedTemplateJson = runtime.applyTemplate(requestJson)
             Log.i("nazarick-perf", "diag: template applied")
+            // Bug #5 F3: the ceiling is the response half of the planned context unless the
+            // assistant set one explicitly, floored at the old 2048 — never silently below it.
+            // The old unconditional 2048 cut thoughts off mid-sentence on this model class.
+            val maxTokens = params.maxTokens
+                ?: runtime.outputTokenBudget().coerceAtLeast(DEFAULT_MAX_TOKENS)
+            Log.i(
+                "nazarick-perf",
+                "gen: max_tokens=$maxTokens source=${if (params.maxTokens != null) "assistant" else "context-plan"}",
+            )
             val tracker = ChatDeltaTracker()
             val accumulated = StringBuilder()
             val finished = AtomicBoolean(false)
@@ -357,6 +398,11 @@ class LlamaCppProvider(
             // closed, so a later delta with text but no reasoning can close it - mirrors the
             // old merge logic's "a delta with no reasoning part closes any open reasoning part".
             var reasoningOpen = false
+            // What actually reached the UI this step, so post-generation notices fire on the
+            // step's real shape (see postGenerationNotices). Mutated from the worker through
+            // this captured state exactly like reasoningOpen above.
+            var forwardedText = false
+            var forwardedToolCalls = 0
 
             val sendDelta: (ChatDelta, Boolean) -> Boolean = { delta, isFinal ->
                 val textDelta = textWatermark.advance(delta.textDelta, delta.textReset, isFinal)
@@ -373,10 +419,12 @@ class LlamaCppProvider(
                 }
                 if (textDelta.isNotEmpty()) {
                     sentAny = true
+                    forwardedText = true
                     allOk = trySend(StreamChunk.TextDelta(textId, textDelta)).isSuccess && allOk
                 }
                 delta.completedToolCalls.forEach { call ->
                     sentAny = true
+                    forwardedToolCalls += 1
                     allOk = trySend(StreamChunk.ToolCallStart(id = call.id, toolName = call.name)).isSuccess && allOk
                     allOk = trySend(StreamChunk.ToolCallDelta(id = call.id, inputDelta = call.arguments)).isSuccess && allOk
                 }
@@ -386,17 +434,38 @@ class LlamaCppProvider(
             val worker = launch(Dispatchers.IO) {
                 Log.i("nazarick-perf", "diag: worker launching native generate")
                 try {
-                    runtime.generate(appliedTemplateJson, params.maxTokens ?: DEFAULT_MAX_TOKENS) { piece ->
+                    val decoded = runtime.generate(
+                        appliedTemplateJson,
+                        maxTokens,
+                        ContextPlanner.tunables.toolGrammar,
+                    ) { piece ->
                         accumulated.append(piece)
                         val parsed = runtime.parse(accumulated.toString(), true, appliedTemplateJson)
                         sendDelta(tracker.consume(parsed, isPartial = true), false)
                     }
-                    Log.i("nazarick-perf", "diag: native generate returned chars=${accumulated.length}")
+                    Log.i("nazarick-perf", "diag: native generate returned chars=${accumulated.length} decoded=$decoded/$maxTokens")
 
                     // The final parse is authoritative: it flushes any tool call whose arguments
                     // were still settling when generation stopped (see ChatDeltaTracker.consume).
                     val finalParsed = runtime.parse(accumulated.toString(), false, appliedTemplateJson)
                     sendDelta(tracker.consume(finalParsed, isPartial = false), true)
+
+                    // Bug #5 F3/F4: the two ways a broken step used to look exactly like a
+                    // finished answer. Notices go out as text so the owner sees them and the
+                    // loop treats the step as answered — for a budget cut the user's next
+                    // "continue" resumes on top of the echoed partial thought (F1), and a
+                    // text-free budget cut is deliberately left notice-less so the loop's
+                    // own stall-nudge gets its chance to resume silently.
+                    for (notice in postGenerationNotices(
+                        decoded = decoded,
+                        maxTokens = maxTokens,
+                        textForwarded = forwardedText,
+                        toolCallsForwarded = forwardedToolCalls,
+                        rawOutput = accumulated,
+                    )) {
+                        Log.e("nazarick-engine", notice.trim())
+                        trySend(StreamChunk.TextDelta(textId, notice))
+                    }
                     trySend(StreamChunk.Finish())
                     Log.i("nazarick-perf", "diag: stream finish sent")
                 } finally {
