@@ -97,11 +97,19 @@ jobs:
         run: |
           # ubuntu-latest does not ship ccache, so ANDROID_USE_CCACHE alone did
           # nothing. Install it before CMake configures the native toolchain.
-          sudo apt-get install -y -qq ccache > /dev/null 2>&1 || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ccache
-          }
-          ccache --version | head -1
+          # ccache is a cache, not a dependency: on 2026-11-11 two runners in a
+          # row burned full builds on a security.ubuntu.com DNS storm inside
+          # this step, so a mirror failure now degrades to plain clang instead
+          # of red-running the branch. No env dance needed either way: the NDK
+          # routes through ccache only when the binary is on PATH, which is why
+          # ANDROID_USE_CCACHE:'1' alone did nothing.
+          if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+              echo "::warning::ccache unavailable (apt mirror failure) - building without it"
+            fi
+          fi
+          ccache --version | head -1 || echo "no ccache this run - building without"
 
       # Scoped to the Vulkan experiment: installs the SPIRV-Headers CMake package
       # that ggml-vulkan's find_package demands but the NDK sysroot hides. Other
@@ -448,10 +456,14 @@ jobs:
 
       - name: Install ccache
         run: |
-          sudo apt-get install -y -qq ccache > /dev/null 2>&1 || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ccache
-          }
+          # Degrade rather than red-run on a mirror failure - see job 1.
+          if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+              echo "::warning::ccache unavailable (apt mirror failure) - building without it"
+            fi
+          fi
+          ccache --version | head -1 || echo "no ccache this run (ANDROID_USE_CCACHE=0)"
 
       - name: Install SPIRV-Headers (Vulkan shader dependency)
         run: |
@@ -648,8 +660,14 @@ jobs:
 
       - name: Install ccache
         run: |
-          sudo apt-get install -y -qq ccache > /dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq ccache; }
-          ccache --version | head -1
+          # Degrade rather than red-run on a mirror failure - see job 1.
+          if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+              echo "::warning::ccache unavailable (apt mirror failure) - building without it"
+            fi
+          fi
+          ccache --version | head -1 || echo "no ccache this run (ANDROID_USE_CCACHE=0)"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
