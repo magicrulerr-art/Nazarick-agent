@@ -100,8 +100,8 @@ android {
             if (providers.gradleProperty("PLAY_BETA").isPresent) {
                 applicationId = "com.nazarick.agent.beta"
             }
-            versionCode = 18
-            versionName = "0.8"
+            versionCode = 19
+            versionName = "0.81"
             // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
             // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
             // only as the upstream fallback in main's strings.xml.
