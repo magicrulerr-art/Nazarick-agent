@@ -95,7 +95,7 @@ object ChatRequestMapper {
         var working = messages
 
         val groups = userAnchoredGroups(messages)
-        if (groups != null && groups.size > 1) {
+        if (groups != null) {
             // Qwen3.5 and friends accept the system block nowhere but messages[0], so
             // every rebuild puts the system messages back out front regardless of where
             // the caller happened to carry them.
