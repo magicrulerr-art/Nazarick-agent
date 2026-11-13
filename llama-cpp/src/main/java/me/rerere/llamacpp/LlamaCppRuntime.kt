@@ -216,7 +216,7 @@ class LlamaCppRuntime(
                         "while this model needs ${admit.requiredBytes / 1_000_000}MB " +
                         "(held: ${NativeAdmission.budget.outstanding()}). Unload the other local model first.",
                 )
-                MemoryBudget.Result.Granted -> Unit
+                is MemoryBudget.Result.Granted -> Unit
             }
 
             planned

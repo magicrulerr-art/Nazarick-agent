@@ -132,7 +132,7 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
                         "${admit.roomBytes / 1_000_000}MB of the local budget is unreserved (held: " +
                         "${NativeAdmission.budget.outstanding()}); semantic search stays off until room frees up.",
                 )
-                MemoryBudget.Result.Granted -> Unit
+                is MemoryBudget.Result.Granted -> Unit
             }
             native.createEmbedContext(model, nCtx, threads)
         } catch (t: Throwable) {
