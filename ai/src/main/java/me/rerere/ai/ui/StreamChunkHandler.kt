@@ -5,6 +5,7 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.core.LlmFinishReason
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.core.merge
 import me.rerere.ai.provider.Model
@@ -290,14 +291,24 @@ class StreamChunkHandler(private val model: Model? = null) {
             is StreamChunk.ImageEnd -> this.also { imagePartIndexes.remove(chunk.id) }
             is StreamChunk.Annotations -> copy(annotations = (annotations + chunk.annotations).distinct())
             is StreamChunk.Usage -> copy(usage = usage.merge(chunk.usage))
-            is StreamChunk.Finish -> copy(
-                finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
-            ).finishReasoning().also {
-                // Finish 同时结束尚未显式结束的 reasoning，并释放本次响应流的索引状态。
-                textPartIndexes.clear()
-                reasoningPartIndexes.clear()
-                imagePartIndexes.clear()
-                serverToolInputBuffers.clear()
+            is StreamChunk.Finish -> {
+                // AURA-021 (LC-1/LC-2): commit the typed reason into history WITH the
+                // message — the continuation branch reads it back after the step lands.
+                // Providers that only speak the wire string get normalized here; a
+                // retried stream must not stack reasons, hence distinct().
+                val effective = chunk.reason.takeUnless { it == LlmFinishReason.Unknown }
+                    ?: LlmFinishReason.normalize(chunk.finishReason)
+                copy(
+                    annotations = (annotations + UIMessageAnnotation.FinishReason(effective, chunk.finishReason)).distinct(),
+                    finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+                ).finishReasoning().also {
+                    // Finish additionally closes any reasoning left open and releases
+                    // this response stream's index state.
+                    textPartIndexes.clear()
+                    reasoningPartIndexes.clear()
+                    imagePartIndexes.clear()
+                    serverToolInputBuffers.clear()
+                }
             }
         }
     }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.core.classifyLlamaFinish
 import me.rerere.ai.provider.ImageGenerationParams
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.Provider
@@ -466,8 +467,20 @@ class LlamaCppProvider(
                         Log.e("nazarick-engine", notice.trim())
                         trySend(StreamChunk.TextDelta(textId, notice))
                     }
-                    trySend(StreamChunk.Finish())
-                    Log.i("nazarick-perf", "diag: stream finish sent")
+                    // AURA-021 (LC-1): classify at the source, where both numbers are
+                    // measured — the token count llama actually decoded vs the budget it
+                    // was given. decoded < max means the engine stopped on its own stop
+                    // word (a clean Stop, even when the visible text ends oddly);
+                    // decoded >= max means the cap cut the generation, and the loop must
+                    // treat the step as continueable (Length), never as a stall.
+                    val finishKind = classifyLlamaFinish(
+                        stopWordReached = decoded < maxTokens,
+                        decodedTokens = decoded,
+                        maxTokens = maxTokens,
+                        emittedToolCalls = forwardedToolCalls,
+                    )
+                    trySend(StreamChunk.Finish(reason = finishKind))
+                    Log.i("nazarick-perf", "diag: stream finish sent kind=$finishKind")
                 } finally {
                     finished.set(true)
                     close()

@@ -39,6 +39,8 @@ import me.rerere.ai.ui.ServerToolStatus
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
+import me.rerere.ai.core.LlmFinishReason
+import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.StreamChunkHandler
 import me.rerere.ai.ui.handleTextGenerationResult
@@ -350,6 +352,35 @@ internal const val STALL_NUDGE_INSTRUCTION =
         "If you already have the answer, write it for the user directly. " +
         "Do not stop after thinking again — this reply must contain a tool call or an answer."
 
+// AURA-021 (LC-3 + A1): a step cut by the response-token cap is NOT a stall — the
+// thought is real, the budget was not. The loop continues it with strictly more tokens
+// (nextEscalatedMaxTokens) and the reasoning already in history, budgeted by
+// MAX_CONTINUATIONS per user turn, separate from MAX_STALL_NUDGES because the two
+// faults have different remedies and must not starve each other.
+internal const val MAX_CONTINUATIONS = 2
+
+internal const val LENGTH_CONTINUATION_INSTRUCTION =
+    "Your previous answer hit the response token limit mid-generation. Continue exactly " +
+        "where you stopped: same train of thought, same language. Finish the answer, or " +
+        "emit the tool call you were preparing. Do not restart from the beginning."
+
+/**
+ * A1 escalation ladder: strictly greater than [previous]; from [baseline]
+ * (= assistant.maxTokens of the attempt being continued) when nothing was escalated
+ * yet. +50% with a 256 floor: small models need a visible jump, big ones must not
+ * request absurd contexts. Pure so the JVM test can pin the contract.
+ */
+internal fun nextEscalatedMaxTokens(previous: Int?, baseline: Int): Int =
+    previous?.let { it + maxOf(256, it / 2) } ?: (baseline + maxOf(256, baseline / 2))
+
+/** Default baseline when the assistant carries no maxTokens (matches provider defaults). */
+internal const val DEFAULT_CONTINUATION_BASELINE = 4096
+
+/** Typed finish reason recorded on a message, newest wins; null for pre-contract history. */
+internal fun lastFinishReason(msg: UIMessage?): LlmFinishReason? =
+    msg?.annotations?.filterIsInstance<UIMessageAnnotation.FinishReason>()?.lastOrNull()?.reason
+
+
 /**
  * True when the CURRENT step of [msg] carries no user-visible reply and no fresh tool
  * progress. A turn accumulates every step into ONE assistant message, so the parts list
@@ -579,6 +610,11 @@ class GenerationLoop(
         // completed turn: the chat went silent with no error. Retry budget for nudging those
         // steps back to life; see stalledWithoutReply + STALL_NUDGE_INSTRUCTION below.
         var stallNudgesUsed = 0
+    // AURA-021 (LC-3 + A1): typed-continuation state for THIS user turn (fresh per run,
+    // like stallNudgesUsed beside it — the escalation chain must not leak across turns).
+    var continuationsUsed = 0
+    var escalatedMaxTokens: Int? = null
+    var pendingLengthContinuation = false
         var pendingStallNudge = false
 
         for (stepIndex in 0 until maxSteps) {
@@ -691,6 +727,12 @@ class GenerationLoop(
                             add(STALL_NUDGE_INSTRUCTION)
                             pendingStallNudge = false
                         }
+                        // AURA-021 (LC-3): same request-only contract as the stall nudge —
+                        // the continuation instruction must never render or persist.
+                        if (pendingLengthContinuation) {
+                            add(LENGTH_CONTINUATION_INSTRUCTION)
+                            pendingLengthContinuation = false
+                        }
                     }
                     generateInternal(
                         assistant = assistant,
@@ -781,6 +823,17 @@ class GenerationLoop(
                                     messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
                                         finishedAt = Clock.System.now()
                                             .toLocalDateTime(TimeZone.currentSystemDefault())
+                                        // AURA-021 (LC-1): a user stop is its OWN typed
+                                        // ending — without the stamp the next session's
+                                        // trimming/continuation logic cannot tell a cut
+                                        // thought from a stopped one. Only stamp when the
+                                        // provider never said (pre-contract = Unknown):
+                                        // a real reason outranks the stop.
+                                        annotations = if (lastFinishReason(messages.lastOrNull()) == null) {
+                                            messages.last().annotations + UIMessageAnnotation.FinishReason(LlmFinishReason.Cancelled, raw = null)
+                                        } else {
+                                            messages.last().annotations
+                                        }
                                     )
                                 }
                                 emit(GenerationChunk.Messages(messages))
@@ -807,6 +860,48 @@ class GenerationLoop(
                     // with a request-only instruction (budget MAX_STALL_NUDGES per turn);
                     // old break behavior resumes when the budget is spent or the step
                     // produced real output.
+                    // AURA-021 (LC-3 + A1): a Length-cut step continues with more
+                    // budget and its reasoning in history — BEFORE the stall check, so a
+                    // truncation is never misfiled as a silent stop. Complete tool calls
+                    // that did stream still execute (this branch only sees steps with no
+                    // executable call). After MAX_CONTINUATIONS: honest visible failure
+                    // naming the budget tried and the cap — never an empty bubble.
+                    if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length &&
+                        continuationsUsed < MAX_CONTINUATIONS
+                    ) {
+                        continuationsUsed += 1
+                        val escalated = nextEscalatedMaxTokens(
+                            previous = escalatedMaxTokens,
+                            baseline = assistant.maxTokens ?: DEFAULT_CONTINUATION_BASELINE,
+                        )
+                        escalatedMaxTokens = escalated
+                        pendingLengthContinuation = true
+                        Log.w(
+                            TAG,
+                            "length-cut step: continuation $continuationsUsed/$MAX_CONTINUATIONS at max_tokens=$escalated " +
+                                "(reasoning kept in history)",
+                        )
+                        continue
+                    }
+                    if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length) {
+                        val capNote = "\n[stopped: this answer kept hitting the response token limit " +
+                            "(last budget: max_tokens=${escalatedMaxTokens ?: assistant.maxTokens}, " +
+                            "cap $MAX_CONTINUATIONS continuations). Raise the assistant's token limit " +
+                            "or lower the thinking budget to get more.]"
+                        val last = messages.last()
+                        val lastTextIdx = last.parts.indexOfLast { it is UIMessagePart.Text && it.text.isNotBlank() }
+                        val newParts = if (lastTextIdx >= 0) {
+                            last.parts.mapIndexed { i, part ->
+                                if (i == lastTextIdx) (part as UIMessagePart.Text).copy(text = part.text + capNote) else part
+                            }
+                        } else {
+                            last.parts + UIMessagePart.Text(text = capNote)
+                        }
+                        messages = messages.slice(0 until messages.lastIndex) + last.copy(parts = newParts)
+                        emit(GenerationChunk.Messages(messages))
+                        Log.w(TAG, "length-cut cap exhausted after $MAX_CONTINUATIONS continuations, honest failure surfaced")
+                        break
+                    }
                     if (stalledWithoutReply(messages.lastOrNull()) && stallNudgesUsed < MAX_STALL_NUDGES) {
                         stallNudgesUsed += 1
                         pendingStallNudge = true
@@ -1448,7 +1543,9 @@ class GenerationLoop(
             model = model,
             temperature = assistant.temperature,
             topP = assistant.topP,
-            maxTokens = assistant.maxTokens,
+            // AURA-021 (A1): while a continuation chain is active this attempt runs at
+            // the strictly-escalated budget; assistant.maxTokens returns next user turn.
+            maxTokens = escalatedMaxTokens ?: assistant.maxTokens,
             // Auto-retry is forced on: retrying a transient network failure is strictly better
             // than surfacing it as a dead error, so the switch was removed and the flag ignored.
             maxStreamRetries = settings.responseStreamMaxRetries,
