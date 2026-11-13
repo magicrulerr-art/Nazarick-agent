@@ -390,8 +390,11 @@ class EmbeddingService(
         )
     }
 
-    private suspend fun loadLlamaCpp(request: Request): ActiveModel {
-        val info = embedder.load(request.file!!.absolutePath)
+    private suspend fun loadLlamaCpp(request: Request): ActiveModel? {
+        // AURA-021 (LC-7): the engine declines instead of throwing when the global
+        // native budget cannot seat it (a live chat model outranks an index build,
+        // always); null here means "stay degraded", see [declineReason].
+        val info = embedder.loadOrDecline(request.file!!.absolutePath) ?: return null
         val entry = entryFor(request.fileName)
         return ActiveModel(
             fileName = request.fileName,
@@ -534,6 +537,13 @@ class EmbeddingService(
      * that makes a background feature feel expensive.
      */
     suspend fun release() = forwardLock.withLock { onWorker { lock.withLock { releaseHoldingLock() } } }
+
+    /**
+     * Why embedding is currently refused by the memory budget, or null when nothing was
+     * declined (AURA-021, LC-7's "visible degradation" hook). The engine owns the text;
+     * this only forwards it to surfaces like the embedding settings page.
+     */
+    val declineReason: String? get() = embedder.declineReason
 
     /**
      * The body of [release]; the caller must already hold [lock].

@@ -121,9 +121,23 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
                 )
                 MemoryGuard.Decision.Ok -> Unit
             }
+
+            // AURA-021 (LC-6/LC-7): same ledger as the chat runtime. Embedding is the
+            // DECLINING side by design — it never competes with a live chat turn for the
+            // kill: when the budget cannot seat it, the caller degrades (semantic search
+            // off) rather than crashing both.
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.EMBEDDING_ID, weightsBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw NativeAdmission.DeclinedByBudgetException(
+                    "The embedding model needs ${admit.requiredBytes / 1_000_000}MB but only " +
+                        "${admit.roomBytes / 1_000_000}MB of the local budget is unreserved (held: " +
+                        "${NativeAdmission.budget.outstanding()}); semantic search stays off until room frees up.",
+                )
+                MemoryBudget.Result.Granted -> Unit
+            }
             native.createEmbedContext(model, nCtx, threads)
         } catch (t: Throwable) {
             native.freeModel(model)
+            NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
             throw t
         }
 
@@ -144,6 +158,35 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
         info
     }
 
+    /**
+     * Why the last load was declined ("semantic search off — low memory" and friends),
+     * null while nothing is declined. Read by the settings surface; set by [loadOrDecline].
+     */
+    @Volatile
+    var declineReason: String? = null
+        private set
+
+    /**
+     * [load] with the two budget refusals folded into a null result (AURA-021, LC-7:
+     * the embedding engine DECLINES, it does not throw at its callers). Any other
+     * failure — corrupt file, native error — still propagates: those are not memory
+     * decisions and must stay visible. A successful load clears [declineReason].
+     */
+    suspend fun loadOrDecline(
+        path: String,
+        availableRamBytes: Long = Long.MAX_VALUE,
+        nCtx: Int = DEFAULT_CONTEXT_TOKENS,
+        threads: Int = defaultThreads(),
+    ): LlamaCppEmbedInfo? = try {
+        load(path, availableRamBytes, nCtx, threads).also { declineReason = null }
+    } catch (t: ModelTooLargeException) {
+        declineReason = t.message
+        null
+    } catch (t: NativeAdmission.DeclinedByBudgetException) {
+        declineReason = t.message
+        null
+    }
+
     /** Embeds one text, returning its raw pooled vector (see [embedNormalized]). */
     suspend fun embed(text: String): FloatArray = mutex.withLock {
         val engine = engineHandle
@@ -162,6 +205,7 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
     suspend fun unload() = mutex.withLock { unloadLocked() }
 
     private fun unloadLocked() {
+        NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
         if (engineHandle != 0L) {
             native.freeEmbedContext(engineHandle)
             engineHandle = 0

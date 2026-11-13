@@ -203,9 +203,26 @@ class LlamaCppRuntime(
                 MemoryGuard.Decision.Ok -> Unit
             }
 
+            // AURA-021 (LC-6/LC-7): the solo guard above only knows this model and this
+            // device's raw free bytes. The global ledger adds what the OTHER native holder
+            // (the embedding engine) has already reserved, so a chat reload against a phone
+            // whose budget is half-spent declines with numbers instead of letting the OS
+            // kill both models mid-load. Reserved here, released wherever the handles go
+            // free — see unloadLocked.
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.CHAT_ID, info.weightsBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw ModelTooLargeException(
+                    "The local model budget cannot seat this model right now: only " +
+                        "${admit.roomBytes / 1_000_000}MB is unreserved of the ${availableRamBytes / 1_000_000}MB free " +
+                        "while this model needs ${admit.requiredBytes / 1_000_000}MB " +
+                        "(held: ${NativeAdmission.budget.outstanding()}). Unload the other local model first.",
+                )
+                MemoryBudget.Result.Granted -> Unit
+            }
+
             planned
         } catch (t: Throwable) {
             native.freeModel(model)
+            NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
             throw t
         }
 
@@ -232,6 +249,7 @@ class LlamaCppRuntime(
             )
         } catch (t: Throwable) {
             native.freeModel(model)
+            NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
             throw t
         }
 
@@ -246,6 +264,10 @@ class LlamaCppRuntime(
     suspend fun unload() = mutex.withLock { unloadLocked() }
 
     private fun unloadLocked() {
+        // The reservation covers the loaded model only; whatever path frees the handles
+        // frees the bytes behind it. (load() also arrives here first, so a reload swaps
+        // its own reservation cleanly through tryReserve's replace semantics.)
+        NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
         synchronized(cancelFreeLock) {
             if (contextHandle != 0L) {
                 native.freeContext(contextHandle)
