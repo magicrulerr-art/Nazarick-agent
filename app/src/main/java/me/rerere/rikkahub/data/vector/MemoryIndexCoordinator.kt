@@ -254,7 +254,7 @@ class MemoryIndexCoordinator(
         val listing = readDocuments(workspaceId, dir)
         val chunks = ArrayList<Triple<String, Int, String>>()
         for (doc in listing?.docs.orEmpty()) {
-            if (doc.text.length > MAX_DOC_CHARS) continue
+            if (doc.text.length > MemoryVectorSource.MAX_DOC_CHARS) continue
             for (chunk in TextChunker.chunk(doc.text, KEYWORD_CHUNK_SPEC)) {
                 chunks += Triple(doc.name, chunk.index, chunk.text)
             }

@@ -98,7 +98,7 @@ object KeywordRecall {
                     (tf + K1 * (1.0 - B + B * document.size / avgLength))
                 score += idf * tfNorm
             }
-            if (score > 0.0) scored += ScoredChunk(candidate.item, score.toFloat())
+            if (score > 0.0) scored += ScoredChunk(item = candidate.first, score = score.toFloat())
         }
 
         // sortByDescending is stable, so equal scores keep corpus order: a re-run of the same
