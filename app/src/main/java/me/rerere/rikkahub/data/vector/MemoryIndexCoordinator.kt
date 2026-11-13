@@ -228,11 +228,68 @@ class MemoryIndexCoordinator(
         )
     }
 
+    /**
+     * `memory_search` with the AURA-021 degradation path: semantic search first, and when there
+     * is nothing to embed with (no model installed, or [me.rerere.llamacpp.MemoryBudget] declined
+     * it because the chat model holds the GPU memory) rank the notes by keyword instead.
+     *
+     * The old behaviour answered "unavailable", which threw away the one thing that costs no
+     * model: the text of the notes themselves. Ranking is BM25 over freshly-chunked documents -
+     * the same chunking the vector index uses, so a hit names a file and a chunk a later semantic
+     * search would also find - and the outcome carries [KeywordRecall.MARKER] because a BM25
+     * score and a cosine similarity are not the same yardstick.
+     *
+     * Falls back to the plain "unavailable" outcome only when the keyword pass has nothing to
+     * read: an unreadable or empty directory, where there is genuinely no corpus.
+     */
+    suspend fun searchWithKeywordFallback(
+        dir: String,
+        query: String,
+        limit: Int,
+        workspaceId: String,
+    ): ColdMemorySearchOutcome {
+        val semantic = search(dir, query, limit)
+        if (semantic.available) return semantic
+
+        val listing = readDocuments(workspaceId, dir)
+        val chunks = ArrayList<Triple<String, Int, String>>()
+        for (doc in listing?.docs.orEmpty()) {
+            if (doc.text.length > MAX_DOC_CHARS) continue
+            for (chunk in TextChunker.chunk(doc.text, KEYWORD_CHUNK_SPEC)) {
+                chunks += Triple(doc.name, chunk.index, chunk.text)
+            }
+        }
+        if (chunks.isEmpty()) {
+            return semantic.copy(note = semantic.note ?: "no readable Markdown documents to fall back on")
+        }
+
+        val ranked = KeywordRecall.rank(
+            query = query,
+            candidates = chunks.mapIndexed { index, chunk -> index to chunk.third },
+            limit = limit,
+        )
+        return ColdMemorySearchOutcome(
+            available = true,
+            hits = ranked.hits.map { scored ->
+                val (file, chunkIndex, text) = chunks[scored.item]
+                ColdMemorySearchHit(file = file, chunkIndex = chunkIndex, score = scored.score, text = text)
+            },
+            indexedDocuments = listing?.docs?.size ?: 0,
+            recall = KeywordRecall.MARKER,
+        )
+    }
+
     companion object {
         /**
          * Five minutes. Long enough that flicking between conversations is free, short enough
          * that a note written now is searchable in the same sitting.
          */
         const val DEFAULT_MIN_INTERVAL_MS = 5 * 60 * 1000L
+
+        /**
+         * Keyword recall chunks notes exactly like the vector index does, so a fallback hit names
+         * the same (file, chunkIndex) a semantic search would later find.
+         */
+        private val KEYWORD_CHUNK_SPEC = ChunkSpec(mode = ChunkingMode.MARKDOWN)
     }
 }

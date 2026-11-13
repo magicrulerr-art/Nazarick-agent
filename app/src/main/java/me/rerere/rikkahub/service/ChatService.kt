@@ -2916,15 +2916,24 @@ class ChatService(
         ).toMutableList()
 
         // Semantic search joins the two exact-name tools. Registration does not depend on a model
-        // being installed: the tool reports that state itself, which is how the model finds out to
-        // fall back to memory_index rather than to stop looking for its notes.
+        // being installed: with no model - or one the memory budget declined, which is the normal
+        // state while a chat model holds the GPU - the search degrades to keyword ranking over the
+        // same notes and labels the hits, instead of answering "unavailable". AINA-002 on z7: the
+        // tool was present, armed, and useless for exactly this reason.
         tools += buildMemorySearchTool(
             dirLabel = if (dir.isEmpty()) {
                 ColdMemoryRules.WORKSPACE_PREFIX
             } else {
                 "${ColdMemoryRules.WORKSPACE_PREFIX}/$dir"
             },
-            search = { query, limit -> memoryIndex.search(dir, query, limit) },
+            search = { query, limit ->
+                memoryIndex.searchWithKeywordFallback(
+                    dir = dir,
+                    query = query,
+                    limit = limit,
+                    workspaceId = workspaceId,
+                )
+            },
         )
         return tools
     }
