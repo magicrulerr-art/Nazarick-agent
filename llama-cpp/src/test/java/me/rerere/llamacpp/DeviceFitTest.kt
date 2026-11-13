@@ -16,7 +16,7 @@ class DeviceFitTest {
 
     private val small = LlamaCppCatalogEntry("S", "r/s", "s.gguf", 600_000_000L, 4)
     private val mid = LlamaCppCatalogEntry("M", "r/m", "m.gguf", 2_600_000_000L, 8)
-    private val big = LlamaCppCatalogEntry("B", "r/b", "b.gguf", 5_700_000_000L, 12)
+    private val big = LlamaCppCatalogEntry("B", "r/b", "b.gguf", 5_700_000_000L, 8)
 
     @Test
     fun `fits respects both size ceiling and minMemGb floor`() {
@@ -34,8 +34,10 @@ class DeviceFitTest {
     }
 
     @Test
-    fun `picks spread slots on a big device`() {
-        val p = DeviceFit.picks(listOf(small, mid, big), 16.0)
+    fun `picks spread slots when the biggest model exceeds half of RAM`() {
+        // 10 GB device: big fits under the 0.75 ceiling (7.5) yet exceeds the half-RAM
+        // balanced line (5), so all three slots land on different models.
+        val p = DeviceFit.picks(listOf(small, mid, big), 10.0)
         assertEquals("S", p.fast?.displayName)
         assertEquals("M", p.balanced?.displayName)
         assertEquals("B", p.best?.displayName)
