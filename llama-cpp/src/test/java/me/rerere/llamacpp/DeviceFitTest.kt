@@ -21,7 +21,11 @@ class DeviceFitTest {
     @Test
     fun `fits respects both size ceiling and minMemGb floor`() {
         assertTrue(DeviceFit.fits(mid, 8.0))
-        assertFalse(DeviceFit.fits(big, 8.0))
+        // Size ceiling bites at 6 GB: the 5.7 GB file needs 7.6 GB of device at 0.75.
+        assertFalse(DeviceFit.fits(big, 6.0))
+        // minMemGb floor bites at 7.9 even though the size alone would clear the ceiling.
+        assertFalse(DeviceFit.fits(big, 7.9))
+        assertTrue(DeviceFit.fits(big, 8.0))
         assertFalse(DeviceFit.fits(mid, 0.0))
     }
 
