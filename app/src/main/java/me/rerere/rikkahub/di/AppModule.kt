@@ -294,7 +294,16 @@ val appModule = module {
     // Phase 22A: Local-LLM on-device providers
     single { me.rerere.locallm.LocalRuntimePreferences(get()) }
     single { me.rerere.locallm.litert.LiteRtRuntime(get()) }
-    single { me.rerere.llamacpp.LlamaCppRuntime() }
+    single {
+        // AURA-020: engine knobs set in Settings persist in a tiny prefs file; the runtime
+        // re-reads the spec at every model load, so changes land at the next load with no
+        // process kill. The debug property still overrides this for bench loops.
+        val enginePrefs = get<android.content.Context>()
+            .getSharedPreferences("llama_engine", android.content.Context.MODE_PRIVATE)
+        me.rerere.llamacpp.LlamaCppRuntime(
+            userSpecProvider = { enginePrefs.getString("spec", null) },
+        )
+    }
 
     single {
         ChatToolFactory(

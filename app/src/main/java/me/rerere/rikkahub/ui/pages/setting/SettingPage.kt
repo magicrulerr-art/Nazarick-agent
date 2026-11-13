@@ -478,12 +478,6 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text(stringResource(R.string.setting_page_about)) },
                     )
                     item(
-                        onClick = { navController.navigate(Screen.SettingSponsor) },
-                        leadingContent = { Icon(HugeIcons.InLove, null) },
-                        supportingContent = { Text(stringResource(R.string.setting_page_sponsor_desc)) },
-                        headlineContent = { Text(stringResource(R.string.setting_page_sponsor)) },
-                    )
-                    item(
                         onClick = {
                             val docUrl = if (java.util.Locale.getDefault().language == "zh") {
                                 "https://docs.rikka-ai.com/zh/introduction"

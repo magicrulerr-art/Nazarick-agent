@@ -28,6 +28,9 @@ interface LlamaCppNative {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        /** AURA-020: Flash Attention at context creation. llama.cpp requires true for
+         *  quantised cache types; the GPU-offload path forces false. */
+        flashAttn: Boolean,
     ): Long
 
     fun freeContext(handle: Long)
@@ -76,8 +79,9 @@ object RealLlamaCppNative : LlamaCppNative {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        flashAttn: Boolean,
     ) = LlamaCppJni.nativeCreateContext(
-        modelHandle, nCtx, nBatch, nUBatch, cacheTypeK, cacheTypeV, nThreads,
+        modelHandle, nCtx, nBatch, nUBatch, cacheTypeK, cacheTypeV, nThreads, flashAttn,
     )
 
     override fun freeContext(handle: Long) = LlamaCppJni.nativeFreeContext(handle)
@@ -120,7 +124,14 @@ class ModelTooLargeException(message: String) : RuntimeException(message)
  * that exact pairing is what nativeCancelGeneration's contract forbids - so it and the
  * context-free step share the narrower [cancelFreeLock] instead.
  */
-class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
+class LlamaCppRuntime(
+    private val native: LlamaCppNative = RealLlamaCppNative,
+    /** Persisted settings-UI knob spec (AURA-020), re-read on every load so a settings change
+     *  takes effect at the next model load without killing the process. The app module injects
+     *  it from SharedPreferences; the null default keeps the JVM tests and every other caller
+     *  exactly as before. */
+    private val userSpecProvider: () -> String? = { null },
+) {
 
     @Volatile
     private var modelHandle: Long = 0
@@ -159,7 +170,7 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
         // setprop → force-stop → rerun, and an echo line here is what makes a bench run
         // reproducible from its own logcat. Installed before planning because every value
         // below is read by ContextPlanner.
-        ContextPlanner.tunables = EngineTunables.fromSystemProperties()
+        ContextPlanner.tunables = EngineTunables.fromSystemProperties(userSpecProvider())
 
         val model = native.loadModel(path, gpuLayers)
         val plan = try {
@@ -210,9 +221,14 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
             // footprint doubles against the estimate — accepted: correctness before the
             // knob's throughput experiment, and the knob ships at 0).
             val cache = cacheTypeForOffload(plan.cacheTypeK, gpuLayers)
+            // Flash Attention (AURA-020): the guard above used to get "FA off during
+            // offload" for free because nothing ever flipped FA. The shipped default is now
+            // ON - free speed and half the KV memory on CPU, which is every real load - so
+            // the OpenCL exception has to be stated at the same boundary as the kv clamp.
+            val flashAttn = if (gpuLayers != 0) false else plan.flashAttn
             native.createContext(
                 model, plan.nCtx, plan.nBatch, plan.nUBatch,
-                cache.id, cache.id, threads,
+                cache.id, cache.id, threads, flashAttn,
             )
         } catch (t: Throwable) {
             native.freeModel(model)

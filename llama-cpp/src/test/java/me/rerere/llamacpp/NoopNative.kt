@@ -17,6 +17,7 @@ class NoopNative : LlamaCppNative {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        flashAttn: Boolean,
     ): Long = 2L
 
     override fun freeContext(handle: Long) {}

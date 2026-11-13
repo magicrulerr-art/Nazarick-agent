@@ -99,7 +99,7 @@ object ContextPlanner {
         // costs a little quality, while a context too small to hold the tools costs the
         // agent its capabilities outright.
         for (ctx in rungs.reversed()) {
-            for (cache in listOf(KvCacheType.F16, KvCacheType.Q8_0)) {
+            for (cache in cacheRungs()) {
                 val bytes = estimateBytes(info, ctx, cache)
                 if (bytes <= budget) {
                     val request = replanForRequest(ctx, tools, systemPromptBytes)
@@ -107,6 +107,7 @@ object ContextPlanner {
                         nCtx = ctx,
                         cacheTypeK = cache,
                         cacheTypeV = cache,
+                        flashAttn = flashAttnFor(cache),
                         nBatch = N_BATCH,
                         nUBatch = N_UBATCH,
                         droppedToolNames = request.droppedToolNames,
@@ -125,6 +126,7 @@ object ContextPlanner {
             nCtx = smallest,
             cacheTypeK = KvCacheType.Q8_0,
             cacheTypeV = KvCacheType.Q8_0,
+            flashAttn = flashAttnFor(KvCacheType.Q8_0),
             nBatch = N_BATCH,
             nUBatch = N_UBATCH,
             droppedToolNames = request.droppedToolNames,
@@ -132,6 +134,27 @@ object ContextPlanner {
             reservedInputBytes = request.reservedInputBytes,
         )
     }
+
+    /**
+     * KV cache rungs to try, honouring the exposed preference (AURA-020, OGAM's Cache Type
+     * selector): -1 auto walks F16 -> Q8_0 -> Q4_0 (a bigger context still beats a more
+     * precise cache; q4_0 exists because 16K on a 12 GB phone is q4-or-nothing), 0/1/2 pin
+     * a single rung. A pinned rung that cannot fit falls through to the existing
+     * nothing-fit path and MemoryGuard explains the refusal - the honest behaviour for
+     * an explicit user choice.
+     */
+    private fun cacheRungs(): List<KvCacheType> = when (tunables.kvPreference) {
+        0 -> listOf(KvCacheType.F16)
+        1 -> listOf(KvCacheType.Q8_0)
+        2 -> listOf(KvCacheType.Q4_0)
+        else -> listOf(KvCacheType.F16, KvCacheType.Q8_0, KvCacheType.Q4_0)
+    }
+
+    /** Flash Attention policy (AURA-020): quantised KV is always ON - llama.cpp requires
+     *  it - and F16 follows the user/bench flag, defaulting ON. The GPU-offload exception
+     *  is applied at the offload boundary in [LlamaCppRuntime]. */
+    internal fun flashAttnFor(cache: KvCacheType): Boolean =
+        cache != KvCacheType.F16 || (tunables.flashAttention ?: true)
 
     /**
      * Weights plus KV cache plus compute buffer, with headroom. Sliding-window models

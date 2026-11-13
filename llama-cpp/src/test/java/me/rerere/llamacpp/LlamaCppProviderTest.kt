@@ -27,7 +27,7 @@ class LlamaCppProviderTest {
         """.trimIndent()
         override fun createContext(
             modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
-            cacheTypeK: String, cacheTypeV: String, nThreads: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
         ) = 2L
         override fun freeContext(handle: Long) {}
         override fun cancelGeneration(handle: Long) {}
@@ -66,7 +66,7 @@ class LlamaCppProviderTest {
         """.trimIndent()
         override fun createContext(
             modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
-            cacheTypeK: String, cacheTypeV: String, nThreads: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
         ) = 2L
         override fun freeContext(handle: Long) {}
         override fun cancelGeneration(handle: Long) {}
@@ -152,7 +152,7 @@ class LlamaCppProviderTest {
         """.trimIndent()
         override fun createContext(
             modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
-            cacheTypeK: String, cacheTypeV: String, nThreads: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
         ) = 2L
         override fun freeContext(handle: Long) {}
         override fun cancelGeneration(handle: Long) {}
@@ -312,7 +312,7 @@ class LlamaCppProviderTest {
         }
         override fun createContext(
             modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
-            cacheTypeK: String, cacheTypeV: String, nThreads: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
         ) = 2L
         override fun freeContext(handle: Long) {}
         override fun cancelGeneration(handle: Long) {}
@@ -425,7 +425,7 @@ class LlamaCppProviderTest {
         """.trimIndent()
         override fun createContext(
             modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
-            cacheTypeK: String, cacheTypeV: String, nThreads: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
         ) = 2L
         override fun freeContext(handle: Long) {}
         override fun cancelGeneration(handle: Long) {}

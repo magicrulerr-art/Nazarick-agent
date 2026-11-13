@@ -1463,6 +1463,70 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
         }
     }
 
+    // AURA-020 engine knobs (OGAM parity): persisted as an EngineTunables spec string that
+    // LlamaCppRuntime re-reads at every model load; the debug property still wins on top.
+    val engineCtx = LocalContext.current
+    val enginePrefs = remember {
+        engineCtx.getSharedPreferences("llama_engine", android.content.Context.MODE_PRIVATE)
+    }
+    var faOn by remember { mutableStateOf(enginePrefs.getBoolean("flash_attn", true)) }
+    var kvId by remember { mutableStateOf(enginePrefs.getInt("kv", -1)) }
+    var ctxForceK by remember { mutableStateOf(enginePrefs.getInt("ctx_force", 0)) }
+    fun writeEngineSpec() {
+        enginePrefs.edit()
+            .putString(
+                "spec",
+                "flash_attn=${if (faOn) "true" else "false"};kv=$kvId;ctx_force=${ctxForceK * 1024}",
+            )
+            .apply()
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+        Text(
+            stringResource(R.string.local_llm_llamacpp_engine_title),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            stringResource(R.string.local_llm_llamacpp_engine_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.local_llm_llamacpp_flash_attn),
+                modifier = Modifier.weight(1f),
+            )
+            Switch(checked = faOn, onCheckedChange = { faOn = it; writeEngineSpec() })
+        }
+        Text(stringResource(R.string.local_llm_llamacpp_kv_title), style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(-1 to "Auto", 0 to "f16", 1 to "q8_0", 2 to "q4_0").forEach { (id, label) ->
+                Button(
+                    onClick = { kvId = id; writeEngineSpec() },
+                    colors = if (kvId == id) ButtonDefaults.buttonColors()
+                    else ButtonDefaults.outlinedButtonColors(),
+                ) { Text(label) }
+            }
+        }
+        Text(stringResource(R.string.local_llm_llamacpp_ctx_title), style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(0, 4, 8, 16, 32).forEach { k ->
+                Button(
+                    onClick = { ctxForceK = k; writeEngineSpec() },
+                    colors = if (ctxForceK == k) ButtonDefaults.buttonColors()
+                    else ButtonDefaults.outlinedButtonColors(),
+                ) { Text(if (k == 0) "Auto" else "${k}K") }
+            }
+        }
+        Text(
+            stringResource(R.string.local_llm_llamacpp_ctx_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+
     // Curated GGUF picker (LlamaCppCatalog.ENTRIES). Per-entry Install button calls the
     // same startManualDownload path the LiteRT catalog uses below, so the install flow
     // (and the progress/error reporting at the bottom of this tile) is identical.
@@ -1476,6 +1540,31 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // AURA-020 hardware survey: rank the catalog for the RAM on this device.
+        val deviceRamGb = remember {
+            val am = engineCtx.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+                as android.app.ActivityManager
+            val mi = android.app.ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            mi.totalMem / 1_000_000_000.0
+        }
+        val fitPicks = remember { me.rerere.llamacpp.DeviceFit.picks(LlamaCppCatalog.ENTRIES, deviceRamGb) }
+        if (!fitPicks.isEmpty) {
+            Text(
+                stringResource(R.string.local_llm_llamacpp_fit_title, deviceRamGb.toInt()),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                stringResource(
+                    R.string.local_llm_llamacpp_fit_line,
+                    fitPicks.fast!!.displayName,
+                    fitPicks.balanced!!.displayName,
+                    fitPicks.best!!.displayName,
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         LlamaCppCatalog.ENTRIES.forEach { entry ->
             LlamaCppCatalogEntryCard(
                 entry = entry,

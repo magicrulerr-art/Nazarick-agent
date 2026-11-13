@@ -80,6 +80,7 @@ object LlamaCppJni {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        flashAttn: Boolean,
     ): Long
 
     /** Releases a handle from [nativeCreateContext]. Safe to call with 0. */
