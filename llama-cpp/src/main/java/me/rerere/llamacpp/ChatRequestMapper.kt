@@ -1,6 +1,7 @@
 package me.rerere.llamacpp
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.Tool
@@ -55,6 +56,147 @@ object ChatRequestMapper {
         return root.toString()
     }
 
+    /** Left where an evicted tool payload used to sit. The envelope survives (see
+     *  [evictToBudget]); only the body is replaced, so a template can still tell the
+     *  model "this call ran and its output is no longer in context". */
+    const val EVICTED_TOOL_BODY = "\u2026(tool output evicted to fit context)"
+
+    /** Head kept when superseded reasoning is compacted rather than dropped whole. */
+    private const val REASONING_DIGEST_BYTES = 240
+
+    private const val REASONING_DIGEST_MARKER = "\u2026(earlier thinking compacted)"
+
+    /**
+     * Contract LC-5 (AURA-021 v1.0): pay for an oversized prompt with the bytes that
+     * caused it, in this order, BEFORE whole turns disappear:
+     *
+     *  1. never evictable - the newest user message and everything after it, which is
+     *     the live step: its reasoning is what the model is thinking right now, and its
+     *     tool outputs are the evidence it has to answer with. Evicting a live step's
+     *     reasoning is the Bug #5 stall (a request byte-identical to the one that just
+     *     produced it, and greedy sampling replays the same dead step forever).
+     *  2. oldest tool-result BODIES first - body only, never the envelope: every
+     *     tool_call must keep its matching tool message or the chat template rejects
+     *     the request outright.
+     *  3. superseded reasoning LAST - compacted to its head plus a marker, then dropped
+     *     entirely if the prompt still does not fit.
+     *
+     * The cheap tier of summarize-then-drop: this costs neither a turn nor a model call.
+     * The LLM-written summary is ContextCompactionPlanner's job (runtime module) and
+     * stays there; a request that still does not fit afterwards goes to
+     * [trimToBudget], which drops whole user-anchored groups.
+     *
+     * Returns the input untouched when it already fits, and always returns a list that
+     * renders to the same or fewer bytes than it was given.
+     */
+    fun evictToBudget(messages: List<UIMessage>, budgetBytes: Int): List<UIMessage> {
+        if (messages.isEmpty()) return messages
+        var working = messages
+        if (sizeOfJson(working) <= budgetBytes) return working
+
+        // Everything from the newest user message onward is the live step: untouchable.
+        val liveStart = messages.indexOfLast { it.role == MessageRole.USER }
+            .let { if (it < 0) messages.size else it }
+
+        // (2) oldest tool bodies first
+        var index = 0
+        while (index < liveStart && sizeOfJson(working) > budgetBytes) {
+            val evicted = evictToolBody(working[index])
+            if (evicted != null) working = working.toMutableList().also { it[index] = evicted }
+            index++
+        }
+
+        // (3a) superseded reasoning -> digest head
+        index = 0
+        while (index < liveStart && sizeOfJson(working) > budgetBytes) {
+            val compacted = compactReasoning(working[index], REASONING_DIGEST_BYTES)
+            if (compacted != null) working = working.toMutableList().also { it[index] = compacted }
+            index++
+        }
+
+        // (3b) ...then drop it entirely
+        index = 0
+        while (index < liveStart && sizeOfJson(working) > budgetBytes) {
+            val dropped = compactReasoning(working[index], 0)
+            if (dropped != null) working = working.toMutableList().also { it[index] = dropped }
+            index++
+        }
+        return working
+    }
+
+    /**
+     * Replaces one message's executed tool payloads with [EVICTED_TOOL_BODY]; null when
+     * the message carries no body worth evicting (nothing to do, or already evicted).
+     * The call envelope (toolCallId, toolName, arguments) is kept on purpose: a
+     * tool_call without its result message is a malformed request, not a smaller one.
+     */
+    @Suppress("DEPRECATION")
+    private fun evictToolBody(message: UIMessage): UIMessage? {
+        if (message.role == MessageRole.TOOL) {
+            val texts = message.parts.filterIsInstance<UIMessagePart.Text>()
+            if (texts.isEmpty() || texts.all { it.text == EVICTED_TOOL_BODY }) return null
+            return message.copy(
+                parts = message.parts.map { part ->
+                    if (part is UIMessagePart.Text) part.copy(text = EVICTED_TOOL_BODY) else part
+                },
+            )
+        }
+        var changed = false
+        val parts = message.parts.map { part ->
+            when {
+                part is UIMessagePart.Tool && part.output.isNotEmpty() -> {
+                    changed = true
+                    part.copy(output = listOf(UIMessagePart.Text(EVICTED_TOOL_BODY)))
+                }
+                part is UIMessagePart.ServerTool && part.output != null -> {
+                    changed = true
+                    part.copy(output = JsonPrimitive(EVICTED_TOOL_BODY))
+                }
+                part is UIMessagePart.ToolResult -> {
+                    changed = true
+                    part.copy(content = JsonPrimitive(EVICTED_TOOL_BODY))
+                }
+                else -> part
+            }
+        }
+        return if (changed) message.copy(parts = parts) else null
+    }
+
+    /**
+     * Compacts one message's thinking to a [digestBytes] head (0 = drop it). Null when the
+     * message has no reasoning or already sits in the requested shape. Only ever called on
+     * superseded turns: the live step is excluded by [evictToBudget].
+     */
+    private fun compactReasoning(message: UIMessage, digestBytes: Int): UIMessage? {
+        if (message.parts.none { it is UIMessagePart.Reasoning }) return null
+        var changed = false
+        val parts = message.parts.map { part ->
+            if (part !is UIMessagePart.Reasoning) return@map part
+            val kept = digestText(part.reasoning, digestBytes)
+            if (kept == part.reasoning) return@map part
+            changed = true
+            part.copy(reasoning = kept)
+        }
+        return if (changed) message.copy(parts = parts) else null
+    }
+
+    /** Head of [text] at [limit] UTF-8 bytes plus a marker; whole text when it already fits,
+     *  empty string when [limit] is 0. Cuts on a codepoint boundary so the seam is never
+     *  mojibake. */
+    private fun digestText(text: String, limit: Int): String {
+        if (limit <= 0) return ""
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= limit) return text
+        var cut = limit
+        while (cut > 0 && (bytes[cut].toInt() and 0xC0) == 0x80) cut--
+        return bytes.decodeToString(0, cut) + REASONING_DIGEST_MARKER
+    }
+
+    /** Rendered request bytes for [messages] with no tools - the same yardstick
+     *  [trimToBudget] uses, so eviction and group-dropping can never disagree about size. */
+    private fun sizeOfJson(messages: List<UIMessage>): Int =
+        messagesArray(messages).toString().toByteArray(Charsets.UTF_8).size
+
     /**
      * Drops the oldest turn groups until the rendered conversation fits [budgetBytes],
      * and, once no history is left to drop, shortens the system prompt to what remains.
@@ -89,10 +231,11 @@ object ChatRequestMapper {
     fun trimToBudget(messages: List<UIMessage>, budgetBytes: Int): List<UIMessage> {
         if (messages.isEmpty()) return messages
 
-        fun sizeOf(list: List<UIMessage>): Int =
-            messagesArray(list).toString().toByteArray().size
+        fun sizeOf(list: List<UIMessage>): Int = sizeOfJson(list)
 
-        var working = messages
+        // LC-5 first: stale tool payloads and superseded thinking give up their
+        // bytes before any remembered turn is deleted outright.
+        var working = evictToBudget(messages, budgetBytes)
 
         val groups = userAnchoredGroups(messages)
         if (groups != null) {
