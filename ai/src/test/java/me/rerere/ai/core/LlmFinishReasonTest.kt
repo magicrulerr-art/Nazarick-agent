@@ -21,8 +21,11 @@ class LlmFinishReasonTest {
         // engine end-of-text variants -> clean stop (LC-1 explicit requirement)
         assertEquals(LlmFinishReason.Stop, LlmFinishReason.normalize("eos"))
         assertEquals(LlmFinishReason.Stop, LlmFinishReason.normalize("end_of_text"))
-        assertEquals(LlmFinishReason.Stop, LlmFinishReason.normalize("
-"))
+        assertEquals(LlmFinishReason.Stop, LlmFinishReason.normalize("im_end"))
+        assertEquals(LlmFinishReason.Stop, LlmFinishReason.normalize("<|EndOfText|>"))
+        // a whitespace-only payload says nothing: Unknown, never a false clean stop
+        assertEquals(LlmFinishReason.Unknown, LlmFinishReason.normalize("\n"))
+        assertEquals(LlmFinishReason.Unknown, LlmFinishReason.normalize("   "))
         assertEquals(LlmFinishReason.Length, LlmFinishReason.normalize("length"))
         assertEquals(LlmFinishReason.Length, LlmFinishReason.normalize("max_tokens"))
         assertEquals(LlmFinishReason.ToolCalls, LlmFinishReason.normalize("tool_calls"))

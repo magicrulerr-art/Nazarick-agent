@@ -453,6 +453,11 @@ class StreamTraceReplayTest {
                         put("title", annotation.title)
                         put("url", annotation.url)
                     })
+                    // LC-1 stamps every finished message with a typed finish reason. The
+                    // trace snapshot records the DECODED WIRE shape and its goldens were
+                    // recorded pre-contract, so the stamp stays out of the snapshot; the
+                    // typed value itself is proven by LlmFinishReasonTest.
+                    is UIMessageAnnotation.FinishReason -> {}
                 }
             }
         }
