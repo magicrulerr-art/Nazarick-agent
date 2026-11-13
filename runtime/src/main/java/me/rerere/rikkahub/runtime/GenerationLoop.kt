@@ -736,6 +736,7 @@ class GenerationLoop(
                     }
                     generateInternal(
                         assistant = assistant,
+                        escalatedMaxTokens = escalatedMaxTokens,
                         systemInjection = systemInjection,
                         settings = settings,
                         systemAddendum = systemAddendum,
@@ -822,7 +823,7 @@ class GenerationLoop(
                                 if (messages.isNotEmpty()) {
                                     messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
                                         finishedAt = Clock.System.now()
-                                            .toLocalDateTime(TimeZone.currentSystemDefault())
+                                            .toLocalDateTime(TimeZone.currentSystemDefault()),
                                         // AURA-021 (LC-1): a user stop is its OWN typed
                                         // ending — without the stamp the next session's
                                         // trimming/continuation logic cannot tell a cut
@@ -1446,6 +1447,12 @@ class GenerationLoop(
         facts: List<LoopFact> = emptyList(),
         factsOmitted: Int = 0,
         stream: Boolean,
+        /**
+         * AURA-021 (A1): when a continuation chain is active, run THIS attempt at the
+         * strictly-escalated budget instead of the assistant's configured maxTokens.
+         * Owned by the caller (GenerationLoop.run) because the chain is per user turn.
+         */
+        escalatedMaxTokens: Int? = null,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         conversationId: Uuid? = null,
