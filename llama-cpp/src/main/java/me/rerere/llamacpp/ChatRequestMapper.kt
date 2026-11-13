@@ -56,12 +56,26 @@ object ChatRequestMapper {
     }
 
     /**
-     * Drops the oldest turns until the rendered conversation fits [budgetBytes], and, once
-     * no history is left to drop, shortens the system prompt to what remains.
+     * Drops the oldest turn groups until the rendered conversation fits [budgetBytes],
+     * and, once no history is left to drop, shortens the system prompt to what remains.
      *
-     * The newest non-system turn is always kept, even if it alone exceeds the budget:
-     * sending a conversation with no user turn breaks the chat template, and an
-     * overflowing prompt that produces a readable error beats that.
+     * Turns are dropped in whole user-anchored groups: each user message keeps the
+     * assistant/tool turns that answer it in the same group, and a group leaves only as
+     * a unit. The old turn-by-turn drop removed the oldest non-system message first,
+     * which on a post-tool step is the user's own question, orphaning
+     * [assistant+tool_calls, tool] with no query behind them. Qwen3.5's chat template
+     * scans for a user-role message that is not tool feedback (role:"tool" is invisible
+     * to its scan) and raises "No user query found in messages." when it finds none -
+     * measured on z8 2026-11-12, where a 32 KB persona and 16 tool schemas left ~40 KB
+     * of input budget and one 10-result web_search spent it, so the follow-up step
+     * after every search died at template line 79 while LFM3 sailed past the same
+     * query-less request silently. A conversation with no user-role message at all
+     * keeps the old turn-by-turn behaviour; so does one that begins with orphaned
+     * non-user turns, which no grouping rule can honestly anchor.
+     *
+     * The newest group is always kept, even if it alone exceeds the budget: sending a
+     * conversation with no user turn breaks the chat template, and an overflowing
+     * prompt that produces a readable error beats that.
      *
      * System messages are trimmed rather than exempt. They were exempt on the theory that
      * the planner already capped them, but nothing caps them: an assistant with the bundled
@@ -79,16 +93,34 @@ object ChatRequestMapper {
             messagesArray(list).toString().toByteArray().size
 
         var working = messages
-        // Stop once only one non-system turn remains: that survivor is always the
-        // newest one, since each iteration only ever removes the oldest, and it must
-        // never be dropped even if it alone pushes the request over budget.
-        var droppableCount = working.count { it.role != MessageRole.SYSTEM }
-        while (droppableCount > 1 && sizeOf(working) > budgetBytes) {
-            // Drop the oldest non-system turn.
-            val index = working.indexOfFirst { it.role != MessageRole.SYSTEM }
-            if (index < 0) break
-            working = working.toMutableList().apply { removeAt(index) }
-            droppableCount--
+
+        val groups = userAnchoredGroups(messages)
+        if (groups != null) {
+            // Qwen3.5 and friends accept the system block nowhere but messages[0], so
+            // every rebuild puts the system messages back out front regardless of where
+            // the caller happened to carry them.
+            val systemMessages = messages.filter { it.role == MessageRole.SYSTEM }
+            fun rebuild(kept: List<List<UIMessage>>): List<UIMessage> = systemMessages + kept.flatten()
+
+            // Drop whole groups, oldest first. Stop at the newest group: it carries the
+            // live user query and may not vanish even when it alone exceeds the budget.
+            val kept = groups.toMutableList()
+            while (kept.size > 1 && sizeOf(rebuild(kept)) > budgetBytes) {
+                kept.removeAt(0)
+            }
+            working = rebuild(kept)
+        } else {
+            // No user-role anchor exists (or the conversation opens on orphaned turns):
+            // stop once only one non-system turn remains, the pre-grouping behaviour,
+            // kept honest for the few requests it can actually describe.
+            var droppableCount = working.count { it.role != MessageRole.SYSTEM }
+            while (droppableCount > 1 && sizeOf(working) > budgetBytes) {
+                // Drop the oldest non-system turn.
+                val index = working.indexOfFirst { it.role != MessageRole.SYSTEM }
+                if (index < 0) break
+                working = working.toMutableList().apply { removeAt(index) }
+                droppableCount--
+            }
         }
 
         // History is down to its last turn and the request still does not fit, so the
@@ -102,6 +134,24 @@ object ChatRequestMapper {
             }
         }
         return working
+    }
+
+    /**
+     * Splits the non-system messages into groups anchored on each user message: every
+     * user turn owns the assistant and tool messages that follow it, until the next
+     * user message. Returns null when no honest anchor exists — either no user-role
+     * message at all, or orphaned non-user turns before the first one — leaving those
+     * conversations to the caller's legacy turn-by-turn drop.
+     */
+    private fun userAnchoredGroups(messages: List<UIMessage>): List<List<UIMessage>>? {
+        val conversation = messages.filter { it.role != MessageRole.SYSTEM }
+        if (conversation.isEmpty() || conversation.first().role != MessageRole.USER) return null
+        val groups = mutableListOf<MutableList<UIMessage>>()
+        for (message in conversation) {
+            if (message.role == MessageRole.USER) groups.add(mutableListOf())
+            groups.last().add(message)
+        }
+        return groups
     }
 
     /** Truncate [message]'s text parts to a combined [allowanceBytes], keeping the head. */
