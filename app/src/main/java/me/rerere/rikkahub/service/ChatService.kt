@@ -2575,6 +2575,14 @@ class ChatService(
                         assistant.allowedToolNames,
                     )
                 },
+                // LC-2 third path (US-002): the loop's own memory tools are built inside
+                // :runtime, below this gate. Route them through the same guard so the ceiling
+                // covers every tool the model is offered, not only the ones assembled here.
+                filterInjectedTools = {
+                    me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+                        it, assistant.allowedToolNames,
+                    )
+                },
                 continuationFromPartial = continuationFromPartial,
             ).onCompletion { completionCause ->
                 // 取消 Live Update 通知

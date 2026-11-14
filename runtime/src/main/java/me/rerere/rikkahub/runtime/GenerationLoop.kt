@@ -546,6 +546,12 @@ class GenerationLoop(
         // `tool_open` is callable on its very next step, in the same turn. Default: empty, so
         // every caller that does not pass it sends exactly the surface it sent before.
         extraToolsProvider: suspend () -> List<Tool> = { emptyList() },
+        // LC-2 (US-002, Demiurge REJECT 2026-11-14) - the loop builds its OWN tools when
+        // assistant.enableMemory is set, BELOW the ChatService gate, so those tools never meet
+        // ToolSurfaceGuard.enforce and a rostered guardian gets offered memory tools its row
+        // never granted. :app passes the same guard it applies everywhere else; the default is
+        // passthrough, so every caller that does not pass it is byte-identical.
+        filterInjectedTools: (List<Tool>) -> List<Tool> = { it },
         // Read live from the runtime holder, not captured once: the default expression is
         // evaluated per call, so a settings change takes effect on the next turn.
         maxSteps: Int = ToolRuntimeLimits.maxToolSteps,
@@ -672,7 +678,7 @@ class GenerationLoop(
                         onDelete = { id ->
                             memoryRepo.deleteMemory(id)
                         }
-                    ).let(this::addAll)
+                    ).let { addAll(filterInjectedTools(it)) }
                 }
                 addAll(tools)
                 // Re-read every step (see extraToolsProvider): this is how a tool the model
