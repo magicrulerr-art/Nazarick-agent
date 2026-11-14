@@ -172,7 +172,35 @@ class LlamaCppRuntime(
         // below is read by ContextPlanner.
         ContextPlanner.tunables = EngineTunables.fromSystemProperties(userSpecProvider())
 
-        val model = native.loadModel(path, gpuLayers)
+        // US-004 (Cocytus HOLD 2026-11-14, finding 2): the ledger used to be consulted
+        // AFTER loadModel — but loadModel is exactly where llama.cpp maps the weights, so
+        // a decline arrived once the bytes were already committed and the OS was free to
+        // kill the process on the way in. Reserve first against the file size (the same
+        // measure the LiteRT path uses); the post-load block below re-charges the exact
+        // weights_bytes via tryReserve's replace semantics. A file that reports 0 bytes is
+        // unreadable metadata: skip the pre-charge and let the weightsBytes<=0 refusal
+        // downstream judge it, exactly as before.
+        val preChargeBytes = java.io.File(path).length()
+        if (preChargeBytes > 0L) {
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.CHAT_ID, preChargeBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw ModelTooLargeException(
+                    "The local model budget cannot seat this model right now: only " +
+                        "${admit.roomBytes / 1_000_000}MB is unreserved of the ${availableRamBytes / 1_000_000}MB free " +
+                        "while this model needs ${admit.requiredBytes / 1_000_000}MB " +
+                        "(held: ${NativeAdmission.budget.outstanding()}). Unload the other local model first.",
+                )
+                is MemoryBudget.Result.Granted -> Unit
+            }
+        }
+        val model = try {
+            native.loadModel(path, gpuLayers)
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            // The pre-charge was taken before the native open; a load that never returned
+            // gives it back (same defect class 0d2eb1191 closed on the embed side).
+            NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
+            throw t
+        }
         val plan = try {
             val info = parseModelInfo(native.modelInfo(model))
             val planned = ContextPlanner.plan(info, availableRamBytes, tools, systemPromptBytes)
