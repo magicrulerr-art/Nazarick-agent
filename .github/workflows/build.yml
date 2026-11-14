@@ -603,6 +603,12 @@ jobs:
           ./gradlew :app:testNazarickReleaseUnitTest --stacktrace
           --tests "me.rerere.rikkahub.data.guardians.GuardianSeedTest"
           --tests "me.rerere.rikkahub.data.datastore.SettingsPersistenceCoverageTest"
+          # AURA-021 LC-2: the roster ceiling is a behaviour change to every outgoing tool list, so
+          # it is asserted here rather than left compiling in a job that never executes :app tests.
+          # Three classes, seconds of runtime; without this the guard is unverified in CI.
+          --tests "me.rerere.rikkahub.data.guardians.GuardianToolRosterTest"
+          --tests "me.rerere.rikkahub.data.guardians.GuardianRosterAssemblyTest"
+          --tests "me.rerere.rikkahub.data.ai.ToolSurfaceGuardTest"
 
       - name: Upload test report
         if: always()
