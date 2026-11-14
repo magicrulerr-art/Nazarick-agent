@@ -610,6 +610,7 @@ jobs:
           --tests "me.rerere.rikkahub.data.datastore.SettingsPersistenceCoverageTest"
           --tests "me.rerere.rikkahub.data.guardians.GuardianToolRosterTest"
           --tests "me.rerere.rikkahub.data.guardians.GuardianRosterAssemblyTest"
+          --tests "me.rerere.rikkahub.data.guardians.RosterSpecBindingTest"
           --tests "me.rerere.rikkahub.data.ai.ToolSurfaceGuardTest"
           --tests "me.rerere.rikkahub.data.db.DatabaseBackupTest"
           --tests "me.rerere.rikkahub.data.vector.KeywordRecallTest"
