@@ -63,6 +63,7 @@ class MemoryBudgetTest {
     private class TinyEmbedNative : LlamaCppEmbedNative {
         var freedModels = 0
         var createCalls = 0
+        var throwingEmbedInfo = false
         override fun loadModel(path: String) = 11L
         override fun freeModel(handle: Long) { freedModels++ }
         override fun modelInfo(handle: Long) =
@@ -73,8 +74,10 @@ class MemoryBudgetTest {
             return 22L
         }
         override fun freeEmbedContext(handle: Long) {}
-        override fun embedModelInfo(handle: Long) =
-            """{"dim":384,"pooling":"mean","has_encoder":false,"has_decoder":true,"n_ctx_train":8192}"""
+        override fun embedModelInfo(handle: Long): String {
+            if (throwingEmbedInfo) throw IllegalStateException("unreadable embed info")
+            return """{"dim":384,"pooling":"mean","has_encoder":false,"has_decoder":true,"n_ctx_train":8192}"""
+        }
         override fun embed(handle: Long, text: String) = FloatArray(384)
     }
 
@@ -109,5 +112,20 @@ class MemoryBudgetTest {
         embedder.loadOrDecline("/m/e.gguf", availableRamBytes = Long.MAX_VALUE)
         embedder.unload()
         assertTrue(budget.outstanding().isEmpty())
+    }
+
+    @Test
+    fun `a failed load after reservation frees native memory and the ledger too`() = runBlocking {
+        // Cocytus US-004 HOLD 2026-11-14: the decodeEmbedInfo failure window released the
+        // context and the model but not the ledger, so EMBEDDING_ID kept paying for bytes the
+        // process had already returned, and the NEXT embed load declined against memory that
+        // no longer existed. The reservation must leave with the memory it charged for.
+        val native = TinyEmbedNative().apply { throwingEmbedInfo = true }
+        val embedder = LlamaCppEmbedder(native)
+        val thrown = runCatching { embedder.loadOrDecline("/m/e.gguf", availableRamBytes = Long.MAX_VALUE) }
+        assertTrue("the failure must propagate: " + thrown.exceptionOrNull(), thrown.isFailure)
+        assertTrue("the original cause must survive", thrown.exceptionOrNull() is IllegalStateException)
+        assertEquals(1, native.freedModels)
+        assertTrue("a failed load must leave no ledger hold", budget.outstanding().isEmpty())
     }
 }

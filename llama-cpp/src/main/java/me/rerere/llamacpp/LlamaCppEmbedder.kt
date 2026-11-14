@@ -149,6 +149,10 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
         } catch (t: Throwable) {
             native.freeEmbedContext(engine)
             native.freeModel(model)
+            // The reservation above charged EMBEDDING_ID for these bytes; freeing the
+            // native side without releasing the ledger left the budget paying for memory
+            // already returned until the next load/unload (Cocytus US-004 HOLD 2026-11-14).
+            NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
             throw t
         }
 
