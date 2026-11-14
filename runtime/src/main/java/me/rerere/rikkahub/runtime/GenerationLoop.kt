@@ -359,6 +359,20 @@ internal const val STALL_NUDGE_INSTRUCTION =
 // faults have different remedies and must not starve each other.
 internal const val MAX_CONTINUATIONS = 2
 
+/**
+ * The honest terminal note (loop contract LC-3): when an answer keeps hitting the response-token
+ * cap, the user is told the budget that was tried and the cap that stopped it, instead of being
+ * handed half a sentence and a shrug.
+ *
+ * Extracted from the loop body for one reason: the test that claims to prove this message exists
+ * must read the SAME string the UI shows. A hand-copied mirror in a test passes long after the
+ * production wording has drifted, which is exactly the false green this program was called for.
+ */
+internal fun continuationCapNote(lastBudget: Int, cap: Int = MAX_CONTINUATIONS): String =
+    "\n[stopped: this answer kept hitting the response token limit " +
+        "(last budget: max_tokens=$lastBudget, cap $cap continuations). Raise the assistant's token limit " +
+        "or lower the thinking budget to get more.]"
+
 internal const val LENGTH_CONTINUATION_INSTRUCTION =
     "Your previous answer hit the response token limit mid-generation. Continue exactly " +
         "where you stopped: same train of thought, same language. Finish the answer, or " +
@@ -885,10 +899,7 @@ class GenerationLoop(
                         continue
                     }
                     if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length) {
-                        val capNote = "\n[stopped: this answer kept hitting the response token limit " +
-                            "(last budget: max_tokens=${escalatedMaxTokens ?: assistant.maxTokens}, " +
-                            "cap $MAX_CONTINUATIONS continuations). Raise the assistant's token limit " +
-                            "or lower the thinking budget to get more.]"
+                        val capNote = continuationCapNote(escalatedMaxTokens ?: assistant.maxTokens)
                         val last = messages.last()
                         val lastTextIdx = last.parts.indexOfLast { it is UIMessagePart.Text && it.text.isNotBlank() }
                         val newParts = if (lastTextIdx >= 0) {

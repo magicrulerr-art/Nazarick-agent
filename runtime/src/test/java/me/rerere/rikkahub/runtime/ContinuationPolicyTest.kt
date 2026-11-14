@@ -75,13 +75,15 @@ class ContinuationPolicyTest {
 
     @Test
     fun `terminal note names budget and cap (honest failure contract)`() {
-        // LC-3: the user must see the budget tried and the cap. GenerationLoop builds
-        // the note inline; mirror the REQUIRED substrings so CI fails if they vanish.
-        val budget = 3072
-        val note = "[stopped: this answer kept hitting the response token limit " +
-            "(last budget: max_tokens=$budget, cap $MAX_CONTINUATIONS continuations)."
-        assertTrue(note.contains("max_tokens=$budget"))
-        assertTrue(note.contains("cap 2"))
+        // LC-3. This calls production [continuationCapNote] rather than re-typing the message:
+        // a hand-copied mirror asserts nothing about what the user actually sees, and a
+        // rewording in GenerationLoop would have kept this test green forever.
+        val note = continuationCapNote(lastBudget = 3072)
+        assertTrue(note, note.contains("max_tokens=3072"))
+        assertTrue(note, note.contains("cap $MAX_CONTINUATIONS continuations"))
+        // The note lands inside an assistant message, so it must stay prose: no braces, no
+        // template placeholders left unrendered.
+        assertTrue(note, !note.contains("{") && !note.contains("}"))
     }
 
     @Test

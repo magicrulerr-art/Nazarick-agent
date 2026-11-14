@@ -2461,7 +2461,11 @@ class ChatService(
                         // pinned or opened and reaches the rest through `tool_search`.
                         // What the user's own words retrieved. Without vectors this yields
                         // nothing, and the turn carries exactly what was pinned or opened.
-                        val ranked = if (lastUserText.isNotBlank()) {
+                        // LC-2 (US-008 criterion b) - a rostered assistant gets NO dynamic ranking.
+                        // Its surface is a reviewed constant, so retrieving tools by meaning can only
+                        // smuggle back rows the roster never approved, and it costs an embedding query
+                        // on every turn to do so. null roster = the ranked catalogue exactly as before.
+                        val ranked = if (assistant.allowedToolNames == null && lastUserText.isNotBlank()) {
                             toolVectors.ranking(lastUserText, catalog)
                         } else {
                             emptyList()

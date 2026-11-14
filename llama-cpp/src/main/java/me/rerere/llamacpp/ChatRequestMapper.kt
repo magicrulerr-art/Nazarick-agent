@@ -237,12 +237,18 @@ object ChatRequestMapper {
         // bytes before any remembered turn is deleted outright.
         var working = evictToBudget(messages, budgetBytes)
 
-        val groups = userAnchoredGroups(messages)
+        // LC-5, and the defect this line used to hide: group what eviction LEFT, not what it was
+        // given. Grouping the ORIGINAL messages and rebuilding from those groups wrote `working`
+        // back to the un-evicted turns, so every request carrying a user anchor — that is, every
+        // chat request — silently undid the digested tool payloads and summarised thinking, then
+        // paid for the overshoot by dropping whole remembered turns. That is the exact AURA-013
+        // cost the eviction order exists to avoid, arriving by a different road.
+        val groups = userAnchoredGroups(working)
         if (groups != null) {
             // Qwen3.5 and friends accept the system block nowhere but messages[0], so
             // every rebuild puts the system messages back out front regardless of where
             // the caller happened to carry them.
-            val systemMessages = messages.filter { it.role == MessageRole.SYSTEM }
+            val systemMessages = working.filter { it.role == MessageRole.SYSTEM }
             fun rebuild(kept: List<List<UIMessage>>): List<UIMessage> = systemMessages + kept.flatten()
 
             // Drop whole groups, oldest first. Stop at the newest group: it carries the

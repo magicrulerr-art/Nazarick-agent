@@ -197,4 +197,42 @@ class ContextEvictionTest {
         assertTrue("an evicted body carries the marker, not an empty string", bodies.isNotEmpty())
         assertFalse("no zero-length tool payload reaches the template", bodies.any { it.isEmpty() })
     }
+
+    /**
+     * LC-5 end-to-end, and the only test that catches eviction being UNDONE. Measuring
+     * [ChatRequestMapper.evictToBudget] alone cannot see it: the coarse path re-grouped the input
+     * and rebuilt from it, so the digested bytes were written back to full size and the budget was
+     * paid with a remembered turn instead. The budget below is chosen so that eviction ALONE fits —
+     * therefore nothing may be dropped, and the digest must still be visible in the request.
+     */
+    @Test
+    fun `group dropping does not undo eviction`() {
+        val messages = listOf(
+            UIMessage.system("persona"),
+            UIMessage.user("first question"),
+            UIMessage.assistant("first answer"),
+            toolTurn("old-call", "stale search payload ".repeat(400)),
+            UIMessage.user("second question"),
+            toolTurn("live-call", "fresh search payload ".repeat(20)),
+        )
+        val fullyEvicted = ChatRequestMapper.evictToBudget(messages, budgetBytes = 1)
+        val budget = renderedBytes(fullyEvicted) + 1
+        assertTrue(
+            "the fixture must actually overflow: ${renderedBytes(messages)} > $budget",
+            renderedBytes(messages) > budget,
+        )
+
+        val trimmed = ChatRequestMapper.trimToBudget(messages, budget)
+
+        assertEquals("eviction alone fits, so no turn may be dropped", messages.size, trimmed.size)
+        assertTrue("the request must fit the budget", renderedBytes(trimmed) <= budget)
+        assertTrue(
+            "the stale payload must be digested rather than carried whole",
+            trimmed.any { toolBodies(it).isNotEmpty() && toolBodies(it).all { b -> b == ChatRequestMapper.EVICTED_TOOL_BODY } },
+        )
+        assertTrue(
+            "the oldest remembered question must still be there",
+            trimmed.any { textOf(it) == "first question" },
+        )
+    }
 }
