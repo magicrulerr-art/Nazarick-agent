@@ -23,6 +23,7 @@ class MemoryBudgetTest {
     fun resetLedger() {
         budget.release(NativeAdmission.CHAT_ID)
         budget.release(NativeAdmission.EMBEDDING_ID)
+        budget.release(NativeAdmission.LITERT_ID)
     }
 
     @Test
@@ -56,6 +57,25 @@ class MemoryBudgetTest {
         val r = budget.tryReserve(NativeAdmission.CHAT_ID, 8_000_000_000L, 12_000_000_000L)
         assertTrue("reload at a smaller size must be granted", r is MemoryBudget.Result.Granted)
         assertEquals(8_000_000_000L, budget.outstanding()[NativeAdmission.CHAT_ID])
+    }
+
+    @Test
+    fun `a litert hold is a native hold that releases with the engine`() {
+        // US-004 AC-3: the `.litertlm` engine used to enter the process with zero ledger
+        // contact, so litert + chat each passed their own guard and the OS killed both
+        // (the z7 double-booking). EmbeddingService.loadLitert now charges this id before
+        // litert.load and releases it with the engine; the ledger treats it like any other
+        // holder, which is what this pins.
+        val r = budget.tryReserve(NativeAdmission.LITERT_ID, 9_000_000_000L, 12_000_000_000L)
+        assertTrue("expected Granted, got $r", r is MemoryBudget.Result.Granted)
+        val chat = budget.tryReserve(NativeAdmission.CHAT_ID, 1_100_000_000L, 12_000_000_000L)
+        assertTrue("chat must decline against litert's bytes, got $chat", chat is MemoryBudget.Result.Declined)
+        assertEquals(setOf(NativeAdmission.LITERT_ID), budget.outstanding().keys)
+        budget.release(NativeAdmission.LITERT_ID)
+        assertTrue(
+            "releasing the engine must free its room for the next holder",
+            budget.tryReserve(NativeAdmission.CHAT_ID, 3_100_000_000L, 12_000_000_000L) is MemoryBudget.Result.Granted,
+        )
     }
 
     // ---- embedder-side decline path (LC-7: degrade, never crash the chat) ----
