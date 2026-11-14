@@ -2540,10 +2540,25 @@ class ChatService(
                     // P3-04 — attached here, not above, so the listing it renders can already see
                     // what the catalogue decided. Empty in the ordinary case of no skills.
                     addAll(skillTools)
-                }.let { me.rerere.rikkahub.subagent.SubAgentSurface.apply(conversationId, it) },
+                }.let { me.rerere.rikkahub.subagent.SubAgentSurface.apply(conversationId, it) }
+                    // LC-2 - the last gate before the prompt. Everything above is the harness's
+                    // own assembly: local groups, external search, workspace and cold-memory tools,
+                    // skill tools, MCP, the catalogue's static half. Only here does the list exist
+                    // in full, so only here can a ceiling be sure of itself. Null for every
+                    // assistant without a roster, which is the byte-identical old behaviour.
+                    .let { me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(it, assistant.allowedToolNames) },
                 // The dynamic half of the catalogue — null on any path that built no catalogue,
                 // in which case the loop gets exactly the snapshot above.
-                extraToolsProvider = { liveCatalogueTools?.invoke() ?: emptyList() },
+                // LC-2 again: the catalogue's dynamic half arrives DURING the loop, when the model
+                // opens a tool. Without the same filter a `tool_open` mid-generation would widen a
+                // rostered surface on step 3 of a five-step turn, which is precisely the drift the
+                // ceiling exists to stop.
+                extraToolsProvider = {
+                    me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+                        liveCatalogueTools?.invoke() ?: emptyList(),
+                        assistant.allowedToolNames,
+                    )
+                },
                 continuationFromPartial = continuationFromPartial,
             ).onCompletion { completionCause ->
                 // 取消 Live Update 通知

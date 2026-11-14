@@ -64,8 +64,12 @@ object GuardianSeed {
      *  installs through [withPackDescriptions] to fill the blank v1 rows.
      *  v3 = v0.8 curation: every guardian carries an explicit tool allowlist (owner ruling
      *  2026-11-10); the bump routes existing rows through [withPackToolGrants], which fills
-     *  the grant only where the user never set one. */
-    const val SEED_VERSION: Int = 3
+     *  the grant only where the user never set one.
+     *  v4 = AURA-021 v1.0 contract LC-2: the Nine carry the ratified ID-level roster
+     *  (GuardianToolRoster) over the group grants, and the bump routes existing rows through
+     *  [withPackToolIds]. Group grants alone were not a ceiling - skill and MCP tools are
+     *  appended after the resolver and never consult one. */
+    const val SEED_VERSION: Int = 4
 
     /**
      * Pack tool ids -> this build's [LocalToolOption]s, unknown ids dropped.
@@ -116,6 +120,9 @@ object GuardianSeed {
             // entries in there are inert by LocalToolGates' redefinition.
             localTools = allow ?: listOf(LocalToolOption.TimeInfo),
             toolAllowlist = allow,
+            // LC-2: the id-level ceiling, the same table on every device. Group grants decide
+            // which local groups exist; this decides which tools leave the harness.
+            allowedToolNames = GuardianToolRoster.toolIdsFor(spec.name),
         )
     }
 
@@ -148,6 +155,21 @@ object GuardianSeed {
             if (a.toolAllowlist != null) return@map a
             val allow = packToolOptions(spec.tools) ?: return@map a
             a.copy(toolAllowlist = allow, localTools = allow)
+        }
+    }
+
+    /**
+     * Puts [Assistant.allowedToolNames] on the pack's own rows (LC-2 upgrade path, companion of
+     * the SEED_VERSION 4 bump). Pack rows are overwritten rather than filled-if-null because the
+     * roster is a reviewed constant, not a default the pack guessed at; a guardian the user renamed
+     * out of the pack stops being a floor guard and keeps whatever surface they chose.
+     */
+    fun withPackToolIds(current: List<Assistant>, pack: List<GuardianSeedSpec>): List<Assistant> {
+        val byId = pack.associateBy { assistantId(it) }
+        return current.map { a ->
+            val spec = byId[a.id] ?: return@map a
+            val ids = GuardianToolRoster.toolIdsFor(spec.name) ?: return@map a
+            if (a.allowedToolNames == ids) a else a.copy(allowedToolNames = ids)
         }
     }
 
@@ -207,8 +229,11 @@ suspend fun seedGuardianAssistants(
     store.update { settings ->
         if (settings.guardiansSeedVersion >= version) settings
         else settings.copy(
-            assistants = GuardianSeed.withPackToolGrants(
-                GuardianSeed.withPackDescriptions(settings.assistants, pack),
+            assistants = GuardianSeed.withPackToolIds(
+                GuardianSeed.withPackToolGrants(
+                    GuardianSeed.withPackDescriptions(settings.assistants, pack),
+                    pack,
+                ),
                 pack,
             ) + plan.inserts,
             guardiansSeedVersion = version,

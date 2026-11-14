@@ -209,6 +209,18 @@ data class Assistant(
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     @Serializable(with = LenientLocalToolListSerializer::class)
     val toolAllowlist: List<LocalToolOption>? = null,
+    // AURA-021 v1.0 (contract LC-2) - the ID-level ceiling, enforced where the finished List<Tool>
+    // leaves the harness (ToolSurfaceGuard.enforce). [toolAllowlist] above narrows the local face by
+    // GROUP, and ToolSurfaceResolver is indeed the only place that face is built; but ChatService
+    // stacks skill, MCP and workspace tools on top of it at two inline sites that never pass through
+    // that resolver. A ceiling that stops at the local face is not a ceiling: one installed skill
+    // re-widens it. This field speaks exact Tool.name values, so it binds the whole outgoing list.
+    // null (every assistant until a roster is written for it) = no ceiling, byte-identical to today;
+    // [] = no tools at all; a list = exactly those ids, a ceiling and never a preference.
+    // Assistants live in the settings JSON blob, not a Room table, so this costs no migration.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val allowedToolNames: List<String>? = null,
 )
 
 @Serializable
