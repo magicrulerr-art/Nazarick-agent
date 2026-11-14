@@ -139,9 +139,14 @@ android {
 
     signingConfigs {
         create("release") {
-            // Only consulted when hasReleaseSigning is true, so the !! below is a
-            // statement about that check, not a hope.
-            val storePath = releaseSigning.getValue("storeFile")!!
+            // `create` runs this block at configuration time whether or not signing is
+            // configured, so `!!` here made a machine with neither NAZARICK_* nor
+            // local.properties fail the WHOLE build with a bare NullPointerException at
+            // app/build.gradle.kts:144 - not even `:llama-cpp:testDebugUnitTest` could be
+            // configured. The documented contract above is that signing is never a hard
+            // requirement to build, so absent means absent: leave this config empty and let
+            // the release variant come out unsigned.
+            val storePath = releaseSigning.getValue("storeFile") ?: return@create
             storeFile = file(storePath)
             storePassword = releaseSigning.getValue("storePassword")
             keyAlias = releaseSigning.getValue("keyAlias")

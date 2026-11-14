@@ -16,6 +16,12 @@ import java.util.concurrent.atomic.AtomicReference
 
 class LlamaCppProviderTest {
 
+    private companion object {
+        /** The exact text llama.cpp's PEG path throws (jni_util.h throwf <- nativeParseChat). */
+        const val PARSER_REFUSAL =
+            "The model produced output that does not match the expected peg-native format"
+    }
+
     /** Streams a fixed reply so the provider's chunking is testable without native code. */
     private class ScriptedNative(private val pieces: List<String>) : LlamaCppNative {
         override fun loadModel(path: String) = 1L
@@ -95,6 +101,109 @@ class LlamaCppProviderTest {
 
         val combined = chunks.filterIsInstance<StreamChunk.TextDelta>().joinToString("") { it.text }
         assertTrue("expected the full reply, got '$combined'", combined.contains("Hello world"))
+
+        runtime.unload()
+    }
+
+    /**
+     * Reproduces the z7 Spark fault: llama.cpp's PEG parser THROWS on partial parses whose text
+     * does not yet match the template grammar, then succeeds once the message is whole. Without
+     * the containment in [LlamaCppProvider.streamFromLoadedModel] the first throw abandons the
+     * turn and GenerationLoop restarts it from a fresh prefill.
+     */
+    private class FlakyParseNative(
+        private val pieces: List<String>,
+        private val refuseFirstPartials: Int,
+        private val refuseFinal: Boolean = false,
+    ) : LlamaCppNative {
+        var partialRefusals = 0
+            private set
+        private var partialCalls = 0
+
+        override fun loadModel(path: String) = 1L
+        override fun freeModel(handle: Long) {}
+        override fun modelInfo(handle: Long): String = """
+            {"n_layers":26,"n_embd":2048,"n_head_kv":4,"n_embd_head_k":256,
+             "n_embd_head_v":256,"n_vocab":262144,"n_ctx_train":32768,
+             "sliding_window":0,"weights_bytes":2600000000}
+        """.trimIndent()
+        override fun createContext(
+            modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
+        ) = 2L
+        override fun freeContext(handle: Long) {}
+        override fun cancelGeneration(handle: Long) {}
+        override fun applyTemplate(modelHandle: Long, requestJson: String): String = "{}"
+        override fun generate(
+            ctxHandle: Long, modelHandle: Long, appliedTemplateJson: String,
+            maxTokens: Int, armToolGrammar: Boolean, onPiece: (String) -> Boolean,
+        ): Int {
+            var emitted = 0
+            for (piece in pieces) {
+                if (!onPiece(piece)) return emitted
+                emitted++
+            }
+            return emitted
+        }
+
+        override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String {
+            if (!isPartial) {
+                if (refuseFinal) throw IllegalStateException(PARSER_REFUSAL)
+                return """{"role":"assistant","content":"$text","reasoning_content":"","tool_calls":[]}"""
+            }
+            partialCalls++
+            if (partialCalls <= refuseFirstPartials) {
+                partialRefusals++
+                throw IllegalStateException(PARSER_REFUSAL)
+            }
+            return """{"role":"assistant","content":"$text","reasoning_content":"","tool_calls":[]}"""
+        }
+    }
+
+    @Test
+    fun `a partial parse refusal mid-stream does not abandon the turn`() = runBlocking {
+        val native = FlakyParseNative(listOf("Hel", "lo", " world"), refuseFirstPartials = 2)
+        val runtime = LlamaCppRuntime(native)
+        runtime.load("/tmp/m.gguf", emptyList(), 0, 12_000_000_000L)
+
+        val chunks = LlamaCppProvider.streamFromLoadedModel(
+            runtime = runtime,
+            messages = listOf(UIMessage.user("hi")),
+            params = TextGenerationParams(model = Model(modelId = "test.gguf"), maxTokens = 64),
+        ).toList()
+
+        assertEquals("the scripted model should have refused twice", 2, native.partialRefusals)
+        val combined = chunks.filterIsInstance<StreamChunk.TextDelta>().joinToString("") { it.text }
+        assertTrue("expected the full reply after the refusals, got '$combined'",
+            combined.contains("Hello world"))
+        assertTrue("the stream must still report a finish, got $chunks",
+            chunks.any { it is StreamChunk.Finish })
+
+        runtime.unload()
+    }
+
+    @Test
+    fun `the authoritative final parse still fails loudly`() = runBlocking {
+        val native = FlakyParseNative(listOf("Hello world"), refuseFirstPartials = 0, refuseFinal = true)
+        val runtime = LlamaCppRuntime(native)
+        runtime.load("/tmp/m.gguf", emptyList(), 0, 12_000_000_000L)
+
+        val error = runCatching {
+            LlamaCppProvider.streamFromLoadedModel(
+                runtime = runtime,
+                messages = listOf(UIMessage.user("hi")),
+                params = TextGenerationParams(model = Model(modelId = "test.gguf"), maxTokens = 64),
+            ).toList()
+        }.exceptionOrNull()
+
+        // Walk the cause chain: a flow failure may arrive wrapped by the coroutine machinery.
+        var node: Throwable? = error
+        var sawRefusal = false
+        while (node != null) {
+            if (node.message.orEmpty().contains(PARSER_REFUSAL)) sawRefusal = true
+            node = node.cause
+        }
+        assertTrue("a broken final parse must surface, got $error", sawRefusal)
 
         runtime.unload()
     }

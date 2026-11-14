@@ -432,6 +432,22 @@ class LlamaCppProvider(
                 if (sentAny) allOk else !isClosedForSend
             }
 
+            // z7 2026-11-14 03:31, read off the device: Spark's output makes llama.cpp's PEG
+            // parser THROW rather than return a content-only message while the generation is
+            // still mid-stream - `nazarick-perf: throw: The model produced output that does not
+            // match the expected peg-native format` (jni_util.h throwf <- nativeParseChat), four
+            // times in one three-run window, each followed by GenerationLoop's
+            // `restarting the reply after a mid-stream failure`. An exception thrown out of the
+            // callback below abandons a turn that has already paid for every token decoded so
+            // far, and the restart re-prefills the same prefix: measured
+            // `prefill 6062 tok 73682 ms` per restart on this device.
+            //
+            // Partial parses are advisory. Every delta they produce is restated by the final
+            // parse, which is the authoritative one (see the flush note on ChatDeltaTracker
+            // .consume). So a partial refusal means "nothing new this token" - it is not
+            // evidence that the turn is broken, and it must not end the turn. The final parse
+            // stays fatal on purpose: if THAT does not parse, the output really is unusable.
+            var partialParseRefusals = 0
             val worker = launch(Dispatchers.IO) {
                 Log.i("nazarick-perf", "diag: worker launching native generate")
                 try {
@@ -441,14 +457,27 @@ class LlamaCppProvider(
                         ContextPlanner.tunables.toolGrammar,
                     ) { piece ->
                         accumulated.append(piece)
-                        val parsed = runtime.parse(accumulated.toString(), true, appliedTemplateJson)
-                        sendDelta(tracker.consume(parsed, isPartial = true), false)
+                        val parsed = runCatching {
+                            runtime.parse(accumulated.toString(), true, appliedTemplateJson)
+                        }.onFailure {
+                            partialParseRefusals++
+                            if (partialParseRefusals == 1 || partialParseRefusals % 32 == 0) {
+                                Log.w("nazarick-perf",
+                                    "diag: partial parse refused (chars=${accumulated.length}, " +
+                                        "refusals=$partialParseRefusals): ${it.message}")
+                            }
+                        }.getOrNull()
+                        if (parsed == null) !isClosedForSend else sendDelta(tracker.consume(parsed, isPartial = true), false)
                     }
                     Log.i("nazarick-perf", "diag: native generate returned chars=${accumulated.length} decoded=$decoded/$maxTokens")
 
                     // The final parse is authoritative: it flushes any tool call whose arguments
                     // were still settling when generation stopped (see ChatDeltaTracker.consume).
                     val finalParsed = runtime.parse(accumulated.toString(), false, appliedTemplateJson)
+                    if (partialParseRefusals > 0) {
+                        Log.i("nazarick-perf",
+                            "diag: stream recovered from $partialParseRefusals partial-parse refusal(s)")
+                    }
                     sendDelta(tracker.consume(finalParsed, isPartial = false), true)
 
                     // Bug #5 F3/F4: the two ways a broken step used to look exactly like a
