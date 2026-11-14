@@ -368,7 +368,7 @@ internal const val MAX_CONTINUATIONS = 2
  * must read the SAME string the UI shows. A hand-copied mirror in a test passes long after the
  * production wording has drifted, which is exactly the false green this program was called for.
  */
-internal fun continuationCapNote(lastBudget: Int, cap: Int = MAX_CONTINUATIONS): String =
+internal fun continuationCapNote(lastBudget: Int?, cap: Int = MAX_CONTINUATIONS): String =
     "\n[stopped: this answer kept hitting the response token limit " +
         "(last budget: max_tokens=$lastBudget, cap $cap continuations). Raise the assistant's token limit " +
         "or lower the thinking budget to get more.]"
