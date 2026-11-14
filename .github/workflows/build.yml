@@ -410,6 +410,7 @@ jobs:
             app/build/reports/tests/
             ai/build/reports/tests/
             runtime/build/reports/tests/
+            llama-cpp/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -610,6 +611,8 @@ jobs:
           --tests "me.rerere.rikkahub.data.guardians.GuardianToolRosterTest"
           --tests "me.rerere.rikkahub.data.guardians.GuardianRosterAssemblyTest"
           --tests "me.rerere.rikkahub.data.ai.ToolSurfaceGuardTest"
+          --tests "me.rerere.rikkahub.data.db.DatabaseBackupTest"
+          --tests "me.rerere.rikkahub.data.vector.KeywordRecallTest"
 
       - name: Upload test report
         if: always()
