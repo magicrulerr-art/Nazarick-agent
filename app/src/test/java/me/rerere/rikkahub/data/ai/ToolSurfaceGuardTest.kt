@@ -45,7 +45,10 @@ class ToolSurfaceGuardTest {
     @Test
     fun ceilingKeepsExactlyTheGrantedIds() {
         val out = ToolSurfaceGuard.enforce(tools, listOf("search_web", "memory_search"))
-        assertEquals(listOf("memory_search", "search_web"), ToolSurfaceGuard.namesOf(out))
+        // compact_context survives uninvited (harness plumbing, roster SS3 item 2) - the ceiling is
+        // about what the MODEL may choose. Order is assembly order, so map{name} rather than namesOf,
+        // which sorts and would hide exactly that.
+        assertEquals(listOf("search_web", "memory_search", "compact_context"), out.map { it.name })
     }
 
     @Test
@@ -62,7 +65,7 @@ class ToolSurfaceGuardTest {
         // A re-sorted surface reads as a different assistant across builds — the drift class LC-2
         // exists to kill, so ordering is an asserted property, not an accident of filter().
         val out = ToolSurfaceGuard.enforce(tools, listOf("tap", "search_web", "memory_search"))
-        assertEquals(listOf("search_web", "memory_search", "tap"), out.map { it.name })
+        assertEquals(listOf("search_web", "memory_search", "tap", "compact_context"), out.map { it.name })
     }
 
     @Test

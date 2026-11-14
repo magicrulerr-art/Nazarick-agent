@@ -69,10 +69,15 @@ class GuardianRosterAssemblyTest {
         // prove nothing about ORDER, and order is part of the contract (a re-sorted surface reads as
         // a different assistant to a small model, and across builds it reads as drift).
         assertEquals(
+            // Assembly order, transcribed by hand from [assembledIds]: the local group rows come
+            // first (get_time_info, ask_user, clipboard_tool…), then search, then missions - which is
+            // why ask_user precedes the memory tools here and not after them. The two plumbing ids
+            // sit where the assembly put them (mission_report inside the mission block,
+            // compact_context last).
             listOf(
-                "get_time_info", "memory_search", "memory_read",
+                "get_time_info", "ask_user", "memory_search", "memory_read",
                 "search_web", "scrape_web",
-                "ask_user", "mission_create", "mission_dispatch",
+                "mission_create", "mission_dispatch",
                 // plumbing the model never chose (ToolSurfaceGuard.HARNESS_TOOL_NAMES)
                 "mission_report", "compact_context",
             ),
