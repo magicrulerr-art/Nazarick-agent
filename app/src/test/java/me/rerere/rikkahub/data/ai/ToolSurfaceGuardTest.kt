@@ -1,7 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import org.junit.Assert.assertEquals
@@ -23,7 +23,7 @@ class ToolSurfaceGuardTest {
     private fun fake(name: String): Tool = Tool(
         name = name,
         description = "fake $name",
-        parameters = { buildJsonObject { put("type", "object") } },
+        parameters = { InputSchema.Obj(properties = buildJsonObject { }, required = null) },
         execute = { listOf(UIMessagePart.Text("ok")) },
     )
 
@@ -79,7 +79,8 @@ class ToolSurfaceGuardTest {
         }.exceptionOrNull()
         assertNotNull("an escaping tool must throw", escaped)
         assertTrue(escaped is IllegalStateException)
-        assertTrue(escaped.message.orEmpty(), escaped.message!!.contains("web_fetch"))
+        val msg = escaped!!.message.orEmpty()
+        assertTrue(msg, msg.contains("web_fetch"))
         assertNull(
             runCatching {
                 ToolSurfaceGuard.assertApproved(listOf(fake("search_web"), fake("compact_context")), listOf("search_web"))
