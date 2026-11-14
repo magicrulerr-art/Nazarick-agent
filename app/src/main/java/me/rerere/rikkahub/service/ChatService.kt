@@ -1180,11 +1180,18 @@ class ChatService(
         // router fires inherit the right assistant id (workflows / sub-agents / etc).
         me.rerere.rikkahub.subagent.SubAgentDispatchProfileRules
             .setLiveDispatchProfile(settingsStore.settingsFlow.first().subAgentDispatchProfile)
-        val tools = ToolSurfaceResolver.resolve(
-            localTools = localTools,
-            assistant = assistant,
-            context = ToolSurfaceResolver.fastPathContext(assistant, conversationId),
+        val tools = me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+            ToolSurfaceResolver.resolve(
+                localTools = localTools,
+                assistant = assistant,
+                context = ToolSurfaceResolver.fastPathContext(assistant, conversationId),
+            ),
+            assistant.allowedToolNames,
         )
+        // LC-2 covers EXECUTION as well as declaration: the fast path fires a tool without asking
+        // the model, so without this a router match could run something the guardian's row never
+        // granted. Hardline already guards this site from the other side (side effects); this
+        // guards capability.
         val tool = tools.firstOrNull { it.name == match.toolName } ?: run {
             android.util.Log.d("FastPathRouter", "matched intent=${match.intent} but tool=${match.toolName} not registered for assistant; falling through")
             return false
@@ -1541,7 +1548,12 @@ class ChatService(
                 val model = resolveGenerationModel(settings, conversation)
                     ?: return RerunToolResult.Failure("no chat model selected")
 
-                val tools = buildToolsForRerun(assistant, conversationId, conversation, model, settings)
+                // LC-2 again, same reason on the regenerate path: the ceiling is a property of the
+                // assistant, not of whichever code happens to hold the tool list.
+                val tools = me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+                    buildToolsForRerun(assistant, conversationId, conversation, model, settings),
+                    assistant.allowedToolNames,
+                )
                 val tool = tools.firstOrNull { it.name == toolPart.toolName }
                     ?: return RerunToolResult.Failure("tool '${toolPart.toolName}' is not available")
 
