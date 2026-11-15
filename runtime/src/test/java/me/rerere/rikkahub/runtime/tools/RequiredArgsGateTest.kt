@@ -1,7 +1,7 @@
 package me.rerere.rikkahub.runtime.tools
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
+import me.rerere.ai.core.InputSchema
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,15 +13,23 @@ import org.junit.Test
  */
 class RequiredArgsGateTest {
 
-    private val searchSchema = Json.parseToJsonElement(
-        """{"type":"object","properties":{"query":{"type":"string"},"num_results":{"type":"integer"}},"required":["query"]}"""
-    ).jsonObject
+    private val searchSchema = InputSchema.Obj(
+        properties = Json.parseToJsonElement(
+            """{"query":{"type":"string"},"num_results":{"type":"integer"}}"""
+        ).let { it as kotlinx.serialization.json.JsonObject },
+        required = listOf("query"),
+    )
 
     @Test
     fun `requiredNames reads the schema required list`() {
         assertEquals(listOf("query"), RequiredArgsGate.requiredNames(searchSchema))
         assertEquals(emptyList<String>(), RequiredArgsGate.requiredNames(null))
-        assertEquals(emptyList<String>(), RequiredArgsGate.requiredNames("{}".let { Json.parseToJsonElement(it).jsonObject }))
+        assertEquals(
+            emptyList<String>(),
+            RequiredArgsGate.requiredNames(
+                InputSchema.Obj(kotlinx.serialization.json.JsonObject(emptyMap()), null)
+            ),
+        )
     }
 
     @Test

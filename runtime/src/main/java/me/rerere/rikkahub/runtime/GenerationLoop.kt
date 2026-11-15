@@ -1259,7 +1259,7 @@ class GenerationLoop(
                             // missing fields - the model recovers on the next step instead of
                             // dying silently at the step budget.
                             val gateRequired = me.rerere.rikkahub.runtime.tools.RequiredArgsGate
-                                .requiredNames(toolDef.parameters)
+                                .requiredNames(toolDef.parameters())
                             if (gateRequired.isNotEmpty()) {
                                 val gateMissing = me.rerere.rikkahub.runtime.tools
                                     .RequiredArgsGate.missing(gateRequired, args)
