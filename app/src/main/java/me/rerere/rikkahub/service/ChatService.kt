@@ -144,6 +144,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.AutoCompactionThresholdMode
+import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
 import me.rerere.rikkahub.data.datastore.DEFAULT_AUTO_MODEL_ID
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.runtime.findProvider
@@ -773,7 +774,12 @@ class ChatService(
                 id = id,
                 initial = Conversation.ofId(
                     id = id,
-                    assistantId = settings.getCurrentAssistant().id
+                    // Cold-boot guard: settingsFlow.value can be an empty-DataStore snapshot
+                    // (assistants not loaded yet) — the throwing getCurrentAssistant() crashed
+                    // ChatVM on launch (z7 SafeMode loop, 2026-11-15). Albedo's seed id is the
+                    // documented fallback for new conversations; it resolves once load lands.
+                    assistantId = AssistantResolver.currentOrNull(settings.assistants, settings.assistantId)?.id
+                        ?: DEFAULT_ASSISTANT_ID
                 ),
                 scope = appScope,
                 onIdle = { removeSession(it) },
