@@ -244,6 +244,35 @@ class LlamaCppProviderTest {
         runtime.unload()
     }
 
+    /**
+     * US-004 (Cocytus HOLD 2026-11-14, finding 2), chat side: the ledger must be consulted
+     * BEFORE loadModel maps the weights. A decline here must be a decision made before any
+     * native open, and must record nothing for the declined id. (Embedder-side twin:
+     * LlamaCppEmbedderTest."a declined embed load never opens the native model".)
+     */
+    @Test
+    fun `chat load declines against the ledger before opening the model file`() = runBlocking {
+        val native = FlakyParseNative(listOf("Hello world"), refuseFirstPartials = 0)
+        val runtime = LlamaCppRuntime(native)
+        NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
+        NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
+        NativeAdmission.budget.release(NativeAdmission.LITERT_ID)
+        val f = java.io.File.createTempFile("aura021-chat", ".gguf")
+        f.writeBytes(ByteArray(4096))
+        f.deleteOnExit()
+        assertTrue(NativeAdmission.budget.tryReserve(NativeAdmission.EMBEDDING_ID, 3_072L, 4_096L) is MemoryBudget.Result.Granted)
+
+        val err = runCatching {
+            runtime.load(f.absolutePath, emptyList(), 0, availableRamBytes = 4_096L)
+        }.exceptionOrNull()
+
+        assertTrue("expected a budget refusal, got $err", err is ModelTooLargeException)
+        assertEquals("a declined load must never touch the native open", 0, native.loadModelCalls)
+        assertEquals("the refusal must record nothing on the ledger",
+            setOf(NativeAdmission.EMBEDDING_ID), NativeAdmission.budget.outstanding().keys)
+        NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
+    }
+
     @Test
     fun `generateText returns the full reply, not just the last streamed chunk`() = runBlocking {
         val runtime = LlamaCppRuntime(ScriptedNative(listOf("Hel", "lo", " world")))
