@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
+import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import kotlin.uuid.Uuid
@@ -117,8 +118,19 @@ object AssistantResolver {
 
     fun current(settings: Settings): Assistant = current(settings.assistants, settings.assistantId)
 
+    // Seed fallback (z7 crash 15:40 device-local, 3rd cold-boot site): a conversation bound
+    // to a dangling assistantId (pm clear removes the assistant but the Room conversation row
+    // survives) hits the GLOBAL_CURRENT branch, which used to call the throwing current()
+    // against an unloaded snapshot -> NoSuchElementException at ChatInput attach (resolveChatModel).
     fun forConversation(settings: Settings, conversationAssistantId: Uuid): Resolution =
-        forConversation(settings.assistants, conversationAssistantId, settings.assistantId)
+        if (settings.assistants.isEmpty()) {
+            Resolution(
+                Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo"),
+                Source.GLOBAL_CURRENT,
+            )
+        } else {
+            forConversation(settings.assistants, conversationAssistantId, settings.assistantId)
+        }
 
     fun forWorkflow(settings: Settings, authoringAssistantId: String?): Resolution? =
         forWorkflow(settings.assistants, authoringAssistantId)
