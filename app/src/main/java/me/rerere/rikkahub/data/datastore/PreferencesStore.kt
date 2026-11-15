@@ -1669,8 +1669,18 @@ fun Settings.getEffectiveContextLength(model: Model?): Int? =
  * P2-01 — every assistant lookup funnels through [AssistantResolver]; these extensions stay
  * for source compatibility but no longer carry logic of their own.
  */
+// Cold-boot safe (z7 launch-loop, 2026-11-15): the ChatInput/UseAssistant compose path calls
+// this during View.dispatchAttachedToWindow against an unloaded DataStore snapshot; the old
+// throwing resolver crash-looped the whole UI (stateIn attach frame -> FATAL main). The seed
+// Albedo card is the documented default for exactly this state — a placeholder for the frames
+// before the load lands, never persisted.
+private val DEFAULT_ASSISTANT_PLACEHOLDER = Assistant(
+    id = DEFAULT_ASSISTANT_ID,
+    name = "Albedo",
+)
+
 fun Settings.getCurrentAssistant(): Assistant =
-    AssistantResolver.current(this.assistants, assistantId)
+    AssistantResolver.currentOrNull(this.assistants, assistantId) ?: DEFAULT_ASSISTANT_PLACEHOLDER
 
 fun Settings.getAssistantById(id: Uuid): Assistant? =
     AssistantResolver.byId(this.assistants, id)
