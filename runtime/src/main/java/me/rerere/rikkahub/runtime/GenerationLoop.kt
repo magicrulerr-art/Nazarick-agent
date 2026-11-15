@@ -1248,6 +1248,53 @@ class GenerationLoop(
                         }
                         runCatching {
                             val args = parsedArgs.getOrThrow()
+                            // AURA-021 US-012 (z7 2026-11-14, probe_jensen_logcat_final.txt):
+                            // every tool call in the failing Jensen turns carried no usable
+                            // arguments - the UI chip rendered `Search web: ` empty. The
+                            // `executing tool` line below is debug-build-only, so the release
+                            // beta went silent while the loop burned step after step on calls
+                            // that could never answer (empty-args search_web returns junk the
+                            // model replays). A call missing schema-required parameters cannot
+                            // do anything useful, so reject it with an envelope naming the
+                            // missing fields - the model recovers on the next step instead of
+                            // dying silently at the step budget.
+                            val gateRequired = me.rerere.rikkahub.runtime.tools.RequiredArgsGate
+                                .requiredNames(toolDef.parameters())
+                            if (gateRequired.isNotEmpty()) {
+                                val gateMissing = me.rerere.rikkahub.runtime.tools
+                                    .RequiredArgsGate.missing(gateRequired, args)
+                                if (gateMissing.isNotEmpty()) {
+                                    Log.w(TAG, "generateText: ${toolDef.name} called without required $gateMissing (args=${tool.input.take(120)}) - rejected without executing")
+                                    executedTools += tool.copy(
+                                        output = listOf(
+                                            UIMessagePart.Text(
+                                                json.encodeToString(buildJsonObject {
+                                                    put("error", JsonPrimitive("missing_required_arguments"))
+                                                    put("tool", JsonPrimitive(toolDef.name))
+                                                    put(
+                                                        "missing",
+                                                        kotlinx.serialization.json.JsonArray(
+                                                            gateMissing.map { JsonPrimitive(it) }
+                                                        ),
+                                                    )
+                                                    put("received", JsonPrimitive(tool.input.take(200)))
+                                                    put(
+                                                        "recovery",
+                                                        JsonPrimitive(
+                                                            "Call ${toolDef.name} again with a JSON arguments " +
+                                                                "object containing every required key (" +
+                                                                gateRequired.joinToString(", ") + "). " +
+                                                                "Include the values themselves - an empty object {} " +
+                                                                "or a bare 'name=value' line is not valid tool-call JSON.",
+                                                        ),
+                                                    )
+                                                })
+                                            )
+                                        )
+                                    )
+                                    return@runCatching
+                                }
+                            }
                             if (host.isDebugBuild) {
                                 Log.i(TAG, "generateText: executing tool ${toolDef.name} with args: ${redactSecrets(args)}")
                             }

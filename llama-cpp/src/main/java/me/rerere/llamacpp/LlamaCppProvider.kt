@@ -473,12 +473,41 @@ class LlamaCppProvider(
 
                     // The final parse is authoritative: it flushes any tool call whose arguments
                     // were still settling when generation stopped (see ChatDeltaTracker.consume).
-                    val finalParsed = runtime.parse(accumulated.toString(), false, appliedTemplateJson)
+                    //
+                    // AURA-021 US-012 (z7 2026-11-14, probe_jensen_logcat_final.txt): Spark's
+                    // thinking-first output can make even this authoritative parse refuse a step
+                    // that ended cleanly on its stop word. Throwing here abandoned finished
+                    // tokens and drove GenerationLoop's whole-reply restart — a measured ~40 s
+                    // re-prefill per refusal — and the one-shot restart guard meant the second
+                    // refusal in the same turn killed it outright, no answer, Continue inert.
+                    // The tokens are paid for either way, so a refusal now degrades to a
+                    // content-only step: raw output goes out on the reasoning channel, no tool
+                    // calls are forwarded, and postGenerationNotices below labels the skipped
+                    // <tool_call so the model sees why the step has no tool result and can
+                    // re-issue the call properly. An empty step still fails loudly — there is
+                    // nothing to degrade to and a silent empty success would be a lie.
+                    val finalParsed = runCatching {
+                        runtime.parse(accumulated.toString(), false, appliedTemplateJson)
+                    }.getOrElse { cause ->
+                        // User stop must propagate, not degrade — same rule as the tool
+                        // executor's runCatching sites in GenerationLoop.
+                        if (cause is kotlinx.coroutines.CancellationException) throw cause
+                        if (accumulated.length == 0) throw cause
+                        Log.w(
+                            "nazarick-perf",
+                            "diag: final parse refused (${cause.message?.take(140)}) -> degrading " +
+                                "step to content-only; ${accumulated.length} chars forwarded as reasoning",
+                        )
+                        sendDelta(ChatDelta("", accumulated.toString(), emptyList()), true)
+                        null
+                    }
                     if (partialParseRefusals > 0) {
                         Log.i("nazarick-perf",
                             "diag: stream recovered from $partialParseRefusals partial-parse refusal(s)")
                     }
-                    sendDelta(tracker.consume(finalParsed, isPartial = false), true)
+                    if (finalParsed != null) {
+                        sendDelta(tracker.consume(finalParsed, isPartial = false), true)
+                    }
 
                     // Bug #5 F3/F4: the two ways a broken step used to look exactly like a
                     // finished answer. Notices go out as text so the owner sees them and the

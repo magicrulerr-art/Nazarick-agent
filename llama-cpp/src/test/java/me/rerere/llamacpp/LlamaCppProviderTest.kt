@@ -186,9 +186,41 @@ class LlamaCppProviderTest {
         runtime.unload()
     }
 
+    /**
+     * AURA-021 US-012 (z7 2026-11-14, probe_jensen_logcat_final.txt): the authoritative
+     * final parse refusing a CLEANLY FINISHED step used to abandon the whole reply — the
+     * loop's restart re-prefilled ~40 s of context, and its one-shot guard meant the
+     * second refusal killed the turn with no answer. The step now degrades honestly:
+     * finished tokens reach the UI on the reasoning channel and the stream still Finishes.
+     */
     @Test
-    fun `the authoritative final parse still fails loudly`() = runBlocking {
+    fun `a refused final parse degrades to a content-only step instead of killing the reply`() = runBlocking {
         val native = FlakyParseNative(listOf("Hello world"), refuseFirstPartials = 0, refuseFinal = true)
+        val runtime = LlamaCppRuntime(native)
+        runtime.load("/tmp/m.gguf", emptyList(), 0, 12_000_000_000L)
+
+        val chunks = LlamaCppProvider.streamFromLoadedModel(
+            runtime = runtime,
+            messages = listOf(UIMessage.user("hi")),
+            params = TextGenerationParams(model = Model(modelId = "test.gguf"), maxTokens = 64),
+        ).toList()
+
+        assertTrue("a degraded step must still report a finish, got $chunks",
+            chunks.any { it is StreamChunk.Finish })
+        val visible = chunks.filterIsInstance<StreamChunk.ReasoningDelta>().joinToString("") { it.text } +
+            chunks.filterIsInstance<StreamChunk.TextDelta>().joinToString("") { it.text }
+        assertTrue("the paid-for tokens must reach the UI, got '$visible'",
+            visible.contains("Hello world"))
+        assertTrue("no tool calls may be claimed for a step that never parsed one, got $chunks",
+            chunks.filterIsInstance<StreamChunk.ToolCallStart>().isEmpty())
+
+        runtime.unload()
+    }
+
+    /** Nothing was decoded, so there is nothing to degrade to — silence would be a lie. */
+    @Test
+    fun `a final parse refusal with no decoded content still fails loudly`() = runBlocking {
+        val native = FlakyParseNative(emptyList(), refuseFirstPartials = 0, refuseFinal = true)
         val runtime = LlamaCppRuntime(native)
         runtime.load("/tmp/m.gguf", emptyList(), 0, 12_000_000_000L)
 
@@ -207,7 +239,7 @@ class LlamaCppProviderTest {
             if (node.message.orEmpty().contains(PARSER_REFUSAL)) sawRefusal = true
             node = node.cause
         }
-        assertTrue("a broken final parse must surface, got $error", sawRefusal)
+        assertTrue("a broken final parse with empty output must surface, got $error", sawRefusal)
 
         runtime.unload()
     }
