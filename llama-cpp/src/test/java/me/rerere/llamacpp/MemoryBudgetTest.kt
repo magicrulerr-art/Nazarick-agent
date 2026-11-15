@@ -68,7 +68,10 @@ class MemoryBudgetTest {
         // holder, which is what this pins.
         val r = budget.tryReserve(NativeAdmission.LITERT_ID, 9_000_000_000L, 12_000_000_000L)
         assertTrue("expected Granted, got $r", r is MemoryBudget.Result.Granted)
-        val chat = budget.tryReserve(NativeAdmission.CHAT_ID, 1_100_000_000L, 12_000_000_000L)
+        // 9 GB held leaves under 3 GB of the 12 GB free: any chat request up to that
+        // headroom must be GRANTED (that is the point of honest accounting), and only a
+        // request beyond it declines. 1.1 GB fits in the room - 3.1 GB does not.
+        val chat = budget.tryReserve(NativeAdmission.CHAT_ID, 3_100_000_000L, 12_000_000_000L)
         assertTrue("chat must decline against litert's bytes, got $chat", chat is MemoryBudget.Result.Declined)
         assertEquals(setOf(NativeAdmission.LITERT_ID), budget.outstanding().keys)
         budget.release(NativeAdmission.LITERT_ID)
