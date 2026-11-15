@@ -99,7 +99,30 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
     ): LlamaCppEmbedInfo = mutex.withLock {
         unloadLocked()
 
-        val model = native.loadModel(path)
+        // US-004 (Cocytus HOLD 2026-11-14, finding 2): same ordering fix as the chat
+        // runtime — reserve against the file size BEFORE loadModel maps the weights, so a
+        // declined embedding load never touches native memory at all. The post-load block
+        // re-charges the exact weights_bytes via tryReserve's replace semantics. Unreadable
+        // (0-byte) files skip the pre-charge and stay governed by the weightsBytes<=0
+        // refusal below.
+        val preChargeBytes = java.io.File(path).length()
+        if (preChargeBytes > 0L) {
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.EMBEDDING_ID, preChargeBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw NativeAdmission.DeclinedByBudgetException(
+                    "The embedding model needs ${admit.requiredBytes / 1_000_000}MB but only " +
+                        "${admit.roomBytes / 1_000_000}MB of the local budget is unreserved (held: " +
+                        "${NativeAdmission.budget.outstanding()}); semantic search stays off until room frees up.",
+                )
+                is MemoryBudget.Result.Granted -> Unit
+            }
+        }
+        val model = try {
+            native.loadModel(path)
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
+            throw t
+        }
 
         // Refuse before building the context. An over-budget load is killed by the OS partway
         // through, which reads as a crash rather than as a decision. A weights size of 0 is not

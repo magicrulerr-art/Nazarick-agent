@@ -9,6 +9,8 @@ import me.rerere.llamacpp.LlamaCppEmbeddingCatalog
 import me.rerere.llamacpp.LlamaCppEmbeddingEntry
 import me.rerere.locallm.litert.LitertEmbedBackend
 import me.rerere.locallm.litert.LitertEmbeddingCatalog
+import me.rerere.llamacpp.MemoryBudget
+import me.rerere.llamacpp.NativeAdmission
 import me.rerere.locallm.litert.LitertEmbeddingEntry
 import me.rerere.locallm.litert.LitertLmEmbedder
 import java.io.File
@@ -364,7 +366,33 @@ class EmbeddingService(
      */
     private suspend fun loadLitert(request: Request): ActiveModel? {
         val entry = litertEntryFor(request.fileName) ?: return null
-        val info = litert.load(
+
+        // US-004 AC-3 (Cocytus US-004 HOLD 2026-11-14, finding 2): a `.litertlm` is a native
+        // model like any other, and this path entered the process with zero ledger contact,
+        // so litert + chat could still double-book the same free bytes and take the OS kill.
+        // Charged before the engine opens and released wherever its handles go free, in the
+        // same shape the gguf embedder uses. Long.MAX_VALUE is an honest denominator here
+        // rather than a size guess: this class holds no ActivityManager reading, so LiteRT
+        // itself never declines — but its bytes are now visible to the chat runtime and to
+        // the gguf embedder, which is the direction that used to end in a kill.
+        val weightsBytes = request.file?.length() ?: 0L
+        if (weightsBytes > 0L) {
+            when (val admit = NativeAdmission.budget.tryReserve(
+                NativeAdmission.LITERT_ID, weightsBytes, Long.MAX_VALUE,
+            )) {
+                is MemoryBudget.Result.Declined -> {
+                    litertDeclineReason =
+                        "The embedding model needs ${admit.requiredBytes / 1_000_000}MB but only " +
+                            "${admit.roomBytes / 1_000_000}MB of the local budget is unreserved (held: " +
+                            "${NativeAdmission.budget.outstanding()}); semantic search stays off until room frees up."
+                    return null
+                }
+                is MemoryBudget.Result.Granted -> Unit
+            }
+        }
+
+        val info = try {
+            litert.load(
             path = request.file!!.absolutePath,
             signature = request.signature!!,
             backend = request.accelerator!!,
@@ -372,8 +400,15 @@ class EmbeddingService(
             // on the GPU delegate and only returns NaN once genuine Chinese text shows up at
             // index time (verified 2026-10-18). A prefixed, realistic sentence makes the
             // load-time probe fail there instead, so the engine falls back to the CPU.
-            probeText = entry.documentPrefix + LITERT_PROBE_TEXT,
-        )
+                probeText = entry.documentPrefix + LITERT_PROBE_TEXT,
+            )
+        } catch (t: Throwable) {
+            // The charge was taken before the engine opened, so a load that never comes up
+            // has to give it back — the same defect class 0d2eb1191 closed on the gguf side.
+            NativeAdmission.budget.release(NativeAdmission.LITERT_ID)
+            throw t
+        }
+        litertDeclineReason = null
         return ActiveModel(
             fileName = request.fileName,
             dim = info.dim,
@@ -543,7 +578,11 @@ class EmbeddingService(
      * declined (AURA-021, LC-7's "visible degradation" hook). The engine owns the text;
      * this only forwards it to surfaces like the embedding settings page.
      */
-    val declineReason: String? get() = embedder.declineReason
+    /** Set by [loadLitert] when the ledger refused the `.litertlm` (US-004 AC-3/AC-4). */
+    @Volatile
+    private var litertDeclineReason: String? = null
+
+    val declineReason: String? get() = embedder.declineReason ?: litertDeclineReason
 
     /**
      * The body of [release]; the caller must already hold [lock].
@@ -558,7 +597,11 @@ class EmbeddingService(
             // Nothing is held for a cloud model: what it costs is the request, not a resident copy
             // of any weights.
             if (!current.isCloud) {
-                if (current.litert) litert.unload() else embedder.unload()
+                if (current.litert) {
+                    litert.unload()
+                    // The LiteRT charge leaves with the engine it paid for (US-004 AC-3).
+                    NativeAdmission.budget.release(NativeAdmission.LITERT_ID)
+                } else embedder.unload()
             }
         }
         active = null

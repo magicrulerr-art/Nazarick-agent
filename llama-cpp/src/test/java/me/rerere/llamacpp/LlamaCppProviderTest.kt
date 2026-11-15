@@ -119,8 +119,12 @@ class LlamaCppProviderTest {
         var partialRefusals = 0
             private set
         private var partialCalls = 0
+        var loadModelCalls = 0
 
-        override fun loadModel(path: String) = 1L
+        override fun loadModel(path: String): Long {
+            loadModelCalls++
+            return 1L
+        }
         override fun freeModel(handle: Long) {}
         override fun modelInfo(handle: Long): String = """
             {"n_layers":26,"n_embd":2048,"n_head_kv":4,"n_embd_head_k":256,

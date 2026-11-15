@@ -75,4 +75,9 @@ object NativeAdmission {
 
     const val CHAT_ID = "chat"
     const val EMBEDDING_ID = "embedding"
+
+    /** A `.litertlm` engine is a native holder too (US-004 AC-3): it shares this ledger
+     *  with the chat runtime and the gguf embedder, so its bytes are visible to them and
+     *  they decline against it instead of the OS killing both mid-load. */
+    const val LITERT_ID = "litert-embedding"
 }
