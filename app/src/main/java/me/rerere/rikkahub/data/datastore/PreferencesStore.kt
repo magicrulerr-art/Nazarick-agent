@@ -1674,13 +1674,9 @@ fun Settings.getEffectiveContextLength(model: Model?): Int? =
 // throwing resolver crash-looped the whole UI (stateIn attach frame -> FATAL main). The seed
 // Albedo card is the documented default for exactly this state — a placeholder for the frames
 // before the load lands, never persisted.
-private val DEFAULT_ASSISTANT_PLACEHOLDER = Assistant(
-    id = DEFAULT_ASSISTANT_ID,
-    name = "Albedo",
-)
-
 fun Settings.getCurrentAssistant(): Assistant =
-    AssistantResolver.currentOrNull(this.assistants, assistantId) ?: DEFAULT_ASSISTANT_PLACEHOLDER
+    AssistantResolver.currentOrNull(this.assistants, assistantId)
+        ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo")
 
 fun Settings.getAssistantById(id: Uuid): Assistant? =
     AssistantResolver.byId(this.assistants, id)
