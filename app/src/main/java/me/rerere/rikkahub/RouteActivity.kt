@@ -124,6 +124,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNetworkPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
 import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingFilesPage
+import me.rerere.rikkahub.ui.pages.setting.SettingEnginePacksPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMcpPage
 import me.rerere.rikkahub.ui.pages.setting.SettingModelPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPage
@@ -540,6 +541,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingMcpPage()
                             }
 
+                            entry<Screen.SettingEnginePacks> {
+                                SettingEnginePacksPage()
+                            }
+
                             entry<Screen.SettingSubAgents> {
                                 SettingSubAgentsPage()
                             }
@@ -835,6 +840,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingEmbedding : Screen
+
+    @Serializable
+    data object SettingEnginePacks : Screen
 
     @Serializable
     data object SettingAbout : Screen
