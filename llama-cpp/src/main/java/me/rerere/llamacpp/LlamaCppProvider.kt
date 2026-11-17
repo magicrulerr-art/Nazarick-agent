@@ -167,7 +167,7 @@ class LlamaCppProvider(
         EnginePackRegistry.logSelection(
             root = EnginePackRegistry.appRoot(),
             openclStubPresent = EnginePackRegistry.openclStubPresent(),
-            npuRequested = EngineTunables.npuActive(),
+            npuRequested = EngineTunables.npuActive(context),
         )
 
 val gpuLayers = resolveGpuLayers(

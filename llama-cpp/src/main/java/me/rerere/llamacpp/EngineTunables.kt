@@ -88,9 +88,9 @@ data class EngineTunables(
          *  wanted; 0 (default) keeps today's behavior exactly. Read per model load.
          *  Kept out of the tune bundle on purpose: this is an operator switch, not a
          *  crash-replay parameter, and it must survive tune clearing. */
-        fun npuActive(): Boolean = try {
+        fun npuActive(context: android.content.Context): Boolean = try {
             android.provider.Settings.Global.getString(
-                LlamaCppJni.context.contentResolver, "debug.nazarick.npu",
+                context.contentResolver, "debug.nazarick.npu",
             ) == "1"
         } catch (_: Throwable) {
             false
