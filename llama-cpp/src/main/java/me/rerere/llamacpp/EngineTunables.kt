@@ -40,20 +40,6 @@ data class EngineTunables(
     val headroomWithMetadata: Double = 1.1,
     /** Coarse whole-file multiplier used when GGUF metadata is untrustworthy. */
     val headroomWithoutMetadata: Double = 1.2,
-/** Engine-pack lane (US-006/US-008): debug.nazarick.npu=1 marks the NPU A/B arm
- *  wanted; 0 (default) keeps today's behavior exactly. Read per model load.
- *  Kept out of the tune bundle on purpose: this is an operator switch, not a
- *  crash-replay parameter, and it must survive tune clearing. */
-    fun npuActive(): Boolean = try {
-        android.provider.Settings.Global.getString(
-            appContext(), "debug.nazarick.npu",
-        ) == "1"
-    } catch (_: Throwable) {
-        false
-    }
-
-    private fun appContext(): android.content.Context = me.rerere.llamacpp.LlamaCppJni.context
-
     /** Never plan to use more than this share of what the device has free. */
     val ramSafetyFraction: Double = 0.8,
     /**
@@ -98,6 +84,18 @@ data class EngineTunables(
 
         /** Exactly what the planner did before this class existed. */
         val DEFAULT = EngineTunables()
+        /** Engine-pack lane (US-006/US-008): debug.nazarick.npu=1 marks the NPU A/B arm
+         *  wanted; 0 (default) keeps today's behavior exactly. Read per model load.
+         *  Kept out of the tune bundle on purpose: this is an operator switch, not a
+         *  crash-replay parameter, and it must survive tune clearing. */
+        fun npuActive(): Boolean = try {
+            android.provider.Settings.Global.getString(
+                LlamaCppJni.context.contentResolver, "debug.nazarick.npu",
+            ) == "1"
+        } catch (_: Throwable) {
+            false
+        }
+
 
         /**
          * Parse a spec into knobs plus every pair that was not understood.

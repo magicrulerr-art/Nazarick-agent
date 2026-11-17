@@ -122,7 +122,7 @@ object EnginePackRegistry {
             }
         }
         return Result.Accepted(
-            EnginePack(manifest.id, manifest.version, manifest.abi, manifest.backends,
+            EnginePack(manifest.id, manifest.version, manifest.abi, manifest.backends.toSet(),
                 manifest.minApi, manifest.enginePin, dir, bytes),
         )
     }
@@ -212,15 +212,15 @@ object EnginePackRegistry {
     fun canonical(m: ParsedManifest): ByteArray {
         val sb = StringBuilder(256)
         sb.append('{')
-        sb.append("\"abi\":\"").append(m.abi).append('\",')
+        sb.append("\"abi\":\"").append(m.abi).append("\",")
         sb.append("\"backends\":[")
         sb.append(m.backends.joinToString(",") { "\"" + it.name.lowercase(Locale.US) + "\"" })
-        sb.append("],\"engine_pin\":\"").append(m.enginePin).append('\",')
+        sb.append("],\"engine_pin\":\"").append(m.enginePin).append("\",")
         sb.append("\"files\":[")
         sb.append(m.files.sortedBy { it.first }.joinToString(",") { (p, s, h) ->
             "{\"path\":\"" + p + "\",\"sha256\":\"" + h + "\",\"size\":" + s + "}"
         })
-        sb.append("],\"id\":\"").append(m.id).append('\",')
+        sb.append("],\"id\":\"").append(m.id).append("\",")
         sb.append("\"min_api\":").append(m.minApi).append(',')
         sb.append("\"version\":").append(m.version)
         sb.append('}')
