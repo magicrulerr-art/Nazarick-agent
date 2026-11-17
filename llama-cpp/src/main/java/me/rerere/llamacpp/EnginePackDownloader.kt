@@ -29,7 +29,7 @@ class EnginePackDownloader(
     private val unpack: (partFile: File, dest: File) -> Unit,
 ) {
     sealed interface Outcome {
-        data class Installed(val pack: EnginePack) : Outcome
+        data class Installed(val pack: EnginePackRegistry.EnginePack) : Outcome
         data class RefusedDowngrade(val installedVersion: Int, val candidateVersion: Int) : Outcome
         data class Failed(val stage: String, val detail: String) : Outcome
     }
