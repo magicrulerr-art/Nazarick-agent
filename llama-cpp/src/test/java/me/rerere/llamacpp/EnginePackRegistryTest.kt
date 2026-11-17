@@ -125,7 +125,7 @@ class EnginePackRegistryTest {
         val root = kotlin.io.path.createTempDirectory("packv1-tamper").toFile()
         try {
             val dir = syntheticPack(root, mapOf("libllama.so" to "same-size payload".toByteArray()), kp)
-            File(dir, "libllama.so").writeBytes("same-size payloade".toByteArray()) // same length, new bytes
+            File(dir, "libllama.so").writeBytes("same-size Payload".toByteArray()) // 17 B again, different bytes
             val declined = expectIs<EnginePackRegistry.Result.Declined>(
                 EnginePackRegistry.loadPack(dir), "tampered lib")
             assertEquals(EnginePackRegistry.DeclineReason.FILE_HASH, declined.decline.reason)

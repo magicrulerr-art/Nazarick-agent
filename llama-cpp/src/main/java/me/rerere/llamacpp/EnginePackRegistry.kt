@@ -151,7 +151,10 @@ object EnginePackRegistry {
         if (!base.isDirectory) return emptyList<EnginePack>() to emptyList()
         val accepted = mutableListOf<EnginePack>()
         val declined = mutableListOf<PackDecline>()
-        base.listFiles { f -> f.isDirectory }?.sortedBy { it.name }?.forEach { dir ->
+        // Dot-prefixed entries belong to the layout, not to the pack set: ".staging"
+        // (in-flight downloads) otherwise showed up as a phantom NO_MANIFEST decline.
+        base.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }
+            ?.sortedBy { it.name }?.forEach { dir ->
             when (val r = loadPack(dir)) {
                 is Result.Accepted -> accepted += r.pack
                 is Result.Declined -> declined += r.decline
