@@ -836,3 +836,73 @@ jobs:
             sd-cpp/src/main/jniLibs/**/*.so
           if-no-files-found: error
           retention-days: 14
+
+  # US-009: engine-pack release lane. Builds a pack v1 from the arm64 native libs of the
+  # nazarick APK artifact, signs the manifest with the ENGINEPACK_SIGNING_SEED secret
+  # (Ed25519 32-byte hex seed; the app embeds the matching PUBLIC key), and publishes a
+  # GitHub Release named enginepack-<id>-<version>. Without the secret the job SKIPs green
+  # (same philosophy as the keystore step). On mission branches PACK_DRY_RUN keeps uploads
+  # to a draft; main publishes.
+  pack-release:
+    needs: [assemble]
+    runs-on: ubuntu-latest
+    env:
+      PACK_ID: nazarick-engine-llamacpp
+      PACK_VERSION: "1"
+      PACK_DRY_RUN: ${{ github.ref_name != 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk-nazarick
+          path: apk-in
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assemble pack (extract engine libs, pack, sign)
+        env:
+          ENGINEPACK_SIGNING_SEED: ${{ secrets.ENGINEPACK_SIGNING_SEED }}
+        run: |
+          set -eu
+          if [ -z "${ENGINEPACK_SIGNING_SEED:-}" ]; then
+            echo "ENGINEPACK_SIGNING_SEED not configured - pack job SKIPs (green)."
+            echo "skip=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          mkdir -p stage pack-out
+          python - "$PWD" <<'PY'
+          import os, sys, zipfile
+          here = sys.argv[1]
+          apk = next(f for f in os.listdir(os.path.join(here, "apk-in")) if f.endswith(".apk"))
+          want = ("libllama.so", "libllama-common.so", "libggml.so", "libggml-base.so",
+                  "libggml-cpu.so", "libggml-opencl.so", "libllamajni.so")
+          with zipfile.ZipFile(os.path.join(here, "apk-in", apk)) as z:
+              for n in z.namelist():
+                  if n.startswith("lib/arm64-v8a/") and os.path.basename(n) in want:
+                      open(os.path.join(here, "stage", os.path.basename(n)), "wb").write(z.read(n))
+          PY
+          printf '%s' "$ENGINEPACK_SIGNING_SEED" > seed.hex
+          python .github/packtools/enginepack.py create --src stage --out pack-out \
+            --id "$PACK_ID" --version "$PACK_VERSION" --backend cpu,opencl --min-api 26 \
+            --engine-pin "$(git ls-tree HEAD llama-cpp/native/llama.cpp | awk '{print $3}')" \
+            --key seed.hex
+          rm seed.hex
+      - name: Publish pack release
+        if: env.skip != '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG="enginepack-${PACK_ID}-${PACK_VERSION}"
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"
+          if [ "$PACK_DRY_RUN" = "true" ]; then
+            gh release create "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig \
+              --draft --title "engine pack $PACK_ID v$PACK_VERSION (dry-run)" \
+              --notes "US-009 dry-run lane; not consumable until published from main." || {
+              gh release upload "$TAG" "$ZIP" pack-out/manifest.json --clobber; }
+          else
+            gh release create "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig \
+              --title "engine pack $PACK_ID v$PACK_VERSION" \
+              --notes "Pack v1, sha256: $(sha256sum "$ZIP" | cut -d' ' -f1)" || \
+            gh release upload "$TAG" "$ZIP" pack-out/manifest.json --clobber
+          fi
