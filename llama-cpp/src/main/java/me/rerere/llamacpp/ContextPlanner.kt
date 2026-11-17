@@ -59,6 +59,40 @@ object ContextPlanner {
     /** Never plan to use more than this share of what the device has free. */
     private val RAM_SAFETY_FRACTION: Double get() = tunables.ramSafetyFraction
 
+    /**
+     * Phone-class memory line and the context ceiling that goes with it (US-003).
+     *
+     * v1 died on z7 exactly this way: the ladder walked to 32768 on an 11 GB device with
+     * ~4.4 GB free, the context allocated, and lmkd reaped the app mid-prefill — an OS kill,
+     * not a decision (floor/ticket-2026-11-16-v1-spark-lmk-death.md). 16384 is the measured
+     * safe ceiling there (run103 ladder, ticket-2026-11-16-v1-spark-safe-ceiling.md).
+     * A device whose total memory is at most [PHONE_RAM_CEILING_BYTES] never plans above
+     * [PHONE_CTX_CEILING] unless `ctx_force` deliberately overrides the ladder.
+     */
+    const val PHONE_RAM_CEILING_BYTES = 12L * 1024 * 1024 * 1024
+    const val PHONE_CTX_CEILING = 16384
+
+    /** Test seam for the device's total memory; null reads `/proc/meminfo` (MemTotal, the
+     *  same source the fleet gates big models on). Unknown (<= 0) means unclassified and
+     *  imposes no ceiling — the cap is a phone-device rule, not a JVM-host rule. */
+    @Volatile
+    var totalRamBytesOverride: Long? = null
+
+    fun totalRamBytes(): Long = totalRamBytesOverride ?: readMemTotalBytes()
+
+    internal fun readMemTotalBytes(): Long = try {
+        java.io.File("/proc/meminfo").useLines { lines ->
+            lines.first { it.startsWith("MemTotal:") }
+                .trim().split(Regex("\\s+"))[1].toLong() * 1024L
+        }
+    } catch (t: Throwable) {
+        -1L
+    }
+
+    /** The US-003 hard ceiling for this device: 16384 on anything with <= 12 GB total. */
+    internal fun phoneCtxCeiling(): Int =
+        if (totalRamBytes() in 1..PHONE_RAM_CEILING_BYTES) PHONE_CTX_CEILING else Int.MAX_VALUE
+
     fun plan(
         info: GgufModelInfo,
         availableRamBytes: Long,
@@ -88,7 +122,10 @@ object ContextPlanner {
         // exact window is the whole reason that knob exists. Both are inert by default, so the
         // shipped behaviour is unchanged on an untuned device. The !isComplete branch above keeps
         // ignoring them: with untrustworthy metadata there is no KV estimate to size against.
-        val ceiling = if (tunables.ctxMax > 0) minOf(info.nCtxTrain, tunables.ctxMax) else info.nCtxTrain
+        // The phone ceiling binds first (hardware class), then ctx_max can only lower it
+        // further; ctx_force below still bypasses both because it is an explicit debug choice.
+        val hardCeiling = minOf(phoneCtxCeiling(), tunables.ctxMax.let { if (it > 0) it else Int.MAX_VALUE })
+        val ceiling = minOf(info.nCtxTrain, hardCeiling)
         val rungs = if (tunables.ctxForce > 0) {
             listOf(tunables.ctxForce)
         } else {
@@ -162,8 +199,16 @@ object ContextPlanner {
      */
     fun estimateBytes(info: GgufModelInfo, nCtx: Int, cache: KvCacheType): Long {
         val effectiveCtx = info.slidingWindow?.let { minOf(nCtx, it) } ?: nCtx
-        val perToken = info.nHeadKv.toDouble() *
+        var perToken = info.nHeadKv.toDouble() *
             (info.nEmbdHeadK * cache.bytesPerElement + info.nEmbdHeadV * cache.bytesPerElement)
+        // F16 rungs must be billed at the FA-OFF layout. On our GPU-offload devices FA
+        // resolves DISABLED (measured 144 KiB/token vs the 72 KiB FA-on arithmetic on
+        // spark2_5 — floor/ticket-2026-11-16-v1-spark-lmk-death.md): the split K+V cache
+        // is exactly 2x the FA-packed one. The flashAttnFor flag describes what the
+        // planner requests; the offload boundary is where it actually dies, so the
+        // estimate assumes the measured reality instead. Quantised rungs always run FA
+        // and are untouched. Conservative for a hypothetical CPU-only load.
+        if (cache == KvCacheType.F16) perToken *= 2.0
         val kvCache = info.nLayers.toDouble() * effectiveCtx * perToken
         val computeBuffer = (info.nVocab.toDouble() + info.nEmbd) * N_UBATCH * 4
         return ((info.weightsBytes + kvCache + computeBuffer) * HEADROOM_WITH_METADATA).roundToLong()
