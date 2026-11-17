@@ -161,7 +161,16 @@ class LlamaCppProvider(
         // layered on. Resolved per load so flipping the switch takes effect on the next chat,
         // no reinstall. Embeddings are a separate loader (LlamaCppEmbedder.nativeLoadModel,0)
         // and stay on CPU regardless - the KV guard + planner Q8_0 invariant is untouched.
-        val gpuLayers = resolveGpuLayers(
+                // Engine-pack lane (US-006): per model load, re-scan verified packs and state the
+        // chosen backend honestly. A decline or absence leaves the built-in engine lane
+        // exactly as before - the graft adds a gate, never a new failure mode.
+        EnginePackRegistry.logSelection(
+            root = EnginePackRegistry.appRoot(),
+            openclStubPresent = EnginePackRegistry.openclStubPresent(),
+            npuRequested = EngineTunables.npuActive(),
+        )
+
+val gpuLayers = resolveGpuLayers(
             forceCpu = prefs.forceCpu(LocalRuntime.LlamaCpp),
             propOverride = gpuLayersOverride(),
         )
