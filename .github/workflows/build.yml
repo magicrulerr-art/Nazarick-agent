@@ -948,30 +948,47 @@ jobs:
       - name: PROBE SDK layout (fail loud before cmake)
         run: |
           set -euo pipefail
-          export HEXAGON_SDK_ROOT="$(find "$HOME/hexagon-sdk" -maxdepth 3 -type f -path '*/build/cmake/hexagon_fun.cmake' -printf '%h\n' | head -n1 | sed 's#/build/cmake$##')"
+          # Layout of record (run 44150286687): the tarball unpacks to
+          # $HOME/hexagon-sdk/<version>/..., so hexagon_fun.cmake sits at depth 4 - a
+          # maxdepth-3 find misses it and reports "tree reordered" when it is not.
+          export HEXAGON_SDK_ROOT="$(find "$HOME/hexagon-sdk" -maxdepth 4 -type f -path '*/build/cmake/hexagon_fun.cmake' -printf '%h\n' | head -n1 | sed 's#/build/cmake$##')"
           test -n "$HEXAGON_SDK_ROOT" -a -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake" || {
             echo "::error::hexagon_fun.cmake not found under $HOME/hexagon-sdk - mirror tree reordered; layout:"
             find "$HOME/hexagon-sdk" -maxdepth 3 | head -100
             exit 1
           }
+          test -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_arch.cmake" || { echo "::error::hexagon_arch.cmake missing (htp/cmake-toolchain.cmake includes it)"; ls "$HEXAGON_SDK_ROOT/build/cmake"; exit 1; }
+          test -d "$HEXAGON_SDK_ROOT/incs" -a -d "$HEXAGON_SDK_ROOT/utils/examples" || { echo "::error::incs/ or utils/examples missing (htp_iface needs them)"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
+          test -d "$HEXAGON_SDK_ROOT/rtos/qurt" || { echo "::error::rtos/qurt missing - mirror is userspace-only, QURT links in htp/cmake-toolchain.cmake cannot resolve"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
           echo "HEXAGON_SDK_ROOT=$HEXAGON_SDK_ROOT" >> "$GITHUB_ENV"
-          export HEXAGON_TOOLS_ROOT="$(find "$HEXAGON_SDK_ROOT/tools" -maxdepth 1 -mindepth 1 -type d | sort | tail -n1)"
-          test -d "$HEXAGON_TOOLS_ROOT" || { echo "::error::no tools dir under $HEXAGON_SDK_ROOT/tools"; ls -la "$HEXAGON_SDK_ROOT" || true; exit 1; }
-          echo "HEXAGON_TOOLS_ROOT=$HEXAGON_TOOLS_ROOT" >> "$GITHUB_ENV"
           ls "$HEXAGON_SDK_ROOT/build/cmake"
-          ls "$HEXAGON_TOOLS_ROOT"/*/bin || ls -la "$HEXAGON_TOOLS_ROOT"
-          ls tools/ 2>/dev/null || true
+          ls "$HEXAGON_SDK_ROOT/rtos/qurt" | head -20
+          # The skel toolchain resolves <HEXAGON_TOOLS_ROOT>/Tools/{bin,target/lib,lib/iss},
+          # i.e. the SDK's tools/HEXAGON_Tools/<version> dir - not tools/ itself and not the
+          # lexicographically-last entry (that is tools/utils, which has no compiler).
+          export HEXAGON_TOOLS_ROOT="$(find "$HEXAGON_SDK_ROOT/tools" -maxdepth 4 -type f -name hexagon-clang -printf '%h\n' | head -n1 | sed 's#/Tools/bin$##')"
+          test -n "$HEXAGON_TOOLS_ROOT" -a -x "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" || {
+            echo "::error::no Tools/bin/hexagon-clang under $HEXAGON_SDK_ROOT/tools; contents:"
+            find "$HEXAGON_SDK_ROOT/tools" -maxdepth 3 | head -60
+            exit 1
+          }
+          echo "HEXAGON_TOOLS_ROOT=$HEXAGON_TOOLS_ROOT" >> "$GITHUB_ENV"
+          "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" --version | head -3
+          ls "$HEXAGON_SDK_ROOT/rtos/qurt" | grep -i compute | head -10 || true
 
-      - name: cmake configure (GGML_HEXAGON=ON, v73) + build skel target
+      - name: cmake configure (GGML_HEXAGON=ON) + build the v73 skel
         run: |
           set -euo pipefail
           export HEXAGON_SDK_ROOT HEXAGON_TOOLS_ROOT
-          export CLANG_BIN="$HEXAGON_TOOLS_ROOT/LLVM/bin"   # ticket step 4; path probe above must confirm
-          cmake -S llama-cpp/native/llama.cpp/ggml/src/ggml-hexagon -B build-hex \
-            -DGGML_HEXAGON=ON -DHEXAGON_ARCH=v73 -DCMAKE_BUILD_TYPE=Release
-          # Skel-only (libggml-htp*.so via ExternalProject). Canonical upstream name is
-          # ggml-htp-all; fall back to --target skel if this run says the target is unknown.
-          cmake --build build-hex --target ggml-htp-all -- -j"$(nproc)"
+          # ggml/src/ggml-hexagon/CMakeLists.txt carries no project() of its own (ggml adds
+          # it), so configuring that directory standalone cannot work - it dies on
+          # ggml_add_backend_library. Configure llama.cpp and ask for the skel's
+          # ExternalProject target: build_htp_skel(v73) -> ExternalProject_Add(htp-v73),
+          # which is what emits libggml-htp-v73.so. The host ggml-hexagon lib is not built
+          # here; the skel is the artifact this lane exists for.
+          cmake -S llama-cpp/native/llama.cpp -B build-hex \
+            -DCMAKE_BUILD_TYPE=Release -DGGML_HEXAGON=ON -DLLAMA_CURL=OFF -DBUILD_TESTING=OFF
+          cmake --build build-hex --target htp-v73 -- -j"$(nproc)"
 
       - name: Upload skel artifact
         uses: actions/upload-artifact@v4
