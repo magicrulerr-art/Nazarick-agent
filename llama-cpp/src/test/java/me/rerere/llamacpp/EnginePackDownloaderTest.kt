@@ -159,7 +159,7 @@ class EnginePackDownloaderTest {
             }, unpackFake("XXXXXXXtent".toByteArray())) // same length, wrong bytes -> FILE_HASH
             val failed = expectIs<EnginePackDownloader.Outcome.Failed>(dlNew.installFrom(bytes2, sig2, "u"))
             assertEquals("verify", failed.stage)
-            assertEquals("FILE_HASH", failed.detail)
+            assertEquals("gate detail", "FILE_HASH", failed.detail)
             val (packs, declined) = EnginePackRegistry.scan(root)
             assertEquals("leftovers must be gone: " + declined.map { it.dir.name + ":" + it.reason },
                 0, declined.size)

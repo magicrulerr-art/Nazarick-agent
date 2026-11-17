@@ -128,7 +128,8 @@ class EnginePackRegistryTest {
             File(dir, "libllama.so").writeBytes("same-size Payload".toByteArray()) // 17 B again, different bytes
             val declined = expectIs<EnginePackRegistry.Result.Declined>(
                 EnginePackRegistry.loadPack(dir), "tampered lib")
-            assertEquals(EnginePackRegistry.DeclineReason.FILE_HASH, declined.decline.reason)
+            assertEquals("tamper-decline reason=" + declined.decline.reason.name + " detail=" + declined.decline.detail,
+                "FILE_HASH", declined.decline.reason.name)
         } finally {
             root.deleteRecursively()
         }

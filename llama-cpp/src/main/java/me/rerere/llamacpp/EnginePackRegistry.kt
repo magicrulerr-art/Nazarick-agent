@@ -256,7 +256,7 @@ object EnginePackRegistry {
 
     // ---- minimal JSON (object of scalars/arrays only, pack-v1 schema) ----
 
-    internal fun parseManifest(text: String): ParsedManifest {
+    fun parseManifest(text: String): ParsedManifest {
         val obj = JsonObjectReader(text).readObject()
         val files = (obj["files"] as? List<*>).orEmpty().map { e ->
             val fo = e as Map<*, *>
