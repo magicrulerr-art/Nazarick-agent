@@ -3,22 +3,32 @@ package me.rerere.llamacpp
 import java.io.File
 import java.security.KeyPairGenerator
 import java.security.Signature
-import java.util.Locale
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 /**
  * US-006: engine-pack registry gates. Two evidence layers:
  *  - REAL bytes: manifest.json + pack.sig under test resources were produced by the Python
  *    enginepack CLI against the shipped v1.0 APK libs (cross-tool canonical-bytes proof).
  *  - synthetic fixture: tiny fake libs signed in-process, for the tamper matrix.
+ *
+ * JUnit4 (`org.junit`) is this module's test harness - every sibling suite uses it and
+ * `testImplementation(libs.junit)` is the proven dependency. kotlin.test does not resolve on
+ * this classpath (CI run 44100584573), so outcome narrowing goes through [expectIs] and JUnit
+ * puts the failure message FIRST.
  */
+
+/** assertIs equivalent that hands back the narrowed value (JUnit4 has no such helper). */
+private inline fun <reified T : Any> expectIs(value: Any?, what: String = "result"): T =
+    value as? T ?: throw AssertionError(
+        what + " is " + (value?.javaClass?.name ?: "null") + ", expected " + T::class.java.name,
+    )
+
 class EnginePackRegistryTest {
     private fun resource(name: String): File =
-        File(javaClass.classLoader.getResource("packv1/$name")!!.file)
+        File(javaClass.classLoader.getResource("packv1/$name")!!.toURI())
 
     private fun signHex(kp: java.security.KeyPair, data: ByteArray): ByteArray {
         val s = Signature.getInstance("Ed25519")
@@ -54,7 +64,8 @@ class EnginePackRegistryTest {
     fun `python-produced manifest bytes are byte-identical to canonical`() {
         val onDisk = resource("manifest.json").readBytes()
         val parsed = EnginePackRegistry.parseManifest(onDisk.decodeToString())
-        assertEquals(String(onDisk), String(EnginePackRegistry.canonical(parsed)))
+        assertEquals("canonical bytes must reproduce the CLI output",
+            String(onDisk), String(EnginePackRegistry.canonical(parsed)))
     }
 
     @Test
@@ -66,22 +77,21 @@ class EnginePackRegistryTest {
             resource("manifest.json").copyTo(File(pack, "manifest.json"), overwrite = true)
             resource("pack.sig").copyTo(File(pack, ".sig"), overwrite = true)
             // files listed in the manifest are absent -> signature passes, file gate declines
-            val declined = EnginePackRegistry.loadPack(pack)
-            assertIs<EnginePackRegistry.Result.Declined>(declined)
+            val declined = expectIs<EnginePackRegistry.Result.Declined>(
+                EnginePackRegistry.loadPack(pack), "real pack with no libs")
             assertEquals(EnginePackRegistry.DeclineReason.FILE_MISSING, declined.decline.reason)
             // canonical byte gate: flip one char in manifest text, sig must now reject
             val raw = resource("manifest.json").readBytes()
             val flipped = raw.copyOf().also { it[1] = (it[1].toInt() xor 1).toByte() }
             File(pack, "manifest.json").writeBytes(flipped)
-            val r2 = EnginePackRegistry.loadPack(pack)
-            assertIs<EnginePackRegistry.Result.Declined>(r2)
-            assertTrue(
+            val r2 = expectIs<EnginePackRegistry.Result.Declined>(
+                EnginePackRegistry.loadPack(pack), "tampered manifest")
+            assertTrue("got " + r2.decline.reason,
                 r2.decline.reason in setOf(
                     EnginePackRegistry.DeclineReason.NOT_CANONICAL,
                     EnginePackRegistry.DeclineReason.BAD_JSON,
                     EnginePackRegistry.DeclineReason.BAD_SIGNATURE,
-                ), "got " + r2.decline.reason,
-            )
+                ))
         } finally {
             dir.deleteRecursively()
         }
@@ -95,12 +105,14 @@ class EnginePackRegistryTest {
         try {
             val libs = mapOf("libllama.so" to "ELF fake one".toByteArray(), "libggml.so" to "ELF fake two".toByteArray())
             val dir = syntheticPack(root, libs, kp)
-            val res = EnginePackRegistry.loadPack(dir)
-            assertIs<EnginePackRegistry.Result.Accepted>(res)
-            assertEquals(1, res.pack.version)
-            assertTrue(EnginePackRegistry.Backend.OPENCL in res.pack.backends)
+            val installed = expectIs<EnginePackRegistry.Result.Accepted>(
+                EnginePackRegistry.loadPack(dir), "pack signed with the wired key")
+            assertEquals(1, installed.pack.version)
+            assertTrue("opencl must survive the round trip: " + installed.pack.backends,
+                EnginePackRegistry.Backend.OPENCL in installed.pack.backends)
             val (packs, declined) = EnginePackRegistry.scan(root)
-            assertEquals(1, packs.size); assertEquals(0, declined.size)
+            assertEquals(1, packs.size)
+            assertEquals("declined=" + declined.map { it.reason }, 0, declined.size)
         } finally {
             root.deleteRecursively()
         }
@@ -114,9 +126,9 @@ class EnginePackRegistryTest {
         try {
             val dir = syntheticPack(root, mapOf("libllama.so" to "same-size payload".toByteArray()), kp)
             File(dir, "libllama.so").writeBytes("same-size payloade".toByteArray()) // same length, new bytes
-            val res = EnginePackRegistry.loadPack(dir)
-            assertIs<EnginePackRegistry.Result.Declined>(res)
-            assertEquals(EnginePackRegistry.DeclineReason.FILE_HASH, res.decline.reason)
+            val declined = expectIs<EnginePackRegistry.Result.Declined>(
+                EnginePackRegistry.loadPack(dir), "tampered lib")
+            assertEquals(EnginePackRegistry.DeclineReason.FILE_HASH, declined.decline.reason)
         } finally {
             root.deleteRecursively()
         }
@@ -137,25 +149,30 @@ class EnginePackRegistryTest {
         }
     }
 
+    /** Method name carries no colon: JVM method names reject ':' (CI run 44100584573). */
     @Test
-    fun `selection: npu decline, opencl and builtin fallback, honest lines`() {
+    fun `selection declines absent npu then falls back to opencl and builtin`() {
         val kp = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
         EnginePackRegistry.pubKeyHex = pubHexOf(kp.public)
         val root = kotlin.io.path.createTempDirectory("packv1-select").toFile()
         try {
             // no packs at all -> builtin cpu, never npu/crash
             val (b0, p0) = EnginePackRegistry.selectBackend(emptyList(), openclStubPresent = true, npuRequested = true)
-            assertEquals(EnginePackRegistry.Backend.CPU, b0); assertNull(p0)
-            assertEquals("enginepack: backend=cpu pack=builtin", EnginePackRegistry.selectionLine(b0, p0))
+            assertEquals(EnginePackRegistry.Backend.CPU, b0)
+            assertNull(p0)
+            assertEquals("backend=cpu pack=builtin", EnginePackRegistry.selectionLine(b0, p0))
             // cpu+opencl pack, stub present, npu requested -> opencl (npu absent declines gracefully)
             val dir = syntheticPack(root, mapOf("libllama.so" to "x".toByteArray()), kp)
             val (packs, _) = EnginePackRegistry.scan(root)
             val (b1, p1) = EnginePackRegistry.selectBackend(packs, openclStubPresent = true, npuRequested = true)
-            assertEquals(EnginePackRegistry.Backend.OPENCL, b1); assertEquals("demo-engine", p1)
+            assertEquals(EnginePackRegistry.Backend.OPENCL, b1)
+            assertEquals("demo-engine", p1)
             // stub missing -> cpu lane from the same pack
             val (b2, p2) = EnginePackRegistry.selectBackend(packs, openclStubPresent = false, npuRequested = false)
-            assertEquals(EnginePackRegistry.Backend.CPU, b2); assertEquals("demo-engine", p2)
-            assertEquals("enginepack: backend=opencl pack=demo-engine", EnginePackRegistry.selectionLine(EnginePackRegistry.Backend.OPENCL, "demo-engine"))
+            assertEquals(EnginePackRegistry.Backend.CPU, b2)
+            assertEquals("demo-engine", p2)
+            assertEquals("backend=opencl pack=demo-engine",
+                EnginePackRegistry.selectionLine(EnginePackRegistry.Backend.OPENCL, "demo-engine"))
         } finally {
             root.deleteRecursively()
         }

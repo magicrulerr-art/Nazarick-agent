@@ -4,10 +4,8 @@ import java.io.File
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.Signature
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Test
 
 /**
  * US-007: pack fetch pipeline on a fake transport. Registry gates themselves are covered
@@ -15,10 +13,26 @@ import kotlin.test.assertTrue
  * resume-aware fetch -> unpack -> size/sha verify (post-install gate) -> atomic rename ->
  * refuse-downgrade -> rollback to the previous pack when the gate declines. Real Ed25519
  * on the JVM, no device, no Robolectric.
+ *
+ * JUnit4 (`org.junit`) is this module's test harness: every sibling suite uses it and
+ * `testImplementation(libs.junit)` is the proven dependency. kotlin.test is NOT usable on
+ * this classpath (CI run 44100584573: 69 unresolved-reference errors across the two suites
+ * that tried it), so outcome narrowing goes through [expectIs] instead of kotlin.test's
+ * contract-carrying assertIs.
  */
+
+/** sha256 as hex. Top-level so both the fixture and the tests can call it: a nested (non-inner)
+ *  class has no outer instance, so a member `sha` is not reachable from [EnginePackDownloaderTest.Fixture]. */
+private fun shaHex(b: ByteArray): String =
+    MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
+
+/** assertIs equivalent that hands back the narrowed value (JUnit4 has no such helper). */
+private inline fun <reified T : Any> expectIs(value: Any?, what: String = "outcome"): T =
+    value as? T ?: throw AssertionError(
+        what + " is " + (value?.javaClass?.name ?: "null") + ", expected " + T::class.java.name,
+    )
+
 class EnginePackDownloaderTest {
-    private fun sha(b: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
 
     private class Fixture(content: ByteArray) {
         private fun pubHex(pub: java.security.PublicKey): String =
@@ -40,7 +54,7 @@ class EnginePackDownloaderTest {
                 id = "dl-engine", version = 1, abi = "arm64-v8a",
                 backends = listOf(EnginePackRegistry.Backend.CPU, EnginePackRegistry.Backend.OPENCL),
                 minApi = 26, enginePin = "0123456789abcdef",
-                files = listOf(Triple("libllama.so", content.size.toLong(), sha(content))),
+                files = listOf(Triple("libllama.so", content.size.toLong(), shaHex(content))),
             )
             val bytes = EnginePackRegistry.canonical(m)
             val s = Signature.getInstance("Ed25519")
@@ -67,11 +81,12 @@ class EnginePackDownloaderTest {
                 part.writeBytes(ByteArray(total.toInt()))
                 total
             }, unpackFake("ELF fake".toByteArray()))
-            val res = dl.installFrom(fx.manifestBytes, fx.sig, "https://example.invalid/p.zip")
-            assertIs<EnginePackDownloader.Outcome.Installed>(res)
-            assertEquals(1, res.pack.version)
+            val installed = expectIs<EnginePackDownloader.Outcome.Installed>(
+                dl.installFrom(fx.manifestBytes, fx.sig, "https://example.invalid/p.zip"),
+            )
+            assertEquals(1, installed.pack.version)
             val (packs, declined) = EnginePackRegistry.scan(root)
-            assertEquals(1, packs.size, "declined=" + declined.map { it.reason })
+            assertEquals("declined=" + declined.map { it.reason }, 1, packs.size)
             assertEquals(File(root, "engine-packs/dl-engine-1"), packs[0].dir)
         } finally {
             root.deleteRecursively()
@@ -93,8 +108,7 @@ class EnginePackDownloaderTest {
                 part.writeBytes(ByteArray(total.toInt()))
                 total
             }, unpackFake("payload!".toByteArray()))
-            val res = dl.installFrom(fx.manifestBytes, fx.sig, "u")
-            assertIs<EnginePackDownloader.Outcome.Installed>(res)
+            expectIs<EnginePackDownloader.Outcome.Installed>(dl.installFrom(fx.manifestBytes, fx.sig, "u"))
             assertEquals(listOf(3L), seen)
         } finally {
             root.deleteRecursively()
@@ -113,10 +127,12 @@ class EnginePackDownloaderTest {
                 part.writeBytes(ByteArray(total.toInt()))
                 total
             }, unpackFake("same bytes".toByteArray()))
-            assertIs<EnginePackDownloader.Outcome.Installed>(dl.installFrom(fx.manifestBytes, fx.sig, "u"))
+            expectIs<EnginePackDownloader.Outcome.Installed>(dl.installFrom(fx.manifestBytes, fx.sig, "u"))
             val again = dl.installFrom(fx.manifestBytes, fx.sig, "u")
-            assertIs<EnginePackDownloader.Outcome.RefusedDowngrade>(again)
-            assertEquals(1, fetches, "refusal must not re-download")
+            val refused = expectIs<EnginePackDownloader.Outcome.RefusedDowngrade>(again)
+            assertEquals("refusal must not re-download", 1, fetches)
+            assertEquals(1, refused.installedVersion)
+            assertEquals(1, refused.candidateVersion)
         } finally {
             root.deleteRecursively()
         }
@@ -130,25 +146,25 @@ class EnginePackDownloaderTest {
             val dlOld = EnginePackDownloader(root, { _, part, _ ->
                 part.writeBytes(ByteArray(64)); 64L
             }, unpackFake("OLD content".toByteArray()))
-            assertIs<EnginePackDownloader.Outcome.Installed>(dlOld.installFrom(fxOld.manifestBytes, fxOld.sig, "u"))
+            expectIs<EnginePackDownloader.Outcome.Installed>(dlOld.installFrom(fxOld.manifestBytes, fxOld.sig, "u"))
 
             // new candidate version 2 whose unpacked bytes do not match its manifest sha
             val bytes2 = EnginePackRegistry.canonical(
                 fxOld.manifest.copy(version = 2,
-                    files = listOf(Triple("libllama.so", 11L, sha("NEW content".toByteArray())))),
+                    files = listOf(Triple("libllama.so", 11L, shaHex("NEW content".toByteArray())))),
             )
             val sig2 = fxOld.sign(bytes2)
             val dlNew = EnginePackDownloader(root, { _, part, _ ->
                 part.writeBytes(ByteArray(64)); 64L
             }, unpackFake("XXXXXXXtent".toByteArray())) // same length, wrong bytes -> FILE_HASH
-            val res = dlNew.installFrom(bytes2, sig2, "u")
-            assertIs<EnginePackDownloader.Outcome.Failed>(res)
-            assertEquals("verify", res.stage)
-            assertEquals("FILE_HASH", res.detail)
+            val failed = expectIs<EnginePackDownloader.Outcome.Failed>(dlNew.installFrom(bytes2, sig2, "u"))
+            assertEquals("verify", failed.stage)
+            assertEquals("FILE_HASH", failed.detail)
             val (packs, declined) = EnginePackRegistry.scan(root)
-            assertEquals(0, declined, "leftovers must be gone: " + declined.map { it.packDir.name + ":" + it.reason })
+            assertEquals("leftovers must be gone: " + declined.map { it.dir.name + ":" + it.reason },
+                0, declined.size)
             assertEquals(1, packs.size)
-            assertEquals(1, packs[0].version, "old pack must still serve")
+            assertEquals("old pack must still serve", 1, packs[0].version)
         } finally {
             root.deleteRecursively()
         }

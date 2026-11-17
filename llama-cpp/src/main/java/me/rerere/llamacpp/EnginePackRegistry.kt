@@ -25,7 +25,17 @@ object EnginePackRegistry {
 
     /** Test seam + app wiring: 64-hex Ed25519 public key (raw, X25519-style seed form NOT used). */
     @Volatile
+    /** Test/backdoor override: when non-null ONLY this key is trusted (unit tests use it).
+     *  Production trust is EMBEDDED_KEYS below — keys live in code because trust cannot
+     *  travel inside the signed artifact itself. */
     var pubKeyHex: String? = null
+
+    /** Embedded trust list, named for logcat honesty. Production key (owner custody) lands
+     *  here as a third entry; rotation = bump min_app_vc, per packtools README. */
+    private val EMBEDDED_KEYS = listOf(
+        "us005-test" to "18fc2b94bd2fda07c1654a9c609820b2b67da868e1def2b42cc773ea7cb644b4",
+        "us009-test2" to "1c3b5360e36c2c1790684adce92d7b7daaaa1f76be4bfe4db76f4de215d12724",
+    )
 
     /** App wiring (call once at startup, e.g. EngineBootstrap): remembers the dirs the
      *  pack lanes read. Both are plain fields so JVM tests can drive the registry
@@ -106,13 +116,16 @@ object EnginePackRegistry {
         if (!bytes.contentEquals(canon)) {
             return Result.Declined(PackDecline(dir, DeclineReason.NOT_CANONICAL))
         }
-        val pubHex = pubKeyHex
-            ?: return Result.Declined(PackDecline(dir, DeclineReason.NO_PUBLIC_KEY))
+        val candidates = pubKeyHex?.let { listOf("override" to it) } ?: EMBEDDED_KEYS
+        if (candidates.isEmpty()) return Result.Declined(PackDecline(dir, DeclineReason.NO_PUBLIC_KEY))
         val sig = File(dir, ".sig")
         if (!sig.isFile) return Result.Declined(PackDecline(dir, DeclineReason.BAD_SIGNATURE, "missing .sig"))
-        if (!verifyEd25519(pubHex, bytes, sig.readBytes())) {
+        val sigBytes = sig.readBytes()
+        val signer = candidates.firstOrNull { verifyEd25519(it.second, bytes, sigBytes) }
+        if (signer == null) {
             return Result.Declined(PackDecline(dir, DeclineReason.BAD_SIGNATURE))
         }
+        Log.i(TAG, "enginepack: signed-by " + signer.first + " dir=" + dir.name)
         for ((path, size, sha) in manifest.files) {
             val f = File(dir, path)
             if (!f.isFile) return Result.Declined(PackDecline(dir, DeclineReason.FILE_MISSING, path))
@@ -170,14 +183,21 @@ object EnginePackRegistry {
     }
 
     fun selectionLine(backend: Backend, packId: String?): String =
-        "enginepack: backend=" + backend.name.lowercase(Locale.US) +
+        "backend=" + backend.name.lowercase(Locale.US) +
             " pack=" + (packId ?: "builtin")
 
     /** No wired root (tests, early boot): honest builtin selection, single log line. */
-    fun logSelection(root: java.io.File?, openclStubPresent: Boolean, npuRequested: Boolean): Pair<Backend, String?> {
-        if (root == null) {
-            Log.i(TAG, selectionLine(Backend.CPU, null))
-            return Backend.CPU to null
+    fun logSelection(
+        root: java.io.File?,
+        openclStubPresent: Boolean,
+        npuRequested: Boolean,
+        packsEnabled: Boolean = true,
+    ): Pair<Backend, String?> {
+        if (root == null || !packsEnabled) {
+            if (!packsEnabled) Log.i(TAG, "enginepack: lane off (engine_pack=off), built-in engine only")
+            val b = if (openclStubPresent) Backend.OPENCL else Backend.CPU
+            Log.i(TAG, selectionLine(b, null))
+            return b to null
         }
         return scanAndLog(root, openclStubPresent, npuRequested)
     }

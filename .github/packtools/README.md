@@ -24,3 +24,7 @@ wrong key rejected, sha-gate on equal-size content, canonical stability, manifes
 atomic+idempotent install-layout).
 Real pack v1: built from vendored native libs of APK 9c3cb03e4 (7 arm64-v8a libs, cpu+opencl),
 repro\npu\packs\nazarick-engine-llamacpp-1.zip sha256 1509b5c463f9b71671088aeee9c5d24235d896aa7150426958c3663ff061a428.
+
+## Key register
+- test_pub.hex  = us005-test key (signed the first published pack, sha 1509b5c4). Seed: custody lost with W1 scratch — key kept valid in EMBEDDED_KEYS, no new signings.
+- test_pub2.hex = us009-test2 key (CI lane). Seed lives ONLY as repo Actions secret ENGINEPACK_SIGNING_SEED; local backup repro\npu\test2_seed.hex (workspace, not committed). Both pubs embedded in EnginePackRegistry.EMBEDDED_KEYS; production key (owner custody) = third entry on promotion.

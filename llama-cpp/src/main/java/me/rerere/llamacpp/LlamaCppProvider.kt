@@ -168,6 +168,7 @@ class LlamaCppProvider(
             root = EnginePackRegistry.appRoot(),
             openclStubPresent = EnginePackRegistry.openclStubPresent(),
             npuRequested = EngineTunables.npuActive(context),
+            packsEnabled = EngineTunables.fromSystemProperties().enginePack != "off",
         )
 
 val gpuLayers = resolveGpuLayers(

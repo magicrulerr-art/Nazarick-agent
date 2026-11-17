@@ -844,6 +844,7 @@ jobs:
   # (same philosophy as the keystore step). On mission branches PACK_DRY_RUN keeps uploads
   # to a draft; main publishes.
   pack-release:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     needs: [assemble]
     runs-on: ubuntu-latest
     env:
@@ -865,9 +866,8 @@ jobs:
         run: |
           set -eu
           if [ -z "${ENGINEPACK_SIGNING_SEED:-}" ]; then
-            echo "ENGINEPACK_SIGNING_SEED not configured - pack job SKIPs (green)."
-            echo "skip=1" >> "$GITHUB_ENV"
-            exit 0
+            echo "::error::ENGINEPACK_SIGNING_SEED (64-hex ed25519 seed) is not configured; signing must fail loudly, never silently skip (US-009)."
+            exit 1
           fi
           mkdir -p stage pack-out
           python - "$PWD" <<'PY'
@@ -882,13 +882,13 @@ jobs:
                       open(os.path.join(here, "stage", os.path.basename(n)), "wb").write(z.read(n))
           PY
           printf '%s' "$ENGINEPACK_SIGNING_SEED" > seed.hex
+          trap 'rm -f seed.hex' EXIT
           python .github/packtools/enginepack.py create --src stage --out pack-out \
             --id "$PACK_ID" --version "$PACK_VERSION" --backend cpu,opencl --min-api 26 \
             --engine-pin "$(git ls-tree HEAD llama-cpp/native/llama.cpp | awk '{print $3}')" \
             --key seed.hex
           rm seed.hex
       - name: Publish pack release
-        if: env.skip != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -906,3 +906,77 @@ jobs:
               --notes "Pack v1, sha256: $(sha256sum "$ZIP" | cut -d' ' -f1)" || \
             gh release upload "$TAG" "$ZIP" pack-out/manifest.json --clobber
           fi
+
+# DRAFT — hexagon-skel job, for merge into .github/workflows/build.yml
+# (replaces/gates alongside the dead `hexagon:` job at build.yml line 634+;
+#  do NOT merge my own work — Albedo reviews, Demiurge verifies.)
+# Provenance (floor/ticket-2026-11-17-hexagon-build-lane-plan.md, 2026-11-17):
+#   - SDK = login-free community mirror (snapdragon-toolchain/hexagon-sdk v6.7.0.0,
+#     asset 741,882,016 B, anonymous download verified live 2026-11-17). Mirror
+#     unblocks the lane; official zip + licensing review still owed for anything shipped.
+#   - Vendored cmake (fork pin 4284599ac): GGML_HEXAGON option, reads
+#     HEXAGON_SDK_ROOT / HEXAGON_TOOLS_ROOT env + $HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake.
+#   - PROBE-before-configure is mandatory (fail loud, no 40-min cmake wander).
+#   - Arch: z7 = SM8750 -> v73 skel. ccache (ticket step 7) deferred to follow-up.
+  hexagon-skel:
+    name: hexagon skel (v73) native lane
+    needs: []
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'mission/npu-signed-engine-packs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HEXAGON_SDK_URL: https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download + unpack Hexagon SDK (community mirror, ~742 MB)
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o "$HOME/hexagon-sdk.tar.xz" "$HEXAGON_SDK_URL"
+          mkdir -p "$HOME/hexagon-sdk"
+          tar -xJf "$HOME/hexagon-sdk.tar.xz" -C "$HOME/hexagon-sdk"
+          ls "$HOME/hexagon-sdk"
+
+      - name: PROBE SDK layout (fail loud before cmake)
+        run: |
+          set -euo pipefail
+          export HEXAGON_SDK_ROOT="$(find "$HOME/hexagon-sdk" -maxdepth 3 -type f -path '*/build/cmake/hexagon_fun.cmake' -printf '%h\n' | head -n1 | sed 's#/build/cmake$##')"
+          test -n "$HEXAGON_SDK_ROOT" -a -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake" || {
+            echo "::error::hexagon_fun.cmake not found under $HOME/hexagon-sdk - mirror tree reordered; layout:"
+            find "$HOME/hexagon-sdk" -maxdepth 3 | head -100
+            exit 1
+          }
+          echo "HEXAGON_SDK_ROOT=$HEXAGON_SDK_ROOT" >> "$GITHUB_ENV"
+          export HEXAGON_TOOLS_ROOT="$(find "$HEXAGON_SDK_ROOT/tools" -maxdepth 1 -mindepth 1 -type d | sort | tail -n1)"
+          test -d "$HEXAGON_TOOLS_ROOT" || { echo "::error::no tools dir under $HEXAGON_SDK_ROOT/tools"; ls -la "$HEXAGON_SDK_ROOT" || true; exit 1; }
+          echo "HEXAGON_TOOLS_ROOT=$HEXAGON_TOOLS_ROOT" >> "$GITHUB_ENV"
+          ls "$HEXAGON_SDK_ROOT/build/cmake"
+          ls "$HEXAGON_TOOLS_ROOT"/*/bin || ls -la "$HEXAGON_TOOLS_ROOT"
+          ls tools/ 2>/dev/null || true
+
+      - name: cmake configure (GGML_HEXAGON=ON, v73) + build skel target
+        run: |
+          set -euo pipefail
+          export HEXAGON_SDK_ROOT HEXAGON_TOOLS_ROOT
+          export CLANG_BIN="$HEXAGON_TOOLS_ROOT/LLVM/bin"   # ticket step 4; path probe above must confirm
+          cmake -S llama-cpp/native/llama.cpp/ggml/src/ggml-hexagon -B build-hex \
+            -DGGML_HEXAGON=ON -DHEXAGON_ARCH=v73 -DCMAKE_BUILD_TYPE=Release
+          # Skel-only (libggml-htp*.so via ExternalProject). Canonical upstream name is
+          # ggml-htp-all; fall back to --target skel if this run says the target is unknown.
+          cmake --build build-hex --target ggml-htp-all -- -j"$(nproc)"
+
+      - name: Upload skel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexagon-skel-v73
+          path: |
+            build-hex/**/*.so
+          if-no-files-found: error

@@ -77,6 +77,10 @@ data class EngineTunables(
      *  The parse side does not need the grammar: tool calls are extracted by the template
      *  parser carried in the same applied blob. `true` re-arms it for A/B benches. */
     val toolGrammar: Boolean = false,
+    /** Engine-pack lane (US-006 AC2): "auto" = verified packs drive backend selection;
+     *  "off" = pin the built-in engine no matter what is installed. Part of the tune bundle
+     *  so a bench replay records it like every other knob. */
+    val enginePack: String = "auto",
 ) {
     companion object {
         const val PROPERTY = "debug.nazarick.tune"
@@ -139,6 +143,8 @@ data class EngineTunables(
                         val b = value.toBooleanStrictOrNull()
                         if (b != null) t = t.copy(toolGrammar = b) else rejected += pair
                     }
+                    "engine_pack" ->
+                        if (value == "auto" || value == "off") t = t.copy(enginePack = value) else rejected += pair
                     "flash_attn" -> {
                         val b = value.toBooleanStrictOrNull()
                         if (b != null) t = t.copy(flashAttention = b) else rejected += pair
@@ -192,6 +198,7 @@ data class EngineTunables(
             append(" ram_safety=").append(ramSafetyFraction)
             append(" reasoning=").append(reasoning ?: "template")
             append(" tool_grammar=").append(toolGrammar)
+            append(" engine_pack=").append(enginePack)
             append(" flash_attn=").append(flashAttention ?: "auto").append(" kv=").append(kvPreference)
         }
         return if (this == DEFAULT) s else "$s   (OVERRIDDEN)"
