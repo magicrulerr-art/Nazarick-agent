@@ -888,18 +888,30 @@ jobs:
             --engine-pin "$(git ls-tree HEAD llama-cpp/native/llama.cpp | awk '{print $3}')" \
             --key seed.hex
           rm seed.hex
-          # The CLI writes the zip as <out>.zip (pack-out.zip), but the app resolves the
-          # asset by name: <id>-<version>.zip under the release (EnginePackReleases).
-          # Rename here so the release carries the name the client asks for.
-          mv pack-out.zip "${PACK_ID}-${PACK_VERSION}.zip"
-          ls -l . pack-out
+          # Asset name is a client contract: EnginePackReleases resolves
+          # <release>/<id>-<version>.zip, so that is the only acceptable name on disk here.
+          # packtools has shipped both layouts (HEAD writes <out>.zip beside the dir; the
+          # in-tree revision writes <out>/<id>-<version>.zip inside it), so normalise to the
+          # contract instead of betting on one revision. Neither present = fail loud.
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"
+          if [ ! -f "$ZIP" ]; then
+            if [ -f pack-out.zip ]; then
+              mv pack-out.zip "$ZIP"
+              echo "normalised pack-out.zip -> $ZIP (CLI wrote the sibling layout)"
+            else
+              echo "::error::enginepack.py produced neither $ZIP nor pack-out.zip"
+              ls -l . pack-out || true
+              exit 1
+            fi
+          fi
+          ls -l pack-out
       - name: Publish pack release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
           TAG="enginepack-${PACK_ID}-${PACK_VERSION}"
-          ZIP="${PACK_ID}-${PACK_VERSION}.zip"
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"   # normalised in the assemble step
           if [ "$PACK_DRY_RUN" = "true" ]; then
             gh release create "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig \
               --draft --title "engine pack $PACK_ID v$PACK_VERSION (dry-run)" \

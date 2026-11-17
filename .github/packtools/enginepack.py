@@ -69,9 +69,13 @@ def cmd_create(args) -> int:
     priv = bytes.fromhex(open(args.key, encoding="utf-8").read().strip())
     with open(os.path.join(out, SIGFILE), "wb") as f:
         f.write(ed.sign(priv, data))
-    zpath = out + ".zip"
+    # Archive name is part of the release contract: the app fetches
+    # <id>-<version>.zip from the release (EnginePackReleases) - keep in sync.
+    zpath = os.path.join(out, "{}-{}.zip".format(args.id, args.version))
+    members = [n for n in sorted(os.listdir(out))
+               if os.path.isfile(os.path.join(out, n)) and n != os.path.basename(zpath)]
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-        for name in sorted(os.listdir(out)):
+        for name in members:
             z.write(os.path.join(out, name), name)
     print("created {} files={} pack_zip={} zip_sha256={}".format(
         out, len(files), zpath, sha256_file(zpath)))
