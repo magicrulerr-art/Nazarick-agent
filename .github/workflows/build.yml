@@ -940,7 +940,17 @@ jobs:
             RID="$(printf '%s' "$POST_BODY" | jq -r '.id // empty')"
           fi
           [ -n "$RID" ] || { echo "::error::cannot resolve or create release for tag $TAG"; exit 1; }
-          gh release upload "$RID" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber
+          # gh release upload takes tag/NAME not numeric id ("release not found"), and
+          # gh tag-resolution itself is poisoned under the dispatch token. Full REST:
+          for AID in $(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases/$RID/assets" | jq -r '.[].id'); do
+            curl -s -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" "$API/releases/assets/$AID" >/dev/null
+          done
+          for PAIR in "$ZIP#nazarick-engine-llamacpp-1.zip" "pack-out/manifest.json#manifest.json" "pack-out/.sig#pack.sig"; do
+            F="${PAIR%%#*}"; N="${PAIR##*#}"
+            curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Content-Type: application/octet-stream" \
+              --data-binary "@$F" "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RID/assets?name=$N" | jq -r '.name // .message'
+          done
           echo "published pack assets to release $RID for tag $TAG (draft=$PACK_DRY_RUN)"
           curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
             "$API/releases/$RID/assets" | jq -r '.[].name'
