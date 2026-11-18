@@ -919,19 +919,19 @@ jobs:
           set -eu
           TAG="enginepack-${PACK_ID}-${PACK_VERSION}"
           ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"   # normalised in the assemble step
-          if [ "$PACK_DRY_RUN" = "true" ]; then
-            gh release create "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig \
-              --draft --title "engine pack $PACK_ID v$PACK_VERSION (dry-run)" \
-              --notes "US-009 dry-run lane; not consumable until published from main." || {
-              # tag already exists (the US-005 pack) - refresh all three assets, sig included:
-              # a manifest without its .sig is unverifiable on device.
-              gh release upload "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber; }
-          else
-            gh release create "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig \
-              --title "engine pack $PACK_ID v$PACK_VERSION" \
-              --notes "Pack v1, sha256: $(sha256sum "$ZIP" | cut -d' ' -f1)" || \
-            gh release upload "$TAG" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber
+          # NEVER trust `gh release create` against an already-published tag: it exits 0 but
+          # binds the new release to an untagged lease (silent draft; assets invisible at the
+          # app's download URL - proven twice on this lane). Resolve the tag's release id and
+          # upload explicitly; a manifest without its sig is unverifiable, so ship all three.
+          RID="$(gh release view "$TAG" --json id --jq .id 2>/dev/null || true)"
+          if [ -z "$RID" ]; then
+            gh release create "$TAG" --draft="$PACK_DRY_RUN" --title "engine pack $PACK_ID v$PACK_VERSION" \
+              --notes "Pack v1, sha256: $(sha256sum "$ZIP" | cut -d' ' -f1)" >/dev/null
+            RID="$(gh release view "$TAG" --json id --jq .id)"
           fi
+          gh release upload "$RID" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber
+          echo "published pack assets to release $RID for tag $TAG (draft=$PACK_DRY_RUN)"
+          gh release view "$RID" --json assets --jq '.assets[].name' 
 
 # DRAFT — hexagon-skel job, for merge into .github/workflows/build.yml
 # (replaces/gates alongside the dead `hexagon:` job at build.yml line 634+;
