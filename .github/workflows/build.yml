@@ -1049,8 +1049,17 @@ jobs:
           # ExternalProject target: build_htp_skel(v73) -> ExternalProject_Add(htp-v73),
           # which is what emits libggml-htp-v73.so. The host ggml-hexagon lib is not built
           # here; the skel is the artifact this lane exists for.
+          # ggml-hexagon/CMakeLists.txt:1-6 tests the CMake VARIABLE (file(TO_CMAKE_PATH
+          # "${HEXAGON_SDK_ROOT}") then if (NOT IS_DIRECTORY ...)), not $ENV{...}. Exporting
+          # the variables is not enough - an empty variable reads as "not a directory" and the
+          # job dies with "Make sure HEXAGON_SDK_ROOT point to the correct Hexagon SDK
+          # installation" (run 44233723439, probe green, compiler at
+          # tools/HEXAGON_Tools/21.0.04/Tools/bin/hexagon-clang). Pass both as -D defines;
+          # CMAKE_TRY_COMPILE_PLATFORM_VARIABLES in htp/cmake-toolchain.cmake then carries
+          # them into the ExternalProject sub-configure as well.
           cmake -S llama-cpp/native/llama.cpp -B build-hex \
-            -DCMAKE_BUILD_TYPE=Release -DGGML_HEXAGON=ON -DLLAMA_CURL=OFF -DBUILD_TESTING=OFF
+            -DCMAKE_BUILD_TYPE=Release -DGGML_HEXAGON=ON -DLLAMA_CURL=OFF -DBUILD_TESTING=OFF \
+            -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT"
           cmake --build build-hex --target htp-v73 -- -j"$(nproc)"
 
       - name: Upload skel artifact
