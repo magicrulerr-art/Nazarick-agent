@@ -880,7 +880,10 @@ jobs:
           python - "$PWD" <<'PY'
           import os, sys, zipfile
           here = sys.argv[1]
-          apk = next(f for f in os.listdir(os.path.join(here, "apk-in")) if f.endswith(".apk"))
+          apks = sorted(f for f in os.listdir(os.path.join(here, "apk-in")) if f.endswith(".apk"))
+          # artifact ships 3 splits; ext4 listdir order is arbitrary and x86_64-first
+          # produced a vacuous files=0 pack (run 44372825734). Pin arm64.
+          apk = next(f for f in apks if "arm64" in f)
           want = ("libllama.so", "libllama-common.so", "libggml.so", "libggml-base.so",
                   "libggml-cpu.so", "libggml-opencl.so", "libllamajni.so")
           with zipfile.ZipFile(os.path.join(here, "apk-in", apk)) as z:
@@ -888,6 +891,8 @@ jobs:
                   if n.startswith("lib/arm64-v8a/") and os.path.basename(n) in want:
                       open(os.path.join(here, "stage", os.path.basename(n)), "wb").write(z.read(n))
           PY
+          STAGE_N="$(ls stage | wc -l)"
+          [ "$STAGE_N" -eq 7 ] || { echo "::error::stage has $STAGE_N files, expected 7 (apk=$apk)"; ls -l apk-in; exit 1; }
           printf '%s' "$ENGINEPACK_SIGNING_SEED" > seed.hex
           trap 'rm -f seed.hex' EXIT
           python .github/packtools/enginepack.py create --src stage --out pack-out \
