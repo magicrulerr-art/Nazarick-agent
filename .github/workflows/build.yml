@@ -917,6 +917,10 @@ jobs:
             fi
           fi
           ls -l pack-out
+      - name: Verify pack (sig + per-file sha, US-009 AC1)
+        run: |
+          set -eu
+          python .github/packtools/enginepack.py verify --dir pack-out --pubkey .github/packtools/test_pub2.hex
       - name: Publish pack release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
