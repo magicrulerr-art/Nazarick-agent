@@ -844,13 +844,13 @@ jobs:
   # (ff203f18f: a silently-skipped signing step is how US-009 loses its whole point). On
   # mission branches PACK_DRY_RUN keeps uploads to a draft; main publishes.
   pack-release:
-    # gh release create/upload writes to the Releases API; the workflow default is
-    # contents: read, so run 44203008603 died with
-    # "HTTP 403: Resource not accessible by integration". Only this job needs write.
-    permissions:
-      contents: write
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     needs: [assemble]
+    # gh release create/upload writes to the Releases API; the workflow default is
+    # contents: read (build.yml:43), so run 44203008603 died with
+    # "HTTP 403: Resource not accessible by integration" on BOTH the create and the
+    # upload fallback. One permissions key per job - the Actions parser rejects a
+    # duplicate mapping key, which is what a rebase onto 7b61b722b just produced.
     permissions:
       contents: write
     runs-on: ubuntu-latest
