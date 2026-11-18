@@ -923,12 +923,20 @@ jobs:
           # binds the new release to an untagged lease (silent draft; assets invisible at the
           # app's download URL - proven twice on this lane). Resolve the tag's release id and
           # upload explicitly; a manifest without its sig is unverifiable, so ship all three.
-          RID="$(gh release view "$TAG" --json id --jq .id 2>/dev/null || true)"
+          # gh release view returns "release not found" for this tag under GITHUB_TOKEN on
+          # non-default-branch dispatches (run 44244153078; same endpoint answers 200 under a
+          # classic PAT) - so resolve via raw REST and PRINT the body on failure, no more
+          # guessing. POST binds an existing tag cleanly (422 if a release exists, never a
+          # silent untagged lease - that was the gh-cli behavior).
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          BODY="$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$TAG")"
+          RID="$(printf '%s' "$BODY" | jq -r '.id // empty')"
           if [ -z "$RID" ]; then
-            gh release create "$TAG" --draft="$PACK_DRY_RUN" --title "engine pack $PACK_ID v$PACK_VERSION" \
-              --notes "Pack v1, sha256: $(sha256sum "$ZIP" | cut -d' ' -f1)" >/dev/null
-            RID="$(gh release view "$TAG" --json id --jq .id)"
+            echo "tags endpoint: $(printf '%s' "$BODY" | head -c 240)"
+            RID="$(curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"engine pack $PACK_ID v$PACK_VERSION\",\"body\":\"US-009 CI-signed engine pack\",\"draft\":$PACK_DRY_RUN,\"target_commitish\":\"$GITHUB_SHA\"}" | jq -r '.id // empty')"
           fi
+          [ -n "$RID" ] || { echo "::error::cannot resolve or create release for tag $TAG"; exit 1; }
           gh release upload "$RID" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber
           echo "published pack assets to release $RID for tag $TAG (draft=$PACK_DRY_RUN)"
           gh release view "$RID" --json assets --jq '.assets[].name' 
