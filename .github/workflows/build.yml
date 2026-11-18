@@ -846,6 +846,8 @@ jobs:
   pack-release:
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     needs: [assemble]
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     env:
       PACK_ID: nazarick-engine-llamacpp
