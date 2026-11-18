@@ -53,17 +53,17 @@ class EnginePackDownloader(
         packsDir().mkdirs()
         stagingDir().mkdirs()
         val part = File(stagingDir(), dirName + ".part")
-        val want = manifest.files.sumOf { it.second }
         val got = try {
             fetch(zipUrl, part, part.length())
         } catch (e: Throwable) {
             return Outcome.Failed("fetch", e.message ?: "transport error")
         }
-        if (got != want) {
-            // pack zip carries manifest+libs, so total > sum(libs) is normal; only a
-            // truncated transfer (< sum) is provably wrong here. The per-file gate decides.
-            if (got < want) return Outcome.Failed("fetch", "short transfer: got $got want $want")
-        }
+        // No size heuristic here: the zip is DEFLATE, so its total is SMALLER than the sum
+        // of member sizes (proven on Fold 2026-11-18: got 4,601,344 vs sum 13,361,408 ->
+        // a bogus "short transfer" declined every valid pack). Integrity = zip CRC at unpack
+        // + per-file sha256 against the SIGNED manifest in the registry gate. Only an empty
+        // transfer is provably wrong at this layer.
+        if (got <= 0L) return Outcome.Failed("fetch", "empty transfer")
         val stageDir = File(stagingDir(), dirName)
         stageDir.deleteRecursively()
         stageDir.mkdirs()
