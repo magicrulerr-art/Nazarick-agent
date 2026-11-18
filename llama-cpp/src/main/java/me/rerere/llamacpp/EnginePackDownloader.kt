@@ -75,6 +75,18 @@ class EnginePackDownloader(
         part.delete()
         File(stageDir, "manifest.json").writeBytes(manifestBytes)
         File(stageDir, ".sig").writeBytes(sigBytes)
+        // Pre-gate the staged bytes BEFORE the rename (verifier gap 2026-11-18): a decline
+        // here never touches the installed pack, so a crash between rename and gate cannot
+        // strand the .prev copy as highest. The post-rename gate below stays authoritative
+        // for on-disk identity; this one only screens. loadPack works on any dir holding
+        // the pack layout, staging included.
+        when (val pre = EnginePackRegistry.loadPack(stageDir)) {
+            is EnginePackRegistry.Result.Declined -> {
+                stageDir.deleteRecursively()
+                return Outcome.Failed("verify", pre.decline.reason.name)
+            }
+            is EnginePackRegistry.Result.Accepted -> Unit
+        }
         val target = File(packsDir(), dirName)
         val rotated = target.exists()
         if (rotated) {
