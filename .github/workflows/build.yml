@@ -840,10 +840,15 @@ jobs:
   # US-009: engine-pack release lane. Builds a pack v1 from the arm64 native libs of the
   # nazarick APK artifact, signs the manifest with the ENGINEPACK_SIGNING_SEED secret
   # (Ed25519 32-byte hex seed; the app embeds the matching PUBLIC key), and publishes a
-  # GitHub Release named enginepack-<id>-<version>. Without the secret the job SKIPs green
-  # (same philosophy as the keystore step). On mission branches PACK_DRY_RUN keeps uploads
-  # to a draft; main publishes.
+  # GitHub Release named enginepack-<id>-<version>. Without the secret the job FAILS loud
+  # (ff203f18f: a silently-skipped signing step is how US-009 loses its whole point). On
+  # mission branches PACK_DRY_RUN keeps uploads to a draft; main publishes.
   pack-release:
+    # gh release create/upload writes to the Releases API; the workflow default is
+    # contents: read, so run 44203008603 died with
+    # "HTTP 403: Resource not accessible by integration". Only this job needs write.
+    permissions:
+      contents: write
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
     needs: [assemble]
     permissions:
@@ -985,6 +990,23 @@ jobs:
           # hex-utils.h, hmx-utils.h all live in-tree). Mirror lacks it -> warn, do not block.
           test -d "$HEXAGON_SDK_ROOT/utils/examples" || echo "::warning::utils/examples absent (mirror strips it); -I will dangle harmlessly at this pin"
           test -d "$HEXAGON_SDK_ROOT/rtos/qurt" || { echo "::error::rtos/qurt missing - mirror is userspace-only, QURT links in htp/cmake-toolchain.cmake cannot resolve"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
+          # rtos/qurt existing is not enough: htp/cmake-toolchain.cmake sets
+          # RTOS_DIR=$HEXAGON_SDK_ROOT/rtos/qurt/compute<arch> and links the skel against
+          # $RTOS_DIR/lib/{crt1.o,debugmon.o,libqurt.a,libqurtcfs.a,libtimer_main.a,
+          # libtimer_island.a,libposix.a}. Ask for the arches we actually build (v73 is this
+          # lane's target) rather than trusting the parent dir - a mirror carrying only newer
+          # arches fails here in seconds instead of at the link.
+          for a in v73 v75 v79 v81 v85; do
+            if [ -f "$HEXAGON_SDK_ROOT/rtos/qurt/compute$a/lib/libqurt.a" ]; then
+              echo "qurt OK: compute$a"
+            else
+              echo "qurt MISSING: compute$a"
+            fi
+          done
+          test -f "$HEXAGON_SDK_ROOT/rtos/qurt/computev73/lib/libqurt.a" || {
+            echo "::error::computev73 QURT libs absent - this mirror cannot link a v73 skel"
+            ls "$HEXAGON_SDK_ROOT/rtos/qurt" 2>/dev/null | head -20 || ls "$HEXAGON_SDK_ROOT"
+            exit 1; }
           echo "HEXAGON_SDK_ROOT=$HEXAGON_SDK_ROOT" >> "$GITHUB_ENV"
           ls "$HEXAGON_SDK_ROOT/build/cmake"
           ls "$HEXAGON_SDK_ROOT/rtos/qurt" | head -20
