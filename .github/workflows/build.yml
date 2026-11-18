@@ -942,7 +942,8 @@ jobs:
           [ -n "$RID" ] || { echo "::error::cannot resolve or create release for tag $TAG"; exit 1; }
           gh release upload "$RID" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber
           echo "published pack assets to release $RID for tag $TAG (draft=$PACK_DRY_RUN)"
-          gh release view "$RID" --json assets --jq '.assets[].name' 
+          curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$API/releases/$RID/assets" | jq -r '.[].name'
 
 # DRAFT — hexagon-skel job, for merge into .github/workflows/build.yml
 # (replaces/gates alongside the dead `hexagon:` job at build.yml line 634+;
