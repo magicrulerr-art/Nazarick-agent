@@ -430,7 +430,7 @@ jobs:
     name: debug apk (diag)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    if: github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race'
+    if: github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race' || (github.event_name == 'workflow_dispatch' && github.ref_name == 'mission/npu-signed-engine-packs')
     concurrency:
       group: debug-${{ github.ref }}
       cancel-in-progress: true
@@ -1010,17 +1010,32 @@ jobs:
           echo "HEXAGON_SDK_ROOT=$HEXAGON_SDK_ROOT" >> "$GITHUB_ENV"
           ls "$HEXAGON_SDK_ROOT/build/cmake"
           ls "$HEXAGON_SDK_ROOT/rtos/qurt" | head -20
-          # The skel toolchain resolves <HEXAGON_TOOLS_ROOT>/Tools/{bin,target/lib,lib/iss},
-          # i.e. the SDK's tools/HEXAGON_Tools/<version> dir - not tools/ itself and not the
-          # lexicographically-last entry (that is tools/utils, which has no compiler).
-          # depth of record: tools/HEXAGON_Tools/<ver>/Tools/bin/hexagon-clang = depth 5 under tools/
-          export HEXAGON_TOOLS_ROOT="$(find "$HEXAGON_SDK_ROOT/tools" -maxdepth 5 -type f -name hexagon-clang -printf '%h\n' | head -n1 | sed 's#/Tools/bin$##')"
-          test -n "$HEXAGON_TOOLS_ROOT" -a -x "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" || {
-            echo "::error::no Tools/bin/hexagon-clang under $HEXAGON_SDK_ROOT/tools; contents:"
-            find "$HEXAGON_SDK_ROOT/tools" -maxdepth 3 | head -60
+          # Compiler resolution must not bet on depth or on file-vs-symlink. Evidence:
+          # run 44223164865 listed tools/HEXAGON_Tools/21.0.04 as present, yet
+          # "find tools -maxdepth 5 -type f -name hexagon-clang" found nothing - so the driver
+          # is either a symlink (which -type f drops) or lives one tier deeper. Search both
+          # kinds, then derive the root from the path that actually matched.
+          CLANG="$(find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 6 \( -type f -o -type l \) -name 'hexagon-clang' -print -quit)"
+          if [ -z "$CLANG" ]; then
+            echo "::error::no hexagon-clang (regular file or symlink) under tools/HEXAGON_Tools; tree:"
+            find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 4 | head -60
             exit 1
-          }
+          fi
+          test -x "$CLANG" || { echo "::error::driver found but not executable: $CLANG"; ls -l "$CLANG"; exit 1; }
+          echo "compiler driver: $CLANG"
+          # htp/cmake-toolchain.cmake wants <HEXAGON_TOOLS_ROOT>/Tools/bin/hexagon-clang
+          HEXAGON_TOOLS_ROOT="${CLANG%/Tools/bin/hexagon-clang}"
+          if [ "$HEXAGON_TOOLS_ROOT" = "$CLANG" ]; then
+            echo "::error::driver is not under a Tools/bin/ path - toolchain cannot resolve it: $CLANG"
+            find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 4 | head -60
+            exit 1
+          fi
+          export HEXAGON_TOOLS_ROOT
           echo "HEXAGON_TOOLS_ROOT=$HEXAGON_TOOLS_ROOT" >> "$GITHUB_ENV"
+          # same toolchain also reads Tools/target/hexagon/lib (TARGET_DIR) and Tools/lib/iss
+          for d in Tools/bin Tools/target/hexagon/lib Tools/lib/iss; do
+            if [ -d "$HEXAGON_TOOLS_ROOT/$d" ]; then echo "tools OK: $d"; else echo "::warning::tools dir missing: $d"; fi
+          done
           "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" --version | head -3
           ls "$HEXAGON_SDK_ROOT/rtos/qurt" | grep -i compute | head -10 || true
 
