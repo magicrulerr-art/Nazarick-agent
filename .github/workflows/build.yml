@@ -933,9 +933,11 @@ jobs:
           BODY="$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$TAG")"
           RID="$(printf '%s' "$BODY" | jq -r '.id // empty')"
           if [ -z "$RID" ]; then
-            echo "tags endpoint: $(printf '%s' "$BODY" | head -c 240)"
-            RID="$(curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
-              "$API/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"engine pack $PACK_ID v$PACK_VERSION\",\"body\":\"US-009 CI-signed engine pack\",\"draft\":$PACK_DRY_RUN,\"target_commitish\":\"$GITHUB_SHA\"}" | jq -r '.id // empty')"
+            echo "releases/tags endpoint says: $(printf '%s' "$BODY" | head -c 300)"
+            POST_BODY="$(curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"engine pack $PACK_ID v$PACK_VERSION\",\"body\":\"US-009 CI-signed engine pack\",\"draft\":$PACK_DRY_RUN,\"target_commitish\":\"$GITHUB_SHA\"}")"
+            echo "release POST says: $(printf '%s' "$POST_BODY" | head -c 400)"
+            RID="$(printf '%s' "$POST_BODY" | jq -r '.id // empty')"
           fi
           [ -n "$RID" ] || { echo "::error::cannot resolve or create release for tag $TAG"; exit 1; }
           gh release upload "$RID" "$ZIP" pack-out/manifest.json pack-out/.sig#pack.sig --clobber
