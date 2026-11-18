@@ -1013,7 +1013,8 @@ jobs:
           # The skel toolchain resolves <HEXAGON_TOOLS_ROOT>/Tools/{bin,target/lib,lib/iss},
           # i.e. the SDK's tools/HEXAGON_Tools/<version> dir - not tools/ itself and not the
           # lexicographically-last entry (that is tools/utils, which has no compiler).
-          export HEXAGON_TOOLS_ROOT="$(find "$HEXAGON_SDK_ROOT/tools" -maxdepth 4 -type f -name hexagon-clang -printf '%h\n' | head -n1 | sed 's#/Tools/bin$##')"
+          # depth of record: tools/HEXAGON_Tools/<ver>/Tools/bin/hexagon-clang = depth 5 under tools/
+          export HEXAGON_TOOLS_ROOT="$(find "$HEXAGON_SDK_ROOT/tools" -maxdepth 5 -type f -name hexagon-clang -printf '%h\n' | head -n1 | sed 's#/Tools/bin$##')"
           test -n "$HEXAGON_TOOLS_ROOT" -a -x "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" || {
             echo "::error::no Tools/bin/hexagon-clang under $HEXAGON_SDK_ROOT/tools; contents:"
             find "$HEXAGON_SDK_ROOT/tools" -maxdepth 3 | head -60
