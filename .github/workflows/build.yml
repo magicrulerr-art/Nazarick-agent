@@ -1057,9 +1057,24 @@ jobs:
           # tools/HEXAGON_Tools/21.0.04/Tools/bin/hexagon-clang). Pass both as -D defines;
           # CMAKE_TRY_COMPILE_PLATFORM_VARIABLES in htp/cmake-toolchain.cmake then carries
           # them into the ExternalProject sub-configure as well.
+          #
+          # PREBUILT_LIB_DIR is the SDK's bug to route around, not ours to ignore:
+          # SDK 6.7.0.0 build/cmake/hexagon_fun.cmake:99-106 runs
+          #   string(FIND ${PREBUILT_LIB_DIR} "toolvNN" is_toolvNN)
+          # unquoted, and at include time (ggml-hexagon/CMakeLists.txt:22) that variable is
+          # set only inside build_htp_skel's -D list - so the expansion collapses to two
+          # arguments and cmake aborts with "string sub-command FIND requires 3 or 4
+          # parameters" x8 (run 44239759500). A cache entry satisfies it before the include;
+          # each skel ExternalProject still passes its own toolv21_<arch>, and for v73 the
+          # value is exactly what that function would derive. Upstream quotes these lines
+          # after pin 4284599ac - a submodule bump would also fix it, but that changes the
+          # engine pin the packs carry, so it is Demiurge's call, not a side effect here.
+          # Proven locally against the real file + cmake 4.4.5: unset -> the x8 error;
+          # toolv21_v73 -> is_toolv81/84/88 = -1, no errors (repro/npu/findrepro.cmake).
           cmake -S llama-cpp/native/llama.cpp -B build-hex \
             -DCMAKE_BUILD_TYPE=Release -DGGML_HEXAGON=ON -DLLAMA_CURL=OFF -DBUILD_TESTING=OFF \
-            -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT"
+            -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT" \
+            -DPREBUILT_LIB_DIR=toolv21_v73
           cmake --build build-hex --target htp-v73 -- -j"$(nproc)"
 
       - name: Upload skel artifact
