@@ -46,6 +46,7 @@ import androidx.compose.foundation.background
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,6 +66,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dokar.sonner.ToastType
 import me.rerere.ai.provider.ClaudePromptCacheTtl
 import me.rerere.ai.provider.ProviderSetting
+import me.rerere.ai.provider.providers.nazarick.NazarickCheckOutcome
+import me.rerere.ai.provider.providers.nazarick.NazarickClient
 import me.rerere.llamacpp.LlamaCppCatalog
 import me.rerere.llamacpp.LlamaCppCatalogEntry
 import me.rerere.locallm.LocalRuntime
@@ -161,6 +164,10 @@ fun ProviderConfigure(
             is ProviderSetting.Codex -> Unit
             is ProviderSetting.Grok -> Unit
             is ProviderSetting.GeminiOAuth -> Unit
+
+            is ProviderSetting.Nazarick -> {
+                ProviderConfigureNazarick(provider, onEdit)
+            }
         }
     }
 }
@@ -180,6 +187,7 @@ fun ProviderSetting.convertTo(type: KClass<out ProviderSetting>): ProviderSettin
         is ProviderSetting.Codex -> "" // OAuth, no API key
         is ProviderSetting.Grok -> "" // OAuth, no API key
         is ProviderSetting.GeminiOAuth -> "" // OAuth, no API key
+        is ProviderSetting.Nazarick -> this.token // the Bearer token is Nazarick's credential
     }
     val sourceBaseUrl = when (this) {
         is ProviderSetting.OpenAI -> this.baseUrl
@@ -193,6 +201,7 @@ fun ProviderSetting.convertTo(type: KClass<out ProviderSetting>): ProviderSettin
         is ProviderSetting.Codex -> "" // OAuth, no base URL
         is ProviderSetting.Grok -> "" // OAuth, no base URL
         is ProviderSetting.GeminiOAuth -> "" // OAuth, no base URL
+        is ProviderSetting.Nazarick -> this.baseUrl
     }
     val targetDefaultBaseUrl = when (type) {
         ProviderSetting.OpenAI::class -> ProviderSetting.OpenAI().baseUrl
@@ -253,6 +262,7 @@ internal fun ProviderSetting.defaultBaseUrlForReset(): String {
             is ProviderSetting.Codex -> return "" // OAuth, no base URL
             is ProviderSetting.Grok -> return "" // OAuth, no base URL
             is ProviderSetting.GeminiOAuth -> return "" // OAuth, no base URL
+            is ProviderSetting.Nazarick -> return this.baseUrl // user-entered instance address is its own default
         }
     }
     return when (this) {
@@ -267,6 +277,7 @@ internal fun ProviderSetting.defaultBaseUrlForReset(): String {
         is ProviderSetting.Codex -> ""
         is ProviderSetting.Grok -> ""
         is ProviderSetting.GeminiOAuth -> ""
+        is ProviderSetting.Nazarick -> ""
     }
 }
 
@@ -284,6 +295,7 @@ internal fun ProviderSetting.resetBaseUrlToDefault(): ProviderSetting {
         is ProviderSetting.Codex -> this // no base URL to reset
         is ProviderSetting.Grok -> this // no base URL to reset
         is ProviderSetting.GeminiOAuth -> this // no base URL to reset
+        is ProviderSetting.Nazarick -> this.copy(baseUrl = defaultBaseUrl)
     }
 }
 
@@ -300,6 +312,7 @@ internal fun ProviderSetting.isUsingDefaultBaseUrl(): Boolean {
         is ProviderSetting.Codex -> return true // no base URL concept
         is ProviderSetting.Grok -> return true // no base URL concept
         is ProviderSetting.GeminiOAuth -> return true // no base URL concept
+        is ProviderSetting.Nazarick -> this.baseUrl
     }
     return baseUrl == defaultBaseUrlForReset()
 }
@@ -860,6 +873,104 @@ private fun ProviderConfigureGoogle(
             modifier = Modifier.fillMaxWidth(),
         )
     }
+}
+
+@Composable
+private fun ProviderConfigureNazarick(
+    provider: ProviderSetting.Nazarick,
+    onEdit: (provider: ProviderSetting.Nazarick) -> Unit
+) {
+    provider.description()
+
+    OutlinedTextField(
+        value = provider.name,
+        onValueChange = { onEdit(provider.copy(name = it)) },
+        label = { Text(stringResource(R.string.setting_provider_page_name)) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    var tokenVisible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = provider.token,
+        onValueChange = { onEdit(provider.copy(token = it.trim())) },
+        label = { Text(stringResource(R.string.setting_provider_page_api_key)) },
+        modifier = Modifier.fillMaxWidth(),
+        maxLines = 3,
+        visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { tokenVisible = !tokenVisible }) {
+                Icon(if (tokenVisible) HugeIcons.ViewOff else HugeIcons.View, contentDescription = stringResource(if (tokenVisible) R.string.accessibility_hide_password else R.string.accessibility_show_password))
+            }
+        },
+    )
+
+    OutlinedTextField(
+        value = provider.baseUrl,
+        onValueChange = { onEdit(provider.copy(baseUrl = it.trim())) },
+        label = { Text(stringResource(R.string.setting_provider_page_api_base_url)) },
+        modifier = Modifier.fillMaxWidth(),
+        isError = provider.baseUrl.isNotBlank() && !provider.baseUrl.isValidBaseUrl(),
+    )
+
+    OutlinedTextField(
+        value = provider.agentId,
+        onValueChange = { onEdit(provider.copy(agentId = it.trim())) },
+        label = { Text("Agent ID") },
+        modifier = Modifier.fillMaxWidth(),
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(stringResource(R.string.setting_provider_page_enable))
+        Switch(
+            checked = provider.enabled,
+            onCheckedChange = { onEdit(provider.copy(enabled = it)) }
+        )
+    }
+
+    // Test Connection (US-001): step 1 GET /api/version (no auth, proves reach), then
+    // step 2 GET /api/auth/verify (Bearer, proves the token). Step 2 only runs after a
+    // reachable instance so a wrong token never masquerades as a dead server; each step
+    // renders its own green/red row.
+    val nazarickClient = remember { NazarickClient() }
+    val scope = rememberCoroutineScope()
+    var testing by remember { mutableStateOf(false) }
+    var instanceOutcome by remember { mutableStateOf<NazarickCheckOutcome?>(null) }
+    var tokenOutcome by remember { mutableStateOf<NazarickCheckOutcome?>(null) }
+
+    Button(
+        onClick = {
+            scope.launch {
+                testing = true
+                val reach = nazarickClient.checkInstance(provider.baseUrl)
+                instanceOutcome = reach
+                tokenOutcome = if (reach == NazarickCheckOutcome.OK) {
+                    nazarickClient.checkToken(provider.baseUrl, provider.token)
+                } else {
+                    null
+                }
+                testing = false
+            }
+        },
+        enabled = !testing,
+    ) {
+        Text(if (testing) "Testing..." else "Test Connection")
+    }
+    instanceOutcome?.let { NazarickCheckRow("1 · Instance reachable (" + NazarickClient.VERSION_PATH + ")", it) }
+    tokenOutcome?.let { NazarickCheckRow("2 · Token valid (" + NazarickClient.VERIFY_PATH + ")", it) }
+}
+
+@Composable
+private fun NazarickCheckRow(label: String, outcome: NazarickCheckOutcome) {
+    val ok = outcome == NazarickCheckOutcome.OK
+    Text(
+        text = "$label - ${if (ok) "OK" else outcome.name.lowercase()}",
+        color = if (ok) Color(0xFF1B8A3C) else Color(0xFFC62828),
+        style = MaterialTheme.typography.bodyMedium,
+    )
 }
 
 @Composable

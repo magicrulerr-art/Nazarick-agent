@@ -829,6 +829,13 @@ val dataSourceModule = module {
                     json = json,
                 )
             )
+            // Nazarick (US-001): scaffold provider, refuses inference until US-004 wires
+            // the chat protocol. Registration keeps getProviderByType exhaustive-dispatch
+            // honest: the stub names US-004 instead of the manager 404ing on the name.
+            pm.registerProvider(
+                "nazarick",
+                me.rerere.ai.provider.providers.nazarick.NazarickProvider(),
+            )
         }
     }
 
