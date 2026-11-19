@@ -264,7 +264,11 @@ class NazarickResponsesParserTest {
         val obj = Json.parseToJsonElement(line.removePrefix("data:").trim()) as JsonObject
         assertEquals("text", requireNotNull(obj["type"]).jsonPrimitive.contentOrNull)
         assertTrue("the snapshot line must be the delta=false aggregation", obj["delta"]?.jsonPrimitive?.booleanOrNull == false)
-        return requireNotNull(obj["text"]).jsonPrimitive.contentOrNull
+        // The snapshot line's whole-block text is what the assertion compares against: a missing or
+        // JSON-null `text` is a broken fixture, so fail loudly by name instead of returning null.
+        return requireNotNull(obj["text"]?.jsonPrimitive?.contentOrNull) {
+            "the delta=false snapshot line carries no text value: $line"
+        }
     }
 
     private fun loadFixture(): String {
