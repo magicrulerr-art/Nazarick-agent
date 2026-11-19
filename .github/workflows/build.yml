@@ -974,9 +974,11 @@ jobs:
 #   - Vendored cmake (fork pin 4284599ac): GGML_HEXAGON option, reads
 #     HEXAGON_SDK_ROOT / HEXAGON_TOOLS_ROOT env + $HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake.
 #   - PROBE-before-configure is mandatory (fail loud, no 40-min cmake wander).
-#   - Arch: z7 = SM8750 -> v73 skel. ccache (ticket step 7) deferred to follow-up.
+#   - Arch: CORRECTION 2026-11-18: z7 = SM8750 (8 Elite) reports DSP V79, NOT v73
+#     (V79-family trap, QNN lane + executorch #21586). v73 stays for older targets;
+#     v79 added as LOUD-OPTIONAL below. ccache (ticket step 7) deferred to follow-up.
   hexagon-skel:
-    name: hexagon skel (v73) native lane
+    name: hexagon skel (v73 + v79?) native lane
     needs: []
     if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'mission/npu-signed-engine-packs' }}
     runs-on: ubuntu-latest
@@ -1107,11 +1109,23 @@ jobs:
             -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT" \
             -DPREBUILT_LIB_DIR=toolv21_v73
           cmake --build build-hex --target htp-v73 -- -j"$(nproc)"
+          # V79 for SM8750-class devices (z7, Fold7). At pin 4284599ac it is UNKNOWN
+          # whether build_htp_skel enumerates an htp-v79 target: attempt LOUDLY.
+          # A missing target must print SKIPPED with cmake's own error - never silent.
+          set +e
+          cmake --build build-hex --target htp-v79 -- -j"$(nproc)" 2>&1 | tee /tmp/v79.log
+          V79_RC=$?
+          set -e
+          if [ "$V79_RC" -eq 0 ]; then
+            echo "SKEL_V79=FOUND"; find build-hex -name 'libggml-htp-v79.so' -printf '%p  %s bytes\n'
+          else
+            echo "SKEL_V79=SKIPPED (target absent at engine pin 4284599ac)"; tail -5 /tmp/v79.log
+          fi
 
       - name: Upload skel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hexagon-skel-v73
+          name: hexagon-skel
           path: |
             build-hex/**/*.so
           if-no-files-found: error
