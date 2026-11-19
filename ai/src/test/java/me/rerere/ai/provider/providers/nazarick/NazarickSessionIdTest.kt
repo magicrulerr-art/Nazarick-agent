@@ -37,7 +37,7 @@ class NazarickSessionIdTest {
         assertEquals("app-my-phone-chat-42", appSessionId("My Phone!!", "chat 42"))
         assertEquals("app-a-b", appSessionId("a__b", "-"))
         assertEquals("app-ab-c", appSessionId("-  ab  -", "c!"))
-        assertEquals("app-dev-chat", appSessionId("D E V", "  chat  "))
+        assertEquals("app-d-e-v-chat", appSessionId("D E V", "  chat  "))
     }
 
     @Test
