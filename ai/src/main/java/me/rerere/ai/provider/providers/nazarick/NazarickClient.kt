@@ -24,22 +24,40 @@ import okio.IOException
  */
 class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
 
-    suspend fun checkInstance(baseUrl: String): NazarickCheckOutcome =
-        get(nazarickUrl(baseUrl, VERSION_PATH), auth = null, mapper = ::nazarickInstanceOutcome)
+    suspend fun checkInstance(baseUrl: String, agentId: String? = null): NazarickCheckOutcome =
+        get(nazarickUrl(baseUrl, VERSION_PATH), auth = null, agentId = agentId, mapper = ::nazarickInstanceOutcome)
 
-    suspend fun checkToken(baseUrl: String, token: String): NazarickCheckOutcome =
-        get(nazarickUrl(baseUrl, VERIFY_PATH), auth = token, mapper = ::nazarickTokenOutcome)
+    suspend fun checkToken(baseUrl: String, token: String, agentId: String? = null): NazarickCheckOutcome =
+        get(nazarickUrl(baseUrl, VERIFY_PATH), auth = token, agentId = agentId, mapper = ::nazarickTokenOutcome)
+
+    /**
+     * `GET {baseUrl}/api/agents` -> parsed roster (US-003). Rides the same central
+     * [nazarickRequest] helper as every other call, so `X-Agent-Id` is attached whenever
+     * an agent is selected. Throws [NazarickHttpException] on a non-2xx answer — an empty
+     * roster and an unreachable instance must stay distinguishable — and
+     * [IllegalArgumentException] for an unparseable baseUrl.
+     */
+    suspend fun listAgents(baseUrl: String, token: String? = null, agentId: String? = null): List<NazarickAgent> {
+        val url = nazarickUrl(baseUrl, AGENTS_PATH)
+            ?: throw IllegalArgumentException("invalid nazarick baseUrl: $baseUrl")
+        return withContext(Dispatchers.IO) {
+            client.newCall(nazarickRequest(url, token, agentId)).await().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) throw NazarickHttpException(response.code, body)
+                parseNazarickAgents(body)
+            }
+        }
+    }
 
     private suspend fun get(
         url: HttpUrl?,
         auth: String?,
+        agentId: String?,
         mapper: (Int) -> NazarickCheckOutcome,
     ): NazarickCheckOutcome {
         if (url == null) return NazarickCheckOutcome.INVALID_URL
         return withContext(Dispatchers.IO) {
-            val request = Request.Builder().url(url).get().apply {
-                if (auth != null) header("Authorization", "Bearer $auth")
-            }.build()
+            val request = nazarickRequest(url, auth, agentId)
             try {
                 client.newCall(request).await().use { response -> mapper(response.code) }
             } catch (_: IOException) {
@@ -51,6 +69,7 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
     companion object {
         const val VERSION_PATH = "/api/version"
         const val VERIFY_PATH = "/api/auth/verify"
+        const val AGENTS_PATH = "/api/agents"
     }
 }
 
@@ -109,3 +128,19 @@ fun nazarickUrl(baseUrl: String, path: String): HttpUrl? {
     }
     return (withScheme + path).toHttpUrlOrNull()
 }
+
+/**
+ * The ONE place a nazarick HTTP request is assembled (US-003): every request carries
+ * `Authorization: Bearer <token>` when a token exists and `X-Agent-Id: <agentId>` when
+ * an agent is selected. Null/blank values omit their header — an empty `X-Agent-Id`
+ * would ask the server for "the agent named nothing" instead of its default.
+ */
+fun nazarickRequest(url: HttpUrl, token: String? = null, agentId: String? = null): Request =
+    Request.Builder().url(url).get().apply {
+        if (!token.isNullOrBlank()) header("Authorization", "Bearer $token")
+        if (!agentId.isNullOrBlank()) header("X-Agent-Id", agentId)
+    }.build()
+
+/** Non-2xx answer from a nazarick endpoint that was expected to return data. */
+class NazarickHttpException(val status: Int, val body: String) :
+    Exception("nazarick request failed: HTTP $status (${body.take(200)})")
