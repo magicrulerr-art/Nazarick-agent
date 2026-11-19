@@ -1434,7 +1434,7 @@ private fun ColumnScope.ProviderConfigureLlamaCpp(
 
     // Install a GGUF the user already has on-device, via the storage file picker.
     OutlinedButton(
-        onClick = { filePicker.launch(arrayOf("application/octet-stream")) },
+        onClick = { filePicker.launch(arrayOf("*/*"))  // ContentApplicationUtils pins octet-stream for unknown exts; .gguf is unregistered -> mime mismatch kept the picker from accepting a single tap (Fold DocumentsUI, 2026-11-18). GGUF magic is validated downstream. },
         enabled = downloadProgress == null,
     ) {
         Text(stringResource(R.string.local_llm_llamacpp_import_action))
