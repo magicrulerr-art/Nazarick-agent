@@ -50,7 +50,7 @@ class NazarickSessionIdTest {
 
     @Test
     fun `sanitize part keeps only safe alphabet`() {
-        val cleaned = sanitizeSessionPart("Z9 --__..  x!/\@#")
+        val cleaned = sanitizeSessionPart("Z9 --__..  x!/@#")
         assertTrue(cleaned, cleaned.matches(Regex("^[a-z0-9]+(-[a-z0-9]+)*$")))
     }
 }
