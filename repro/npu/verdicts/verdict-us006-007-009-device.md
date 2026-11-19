@@ -27,3 +27,11 @@ QA stopped at loadPack internals + stale-.part offset. Both closed:
 Residual (honest): resume trusts byte offset with no digest of the retained prefix; mixed-content acceptance requires per-member CRC AND final sha256 to both collide -> cryptographically negligible, and recovery is user-triggered (delete .staging, re-tap).
 
 VERDICT UPDATE: QA adversarial boundary CLOSED author-side with source citations; nothing above weakens US-007/US-009 acceptance beyond the standing z7-wording note.
+
+## IDENTITY AMENDMENT 2026-11-19 08:57 (closes every 'device=Fold not z7' note in this file)
+Owner re-enabled USB debugging on z7; adb lists exactly one phone: RFCY71BMBRE. Read from the device itself (runbook law, 'identify the device first'):
+  settings get global device_name -> "Roberto's z7"
+  getprop ro.product.model -> SM-F966B ; ro.soc.model -> SM8750
+This matches the fleet identity table (runbook: z7 = RFCY71BMBRE / SM-F966B / SM8750) and owner's own action on the device he calls z7.
+ROOT CAUSE of the phantom: mob\pack_battery.py carried default serial YLS6S7UCEOK87665 (a device absent from adb since 2026-11-16); 'z7 offline' reports traced to THAT serial, while z7 itself sat on the bus under its serial, mislabelled 'Fold' in this mission's notes. There never were two phones to reconcile; every 'z7' device AC in this mission ran ON z7.
+Consequence: 'ACCEPT_WITH_NOTE (z7 wording, owner ruling pending)' = ACCEPT, condition resolved by device-emitted fact.
