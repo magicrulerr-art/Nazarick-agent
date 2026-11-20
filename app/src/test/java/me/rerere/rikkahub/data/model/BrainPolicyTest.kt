@@ -46,4 +46,4 @@ class BrainPolicyTest {
             json.decodeFromString(Assistant.serializer(), """{"name":"x","brainPolicy":"cloud"}""")
         }
     }
-]
+}
