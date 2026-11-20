@@ -829,12 +829,13 @@ val dataSourceModule = module {
                     json = json,
                 )
             )
-            // Nazarick (US-001): scaffold provider, refuses inference until US-004 wires
-            // the chat protocol. Registration keeps getProviderByType exhaustive-dispatch
-            // honest: the stub names US-004 instead of the manager 404ing on the name.
+            // Nazarick (US-001 scaffold, US-004 chat): a real generator now — POST
+            // /api/console/chat streamed through the US-002 Responses parser. It rides the shared
+            // OkHttpClient (10-minute readTimeout, one connection pool) exactly like the other
+            // remote providers, so a slow Tomb agent does not get cut by a private client default.
             pm.registerProvider(
                 "nazarick",
-                me.rerere.ai.provider.providers.nazarick.NazarickProvider(),
+                me.rerere.ai.provider.providers.nazarick.NazarickProvider(client = get()),
             )
         }
     }

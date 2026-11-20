@@ -7,6 +7,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okio.IOException
 
 /**
@@ -70,6 +71,9 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
         const val VERSION_PATH = "/api/version"
         const val VERIFY_PATH = "/api/auth/verify"
         const val AGENTS_PATH = "/api/agents"
+
+        /** US-004 chat endpoint: `POST {baseUrl}/api/console/chat`, SSE Responses-shaped body. */
+        const val CHAT_PATH = "/api/console/chat"
     }
 }
 
@@ -134,11 +138,22 @@ fun nazarickUrl(baseUrl: String, path: String): HttpUrl? {
  * `Authorization: Bearer <token>` when a token exists and `X-Agent-Id: <agentId>` when
  * an agent is selected. Null/blank values omit their header — an empty `X-Agent-Id`
  * would ask the server for "the agent named nothing" instead of its default.
+ *
+ * US-004 added [body]: pass a request body and the call becomes a POST with it, so the
+ * chat generator gets its auth headers from the same assembly point as every GET
+ * instead of duplicating the header rules. Null body keeps the GET behaviour every
+ * existing caller (version / auth-verify / roster) depends on.
  */
-fun nazarickRequest(url: HttpUrl, token: String? = null, agentId: String? = null): Request =
-    Request.Builder().url(url).get().apply {
+fun nazarickRequest(
+    url: HttpUrl,
+    token: String? = null,
+    agentId: String? = null,
+    body: RequestBody? = null,
+): Request =
+    Request.Builder().url(url).apply {
         if (!token.isNullOrBlank()) header("Authorization", "Bearer $token")
         if (!agentId.isNullOrBlank()) header("X-Agent-Id", agentId)
+        if (body != null) post(body) else get()
     }.build()
 
 /** Non-2xx answer from a nazarick endpoint that was expected to return data. */
