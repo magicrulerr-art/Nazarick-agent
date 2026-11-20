@@ -33,6 +33,8 @@ data class Assistant(
     val enableRecentChatsReference: Boolean = true,
     val messageTemplate: String = "{{ message }}",
     val presetMessages: List<UIMessage> = emptyList(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val brainPolicy: BrainPolicy = BrainPolicy.EDGE,
     val quickMessageIds: Set<Uuid> = emptySet(),
     val regexes: List<AssistantRegex> = emptyList(),
     val reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,
@@ -452,4 +454,18 @@ fun getTriggeredInjections(
     return injections
         .filter { it.isTriggered(context) }
         .sortedByDescending { it.priority }
+}
+
+/**
+ * Which brain answers this assistant (Companion-Edge V2 US-008).
+ * EDGE = existing local/engines chain; TOMB = route turns to the enabled Nazarick
+ * instance agent regardless of bound model; AUTO currently behaves as TOMB (US-010
+ * refines it into heuristic routing + offline queue). Legacy payloads without this
+ * field decode to EDGE — that default IS the migration.
+ */
+@Serializable
+enum class BrainPolicy {
+    @SerialName("edge") EDGE,
+    @SerialName("tomb") TOMB,
+    @SerialName("auto") AUTO,
 }

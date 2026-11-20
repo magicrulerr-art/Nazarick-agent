@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.datastore
 
+import me.rerere.rikkahub.data.model.BrainPolicy
 import android.content.Context
 import android.util.Log
 import androidx.datastore.core.CorruptionException
@@ -1606,6 +1607,16 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     val assistant = assistantId
         ?.let { AssistantResolver.forConversation(this, it).assistant }
         ?: getCurrentAssistant()
+    // US-008 brain policy: TOMB/AUTO sends the turn to the enabled Nazarick instance agent,
+    // outranking bound models; EDGE keeps the chain below untouched. An explicit per-conversation
+    // override (picker choice) always outranks policy - user intent beats defaults.
+    if (conversationChatModelId == null && assistant.brainPolicy != BrainPolicy.EDGE) {
+        providers.filterIsInstance<ProviderSetting.Nazarick>()
+            .firstOrNull { it.enabled }
+            ?.models
+            ?.firstOrNull()
+            ?.let { return it }
+    }
     return listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
         .firstNotNullOfOrNull { providers.findModelById(it) }
 }
