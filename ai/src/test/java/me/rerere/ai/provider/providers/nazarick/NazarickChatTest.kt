@@ -1,5 +1,6 @@
 package me.rerere.ai.provider.providers.nazarick
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -25,7 +26,13 @@ class NazarickChatTest {
     fun `request body carries input stream true and the session id`() {
         val body = nazarickChatRequestBody(input = "hello tomb", sessionId = "app-z7-chat1")
         val obj = Json.parseToJsonElement(body) as JsonObject
-        assertEquals("hello tomb", obj["input"]?.jsonPrimitive?.contentOrNull)
+        val items = obj["input"] as JsonArray
+        val firstItem = items[0] as JsonObject
+        assertEquals("user", firstItem["role"]?.jsonPrimitive?.contentOrNull)
+        val parts = firstItem["content"] as JsonArray
+        val part = parts[0] as JsonObject
+        assertEquals("input_text", part["type"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("hello tomb", part["text"]?.jsonPrimitive?.contentOrNull)
         assertEquals(true, obj["stream"]?.jsonPrimitive?.booleanOrNull)
         assertEquals("app-z7-chat1", obj["session_id"]?.jsonPrimitive?.contentOrNull)
     }

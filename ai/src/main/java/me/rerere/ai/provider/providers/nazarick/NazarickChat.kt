@@ -1,5 +1,7 @@
 package me.rerere.ai.provider.providers.nazarick
 
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
@@ -48,14 +50,26 @@ fun nazarickSessionId(deviceSlug: String, chatId: String?): String =
     appSessionId(deviceSlug, chatId ?: NAZARICK_FALLBACK_CHAT_ID)
 
 /**
- * Build the `POST /api/console/chat` body. Field names are the server contract of record
- * (`repro/v2/stream.txt` capture + `floor/ticket-2026-11-17-companion-edge-v2.md`):
- * `input` (this turn's user text), `stream` (always true — the parser needs deltas),
- * `session_id` (namespaced via [nazarickSessionId]).
+ * Build the `POST /api/console/chat` body. Server contract, LIVE-PROBED 2026-11-20 against the
+ * shipped server (US-012 pre-rebind leg, repro/v2/prebind-turn.json): `input` is a Responses-style
+ * ITEMS ARRAY ([{role:user, content:[{type:input_text, text}]}]) — a bare string is rejected with
+ * 400 "Chat input is empty" (the original US-004 shape, unit-tested but never live-probed, was
+ * wrong); `stream` always true (the parser needs deltas); `session_id` namespaced via
+ * [nazarickSessionId].
  */
 fun nazarickChatRequestBody(input: String, sessionId: String): String =
     buildJsonObject {
-        put("input", input)
+        putJsonArray("input") {
+            addJsonObject {
+                put("role", "user")
+                putJsonArray("content") {
+                    addJsonObject {
+                        put("type", "input_text")
+                        put("text", input)
+                    }
+                }
+            }
+        }
         put("stream", true)
         put("session_id", sessionId)
     }.toString()
