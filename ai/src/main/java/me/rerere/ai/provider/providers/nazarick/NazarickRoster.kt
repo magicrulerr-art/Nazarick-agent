@@ -33,3 +33,15 @@ private val rosterJson = Json { ignoreUnknownKeys = true }
  */
 fun parseNazarickAgents(body: String): List<NazarickAgent> =
     rosterJson.decodeFromString(NazarickAgentsResponse.serializer(), body).agents
+
+/**
+ * US-005 selection seam (pure): given a freshly loaded roster and the hand-typed
+ * `provider.agentId`, return the id to use — keep [current] when the roster still
+ * lists it (enabled or not: the owner may deliberately point at a disabled agent),
+ * otherwise the first **enabled** agent id, otherwise "". An empty or all-disabled
+ * roster never invents an id.
+ */
+fun defaultAgentIdFromRoster(agents: List<NazarickAgent>, current: String): String {
+    if (agents.any { it.id == current }) return current
+    return agents.firstOrNull { it.enabled }?.id ?: ""
+}

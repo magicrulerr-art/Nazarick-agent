@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -66,6 +67,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dokar.sonner.ToastType
 import me.rerere.ai.provider.ClaudePromptCacheTtl
 import me.rerere.ai.provider.ProviderSetting
+import me.rerere.ai.provider.providers.nazarick.NazarickAgent
 import me.rerere.ai.provider.providers.nazarick.NazarickCheckOutcome
 import me.rerere.ai.provider.providers.nazarick.NazarickClient
 import me.rerere.llamacpp.LlamaCppCatalog
@@ -919,6 +921,76 @@ private fun ProviderConfigureNazarick(
         modifier = Modifier.fillMaxWidth(),
     )
 
+    // US-005: roster-driven agent picker. "Load agents" calls GET /api/agents with the
+    // configured baseUrl/token and renders the live roster as radio rows; the hand-typed
+    // Agent ID field above stays as the fallback and pre-selects a row when it matches.
+    // Literal strings follow this block's dialect ("Agent ID" / "Test Connection").
+    val scope = rememberCoroutineScope()
+    val nazarickClient = remember { NazarickClient() }
+    var agents by remember { mutableStateOf<List<NazarickAgent>?>(null) }
+    var rosterError by remember { mutableStateOf<String?>(null) }
+    var loadingRoster by remember { mutableStateOf(false) }
+
+    Button(
+        onClick = {
+            scope.launch {
+                loadingRoster = true
+                runCatching {
+                    nazarickClient.listAgents(provider.baseUrl, provider.token, provider.agentId)
+                }.onSuccess {
+                    agents = it
+                    rosterError = null
+                }.onFailure {
+                    rosterError = it.message ?: "failed"
+                }
+                loadingRoster = false
+            }
+        },
+        enabled = !loadingRoster,
+    ) {
+        Text(if (loadingRoster) "Loading..." else "Load agents")
+    }
+
+    rosterError?.let {
+        Text(
+            text = it,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+
+    val roster = agents
+    if (roster != null && roster.isNotEmpty()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            roster.forEach { agent ->
+                val selected = agent.id == provider.agentId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .clickable { onEdit(provider.copy(agentId = agent.id)) }
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = selected, onClick = null)
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = agent.name + if (agent.enabled) "" else " (disabled)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (agent.enabled) Color.Unspecified
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        )
+                        Text(
+                            text = agent.id,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -935,8 +1007,7 @@ private fun ProviderConfigureNazarick(
     // step 2 GET /api/auth/verify (Bearer, proves the token). Step 2 only runs after a
     // reachable instance so a wrong token never masquerades as a dead server; each step
     // renders its own green/red row.
-    val nazarickClient = remember { NazarickClient() }
-    val scope = rememberCoroutineScope()
+    // nazarickClient + scope are shared with the agent picker above (US-005).
     var testing by remember { mutableStateOf(false) }
     var instanceOutcome by remember { mutableStateOf<NazarickCheckOutcome?>(null) }
     var tokenOutcome by remember { mutableStateOf<NazarickCheckOutcome?>(null) }
@@ -945,10 +1016,10 @@ private fun ProviderConfigureNazarick(
         onClick = {
             scope.launch {
                 testing = true
-                val reach = nazarickClient.checkInstance(provider.baseUrl)
+                val reach = nazarickClient.checkInstance(provider.baseUrl, provider.agentId)
                 instanceOutcome = reach
                 tokenOutcome = if (reach == NazarickCheckOutcome.OK) {
-                    nazarickClient.checkToken(provider.baseUrl, provider.token)
+                    nazarickClient.checkToken(provider.baseUrl, provider.token, provider.agentId)
                 } else {
                     null
                 }
