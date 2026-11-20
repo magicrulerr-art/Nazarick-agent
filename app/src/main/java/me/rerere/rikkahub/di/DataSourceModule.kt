@@ -835,9 +835,30 @@ val dataSourceModule = module {
             // remote providers, so a slow Tomb agent does not get cut by a private client default.
             pm.registerProvider(
                 "nazarick",
-                me.rerere.ai.provider.providers.nazarick.NazarickProvider(client = get()),
+                me.rerere.ai.provider.providers.nazarick.NazarickProvider(client = get()).also { provider ->
+                    // US-007: the provider owns the turn lifecycle, the poller owns the notification.
+                    // Resolved here rather than eagerly because the poller is only interesting once
+                    // a nazarick turn can exist at all.
+                    provider.turnObserver = get<me.rerere.rikkahub.service.NazarickReplyPoller>()
+                },
             )
         }
+    }
+
+    // US-007 - background reply notifications. Its own NazarickClient on the shared OkHttpClient:
+    // push polling is a short GET every >=5s, so it must not inherit the chat client's infinite
+    // read timeout (a hung /api/console/push-messages would otherwise park a poll loop forever).
+    single {
+        me.rerere.rikkahub.service.NazarickReplyPoller(
+            context = get(),
+            client = me.rerere.ai.provider.providers.nazarick.NazarickClient(
+                client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .build(),
+            ),
+            scope = get<AppScope>(),
+        )
     }
 
     single { BackupManager(context = get(), database = get(), settingsStore = get(), json = get()) }

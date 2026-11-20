@@ -59,6 +59,14 @@ class NazarickProvider(
      */
     var deviceSlug: String = DEFAULT_DEVICE_SLUG
 
+    /**
+     * US-007 turn-lifecycle seam: the background reply poller needs to know that a run is in flight
+     * for a namespaced `session_id` (that is the only window in which polling it is legal, because
+     * `/api/console/push-messages` consumes what it returns). Null by default, so a provider built
+     * outside DI - every unit test, and any future headless caller - behaves exactly as before.
+     */
+    var turnObserver: NazarickTurnObserver? = null
+
     override suspend fun listModels(providerSetting: ProviderSetting.Nazarick): List<Model> =
         emptyList()
 
@@ -118,6 +126,19 @@ class NazarickProvider(
         ).newBuilder()
             .header("Accept", "text/event-stream")
             .build()
+
+        // US-007: announce the turn (and its namespaced session id) before the socket opens, so the
+        // background reply poller knows this session has a run in flight. Every early throw above
+        // happens first, so an observer never sees a turn that never reached the wire.
+        turnObserver?.onTurnStarted(
+            NazarickTurn(
+                baseUrl = providerSetting.baseUrl,
+                token = providerSetting.token,
+                agentId = providerSetting.agentId,
+                sessionId = sessionId,
+                chatId = params.sessionId,
+            ),
+        )
 
         val call = client.newCall(request)
         // Stop must reach the socket: a collector that goes away cancels this coroutine, but the
@@ -191,6 +212,10 @@ class NazarickProvider(
             }
         } finally {
             stopHandle?.dispose()
+            // US-007: the app-side turn is over - completed, faulted, or stopped by the user. The
+            // reply poller must not keep GET-ing a session nobody is waiting on: with take
+            // semantics that would consume push messages the console UI is about to render.
+            turnObserver?.onTurnFinished(sessionId)
             if (serverRunStarted && !normalEnd) {
                 // US-006: the stream was cut while the instance was generating (user Stop, or a
                 // mid-stream fault). call.cancel() above only tears down the client side — tell

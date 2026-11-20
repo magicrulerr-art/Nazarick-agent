@@ -88,6 +88,41 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
         }
     }
 
+    /**
+     * `GET {baseUrl}/api/console/push-messages?session_id=<sessionId>` -> [NazarickPushOutcome]
+     * (US-007), the call the background reply poller makes.
+     *
+     * **Take semantics:** with `session_id` set the instance *consumes* that session's pending
+     * messages server-side (`console_push_store.take`), so this is not a peek. Call it only when a
+     * turn is genuinely in flight and handle the result immediately - a discarded payload is a reply
+     * nobody can fetch again.
+     *
+     * Mapped through the pure [pushOutcome] (200 parses, 401 says the token is dead, 200-but-not-JSON
+     * is Malformed rather than an empty answer); a socket that never answers is
+     * [NazarickPushOutcome.NetworkError], same dialect as [stopChat].
+     */
+    suspend fun getPushMessages(
+        baseUrl: String,
+        token: String,
+        agentId: String? = null,
+        sessionId: String,
+    ): NazarickPushOutcome {
+        val url = nazarickUrl(baseUrl, PUSH_PATH)
+            ?.newBuilder()
+            ?.addQueryParameter("session_id", sessionId)
+            ?.build()
+            ?: return NazarickPushOutcome.NetworkError   // no parseable host: nothing was called
+        return withContext(Dispatchers.IO) {
+            try {
+                client.newCall(nazarickRequest(url, token, agentId)).await().use { response ->
+                    pushOutcome(response.code, response.body?.string().orEmpty())
+                }
+            } catch (_: IOException) {
+                NazarickPushOutcome.NetworkError
+            }
+        }
+    }
+
     private suspend fun get(
         url: HttpUrl?,
         auth: String?,
@@ -115,6 +150,12 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
 
         /** US-006 stop endpoint: `POST {baseUrl}/api/console/chat/stop?chat_id=…&cancel_reason=USER`. */
         const val STOP_PATH = "/api/console/chat/stop"
+
+        /**
+         * US-007 push endpoint: `GET {baseUrl}/api/console/push-messages?session_id=…`.
+         * With `session_id` the answer is **consumed** server-side, so this is a take, not a peek.
+         */
+        const val PUSH_PATH = "/api/console/push-messages"
 
         /** Server-side default for `cancel_reason`; sent explicitly so the audit line is unambiguous. */
         const val CANCEL_REASON_USER = "USER"
