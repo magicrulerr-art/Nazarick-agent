@@ -1648,10 +1648,23 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     // explicit per-conversation override (picker choice) always outranks policy.
     val edgeChain = listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
     val tombReachable = tombReachableProbed()
+    val edgeModel = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
+    // US-010r: the token threshold is consulted here, so TOKEN_BUDGET_THRESHOLD_TOKENS is live on the
+    // production AUTO path and not just in the unit tests. Only the *window* is cheap at this point:
+    // resolveChatModel is a pure Settings extension with no messages in scope, so there is no
+    // used-token count to subtract. The effective window (declared ceiling -> provider metadata ->
+    // ModelRegistry) is therefore passed as the most optimistic remaining budget: a model whose whole
+    // window already sits under the threshold cannot afford a Tomb round-trip and drops to the local
+    // chain. An unknown window means above budget, hence Int.MAX_VALUE rather than -1 - the router
+    // compares `remainingTokens < threshold`, so -1 would read as exhausted and flush every
+    // unknown-window turn to the edge. Tighter accounting needs the turn's messages, which the send
+    // path owns and can pass once this call grows an argument for it.
+    val remainingTokens = getEffectiveContextLength(edgeModel) ?: Int.MAX_VALUE
     val decision = AutoRouter.decide(
         policy = assistant.brainPolicy,
         tombReachable = tombReachable,
-        hasLocalFallback = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) } != null,
+        hasLocalFallback = edgeModel != null,
+        remainingTokens = remainingTokens,
     )
     // US-010r consumer: the offline AUTO turn is reported through this flag and surfaced by the chat
     // badge. True only for EDGE_OFFLINE_NOTICE; any TOMB route (and any explicit EDGE) clears it.
