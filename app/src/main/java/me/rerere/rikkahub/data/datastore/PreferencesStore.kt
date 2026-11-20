@@ -39,6 +39,7 @@ import me.rerere.rikkahub.data.ai.AutoRouter
 import me.rerere.rikkahub.data.ai.ContextWindowResolver
 import me.rerere.rikkahub.data.ai.Decision
 import me.rerere.rikkahub.data.ai.DefaultAssistantPrompt
+import me.rerere.rikkahub.data.ai.TombProbe
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LIBRARY_IMAGE_PROMPT
 import me.rerere.rikkahub.data.gemini.DENIED_MODEL_IDS
@@ -1595,9 +1596,38 @@ fun Settings.getCurrentChatModel(): Model? {
 }
 
 /** Last known Tomb reachability, read by the AUTO branch of [resolveChatModel] (US-010). Defaults to
- * true so a cold process behaves as it did under US-008; US-012 replaces that default with a real
- * health probe writing into it. Nothing else should. */
+ * true so a cold process behaves as it did under US-008. Since US-010r it is written by
+ * [tombReachableProbed], which calls the real [TombProbe] at most every 30s instead of waiting for a
+ * health writer; US-012 keeps that writer role for background health. Nothing else should. */
 var tombReachableCache: Boolean = true
+
+// US-010r: [tombReachableCache] is now refreshed by a real probe instead of waiting for a health
+// writer. Memoized for 30s so a burst of sends does not hammer the instance; both memo fields live
+// next to the cache they feed, and the cold value stays true so a fresh process behaves as under
+// US-008 until the first probe answers.
+private var lastResult: Boolean = true
+private var lastEpochMs: Long = 0L
+
+/** Whether the enabled Nazarick instance answers right now, probed by [TombProbe] at most every 30s. */
+fun Settings.tombReachableProbed(): Boolean {
+    val now = System.currentTimeMillis()
+    if (now - lastEpochMs < TOMB_PROBE_MEMO_MS) return lastResult
+    // Nothing configured to probe: keep the cold, optimistic answer rather than declaring offline.
+    val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
+    lastResult = TombProbe.probe(baseUrl).also { tombReachableCache = it }
+    lastEpochMs = now
+    return lastResult
+}
+
+private const val TOMB_PROBE_MEMO_MS = 30_000L
+
+/**
+ * True when the most recent AUTO turn answered locally because the Tomb was unreachable
+ * ([Decision.EDGE_OFFLINE_NOTICE]). Read by the chat badge next to the brain label (US-010r) and
+ * cleared as soon as a turn routes to the Tomb, or an explicit policy answers without a notice.
+ */
+var lastAutoOfflineNotice: Boolean = false
 
 /**
  * The chat model a conversation will actually talk to: the conversation's own override, then the
@@ -1617,11 +1647,19 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     // Tomb drops to the local chain with a notice instead of failing. EDGE is untouched, and an
     // explicit per-conversation override (picker choice) always outranks policy.
     val edgeChain = listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
+    val tombReachable = tombReachableProbed()
     val decision = AutoRouter.decide(
         policy = assistant.brainPolicy,
-        tombReachable = tombReachableCache,
+        tombReachable = tombReachable,
         hasLocalFallback = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) } != null,
     )
+    // US-010r consumer: the offline AUTO turn is reported through this flag and surfaced by the chat
+    // badge. True only for EDGE_OFFLINE_NOTICE; any TOMB route (and any explicit EDGE) clears it.
+    lastAutoOfflineNotice = decision == Decision.EDGE_OFFLINE_NOTICE
+    // enqueue point: send-path integration scheduled - an explicit BrainPolicy.TOMB turn whose probe
+    // came back false belongs in TombQueue, but enqueue needs the turn text and a stable turn id and
+    // neither is an argument here (this function resolves a Model, it does not own the turn). The
+    // send path owns both and will call TombQueue.enqueue in US-012; KDoc-only on purpose.
     if (conversationChatModelId == null && decision == Decision.TOMB) {
         providers.filterIsInstance<ProviderSetting.Nazarick>()
             .firstOrNull { it.enabled }
