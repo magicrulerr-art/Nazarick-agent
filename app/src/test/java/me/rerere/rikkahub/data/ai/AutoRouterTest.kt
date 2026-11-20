@@ -109,4 +109,24 @@ class AutoRouterTest {
             ),
         )
     }
+
+    /**
+     * US-010r: the threshold must be live on the *production shape* of the call, not just in unit
+     * isolation. This is exactly the argument list the AUTO resolve site in PreferencesStore
+     * passes: AUTO, a reachable Tomb, a local fallback that exists, and a small remaining budget.
+     * Such a turn is answered at the edge - if the resolve site stops passing remainingTokens, this
+     * expectation is what catches it.
+     */
+    @Test
+    fun productionShapeUsesThresholdWhenBudgetLow() {
+        assertEquals(
+            Decision.EDGE,
+            AutoRouter.decide(
+                BrainPolicy.AUTO,
+                tombReachable = true,
+                hasLocalFallback = true,
+                remainingTokens = 100,
+            ),
+        )
+    }
 }
