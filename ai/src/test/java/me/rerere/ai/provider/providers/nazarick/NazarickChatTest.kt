@@ -4,6 +4,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.ai.ui.StreamChunk
 import org.junit.Assert.assertEquals
@@ -34,6 +36,69 @@ class NazarickChatTest {
     fun `session id falls back to a named unknown chat instead of a bare device slug`() {
         assertEquals("app-device-unknown-chat", nazarickSessionId("device", null))
         assertEquals("app-z7-chat-42", nazarickSessionId("z7", "Chat 42"))
+    }
+
+    // ---- US-011r: the image part on the wire ----
+
+    /** The one user turn's content array, or a failure naming the body that lacked it. */
+    private fun userTurnParts(body: String): List<JsonObject> {
+        val obj = Json.parseToJsonElement(body) as JsonObject
+        val items = obj["items"]?.jsonArray ?: error("body carries no items array: $body")
+        assertEquals("exactly one user turn is sent", 1, items.size)
+        val turn = items[0].jsonObject
+        assertEquals("user", turn["role"]?.jsonPrimitive?.contentOrNull)
+        return turn["content"]?.jsonArray?.map { it.jsonObject }
+            ?: error("user turn carries no content array: $body")
+    }
+
+    @Test
+    fun `with image the content array is input_text then input_image with the uri verbatim`() {
+        val dataUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=="
+        val body = nazarickChatRequestBodyWithImage(
+            input = "what is on this picture",
+            sessionId = "app-z7-chat1",
+            imageDataUri = dataUri,
+        )
+        val parts = userTurnParts(body)
+        assertEquals(
+            listOf("input_text", "input_image"),
+            parts.map { it["type"]?.jsonPrimitive?.contentOrNull },
+        )
+        assertEquals("what is on this picture", parts[0]["text"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(
+            "the caller's data URI must reach the server untouched",
+            dataUri,
+            parts[1]["image_url"]?.jsonPrimitive?.contentOrNull,
+        )
+        // Text-only leg of the contract still holds next to the image part.
+        val obj = Json.parseToJsonElement(body) as JsonObject
+        assertEquals("what is on this picture", obj["input"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(true, obj["stream"]?.jsonPrimitive?.booleanOrNull)
+        assertEquals("app-z7-chat1", obj["session_id"]?.jsonPrimitive?.contentOrNull)
+    }
+
+    @Test
+    fun `without image the content array is a single input_text part and no input_image at all`() {
+        val body = nazarickChatRequestBody(input = "text only", sessionId = "app-z7-chat2")
+        val parts = userTurnParts(body)
+        assertEquals(
+            "an image-less turn must not emit an empty input_image part",
+            listOf("input_text"),
+            parts.map { it["type"]?.jsonPrimitive?.contentOrNull },
+        )
+        assertEquals("text only", parts[0]["text"]?.jsonPrimitive?.contentOrNull)
+        assertFalse("no image part may appear on a text-only turn", body.contains("input_image"))
+    }
+
+    @Test
+    fun `a blank image uri degrades to the text-only body instead of an empty image_url`() {
+        val body = nazarickChatRequestBodyWithImage(
+            input = "text only",
+            sessionId = "app-z7-chat3",
+            imageDataUri = "",
+        )
+        assertFalse(body.contains("input_image"))
+        assertEquals(listOf("input_text"), userTurnParts(body).map { it["type"]?.jsonPrimitive?.contentOrNull })
     }
 
     // ---- eventsToChunks: the seam ----
