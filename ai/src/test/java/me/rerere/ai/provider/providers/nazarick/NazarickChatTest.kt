@@ -101,6 +101,20 @@ class NazarickChatTest {
         assertEquals(listOf("input_text"), userTurnParts(body).map { it["type"]?.jsonPrimitive?.contentOrNull })
     }
 
+    @Test
+    fun `mime comes from the file extension and unknown types report png`() {
+        // The four types the app's picker produces (FileEncoder.supportedTypes) plus jpeg's alias.
+        assertEquals("image/png", nazarickImageMimeFromPath("/data/upload/a.png"))
+        assertEquals("image/jpeg", nazarickImageMimeFromPath("/data/upload/a.jpg"))
+        assertEquals("image/jpeg", nazarickImageMimeFromPath("/data/upload/a.JPEG"))
+        assertEquals("image/webp", nazarickImageMimeFromPath("/data/upload/a.webp"))
+        // Unknown/absent extension: the probe-verified png, never a made-up type string.
+        assertEquals("image/png", nazarickImageMimeFromPath("/data/upload/a.heic"))
+        assertEquals("image/png", nazarickImageMimeFromPath("noextension"))
+        // A cached/sized url keeps its real extension.
+        assertEquals("image/webp", nazarickImageMimeFromPath("/upload/a.webp?w=200#v2"))
+    }
+
     // ---- eventsToChunks: the seam ----
 
     @Test

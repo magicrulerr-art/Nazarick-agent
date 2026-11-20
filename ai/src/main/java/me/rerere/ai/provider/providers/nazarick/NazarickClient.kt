@@ -208,6 +208,21 @@ class NazarickHttpException(val status: Int, val body: String) :
     Exception("nazarick request failed: HTTP $status (${body.take(200)})")
 
 /**
+ * US-011r — the image on the outgoing turn could not be read from the device and turned into the
+ * `input_image` part the tomb expects (missing file, unreadable path, unsupported scheme).
+ *
+ * Named `tomb_image_upload_failed` so the failure is identifiable from the message alone: it means
+ * the picture never left the phone and the chat POST was **never attempted** — categorically
+ * different from [NazarickHttpException], where an instance answered and rejected the request.
+ * Rides the same surface as every other provider fault (the ai module has no AIException type; a
+ * throw inside the [kotlinx.coroutines.flow.flow] body *is* the error channel, which
+ * `GenerationHandler` already turns into the failed message + retry UI), and keeps [cause] so the
+ * IOException's own reason survives.
+ */
+class NazarickImageUploadException(val imageUri: String, cause: Throwable?) :
+    Exception("tomb_image_upload_failed: cannot read image for upload from $imageUri (${cause?.message})", cause)
+
+/**
  * Result of [NazarickClient.stopChat] (US-006). Sealed and total: the cancelled chat stream
  * fires the stop fire-and-forget, so the four cases exist for callers that *want* to distinguish
  * "already over" (NotFound) from "instance unreachable" (NetworkError), not because the stop
