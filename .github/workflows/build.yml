@@ -614,6 +614,12 @@ jobs:
           --tests "me.rerere.rikkahub.data.ai.ToolSurfaceGuardTest"
           --tests "me.rerere.rikkahub.data.db.DatabaseBackupTest"
           --tests "me.rerere.rikkahub.data.vector.KeywordRecallTest"
+          --tests "me.rerere.rikkahub.data.model.BrainPolicyTest"
+          --tests "me.rerere.rikkahub.data.ai.TombQueueTest"
+          --tests "me.rerere.rikkahub.data.ai.TombSendPathTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainBadgeTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainBadgeDetailTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainKindPersistenceTest"
 
       - name: Upload test report
         if: always()
