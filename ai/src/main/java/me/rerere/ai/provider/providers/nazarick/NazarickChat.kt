@@ -59,8 +59,8 @@ fun nazarickSessionId(deviceSlug: String, chatId: String?): String =
  * [nazarickSessionId].
  *
  * US-011r: this is now the text-only face of [nazarickChatRequestBodyCore] — it delegates with no
- * image, so the wire it produces for a plain turn is unchanged apart from gaining the typed
- * `items` turn (whose content array is the single `input_text` part).
+ * image, so the wire it produces for a plain turn is byte-identical to the live-proven shape:
+ * one user turn whose content array is the single `input_text` part.
  */
 fun nazarickChatRequestBody(input: String, sessionId: String): String =
     nazarickChatRequestBodyCore(input = input, sessionId = sessionId, imageDataUri = null)
@@ -85,12 +85,11 @@ fun nazarickChatRequestBodyWithImage(input: String, sessionId: String, imageData
 /**
  * The one place the chat body is assembled.
  *
- * `input` stays a plain string with the turn's text (the US-004 contract, proven end-to-end), and
- * the turn is *additionally* described in Responses-API `items` form —
- * `[{role: "user", content: [input_text, (input_image)]}]` — which is where the image travels.
- * The redundancy is deliberate: the text field keeps every text-only turn byte-identical to the
- * shape the instance already answers, while the typed array gives the image a ratified home
- * instead of smuggling it through prose. Content-part key names copy the house emitter in
+ * ONE array, ONE source of truth: `input` is the Responses-style items array
+ * `[{role: "user", content: [input_text, (input_image)]}]` — the shape the LIVE-PROBED server
+ * reads (US-012 pre-rebind, 2026-11-20: a bare-string `input` is rejected 400 "Chat input is
+ * empty", and the server parses no sibling `items` field). The image travels as the second
+ * content part of the same user turn. Content-part key names copy the house emitter in
  * `ResponseAPI.kt` (`input_text`/`text`, `input_image`/`image_url`) so the app speaks one dialect
  * to every Responses-shaped endpoint.
  */
@@ -108,28 +107,17 @@ private fun nazarickChatRequestBodyCore(
                         put("type", "input_text")
                         put("text", input)
                     }
+                    if (!imageDataUri.isNullOrBlank()) {
+                        addJsonObject {
+                            put("type", "input_image")
+                            put("image_url", imageDataUri)
+                        }
+                    }
                 }
             }
         }
         put("stream", true)
         put("session_id", sessionId)
-        putJsonArray("items") {
-            add(buildJsonObject {
-                put("role", "user")
-                putJsonArray("content") {
-                    add(buildJsonObject {
-                        put("type", "input_text")
-                        put("text", input)
-                    })
-                    if (!imageDataUri.isNullOrBlank()) {
-                        add(buildJsonObject {
-                            put("type", "input_image")
-                            put("image_url", imageDataUri)
-                        })
-                    }
-                }
-            })
-        }
     }.toString()
 
 /**

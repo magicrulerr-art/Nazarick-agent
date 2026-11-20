@@ -50,7 +50,8 @@ class NazarickChatTest {
     /** The one user turn's content array, or a failure naming the body that lacked it. */
     private fun userTurnParts(body: String): List<JsonObject> {
         val obj = Json.parseToJsonElement(body) as JsonObject
-        val items = obj["items"]?.jsonArray ?: error("body carries no items array: $body")
+        // The live-probed contract: the user turn rides the `input` items array itself.
+        val items = obj["input"]?.jsonArray ?: error("body carries no input items array: $body")
         assertEquals("exactly one user turn is sent", 1, items.size)
         val turn = items[0].jsonObject
         assertEquals("user", turn["role"]?.jsonPrimitive?.contentOrNull)
@@ -77,9 +78,11 @@ class NazarickChatTest {
             dataUri,
             parts[1]["image_url"]?.jsonPrimitive?.contentOrNull,
         )
-        // Text-only leg of the contract still holds next to the image part.
+        // Text leg of the contract still holds next to the image part: the text rides the
+        // input_text content part of the same probed user turn, never a duplicate field.
         val obj = Json.parseToJsonElement(body) as JsonObject
-        assertEquals("what is on this picture", obj["input"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("what is on this picture", parts[0]["text"]?.jsonPrimitive?.contentOrNull)
+        assertFalse("no parallel items array may ride alongside input", body.contains("\"items\""))
         assertEquals(true, obj["stream"]?.jsonPrimitive?.booleanOrNull)
         assertEquals("app-z7-chat1", obj["session_id"]?.jsonPrimitive?.contentOrNull)
     }
