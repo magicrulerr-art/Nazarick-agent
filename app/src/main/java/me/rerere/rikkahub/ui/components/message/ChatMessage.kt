@@ -194,6 +194,14 @@ fun ChatMessage(
                 )
             }
         }
+        // US-009r: which brain produced THIS answer, read back from the message itself rather
+        // than from whatever model is selected now. Empty is the legacy value and draws nothing,
+        // so every message written before this card keeps rendering exactly as it did (AC3), and
+        // a turn still streaming draws nothing either - the stamp lands when it finalizes.
+        if (message.role == MessageRole.ASSISTANT) {
+            BrainBadgeChip(stored = message.brainKind)
+        }
+
         ProvideTextStyle(textStyle) {
             MessagePartsBlock(
                 assistant = assistant,

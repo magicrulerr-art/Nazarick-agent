@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.chat
 
 import me.rerere.rikkahub.costguards.TokenBudgetTracker
 import me.rerere.rikkahub.data.ai.BadgeKind
+import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.usage.TurnFooter
 import me.rerere.rikkahub.ui.pages.stats.formatCompactTokens
@@ -34,10 +35,18 @@ internal fun topBarSubtitleName(assistantName: String, modelName: String): Strin
  * other provider, empty when there is no brain to name. Plain literals on purpose: the badge
  * is a status label, not a localized UI string.
  */
-internal fun brainBadgeLabel(kind: BadgeKind): String = when (kind) {
-    BadgeKind.TOMB -> "Tomb"
-    BadgeKind.EDGE -> "Edge"
-    BadgeKind.NONE -> ""
+internal fun brainBadgeLabel(kind: BadgeKind): String = brainBadgeLabel(BrainBadge.stored(kind))
+
+/**
+ * US-009r: the same text read back from a message's stored `brainKind`, so the per-message chip
+ * on a bubble and the top-bar badge of a live conversation can never disagree on wording.
+ * Anything unrecognised — including `""`, which is what every pre-US-009r message decodes to —
+ * yields no label, hence no chip.
+ */
+internal fun brainBadgeLabel(stored: String): String = when (stored) {
+    BrainBadge.STORED_TOMB -> "Tomb"
+    BrainBadge.STORED_EDGE -> "Edge"
+    else -> ""
 }
 
 /**
