@@ -1,6 +1,5 @@
 package me.rerere.rikkahub.data.datastore
 
-import me.rerere.rikkahub.data.model.BrainPolicy
 import android.content.Context
 import android.util.Log
 import androidx.datastore.core.CorruptionException
@@ -36,7 +35,9 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.registry.ModelRegistry
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.AssistantResolver
+import me.rerere.rikkahub.data.ai.AutoRouter
 import me.rerere.rikkahub.data.ai.ContextWindowResolver
+import me.rerere.rikkahub.data.ai.Decision
 import me.rerere.rikkahub.data.ai.DefaultAssistantPrompt
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LIBRARY_IMAGE_PROMPT
@@ -1593,6 +1594,11 @@ fun Settings.getCurrentChatModel(): Model? {
     return findModelById(this.getCurrentAssistant().chatModelId ?: this.chatModelId)
 }
 
+/** Last known Tomb reachability, read by the AUTO branch of [resolveChatModel] (US-010). Defaults to
+ * true so a cold process behaves as it did under US-008; US-012 replaces that default with a real
+ * health probe writing into it. Nothing else should. */
+var tombReachableCache: Boolean = true
+
 /**
  * The chat model a conversation will actually talk to: the conversation's own override, then the
  * model of the assistant the conversation belongs to, then the global default.
@@ -1607,18 +1613,23 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     val assistant = assistantId
         ?.let { AssistantResolver.forConversation(this, it).assistant }
         ?: getCurrentAssistant()
-    // US-008 brain policy: TOMB/AUTO sends the turn to the enabled Nazarick instance agent,
-    // outranking bound models; EDGE keeps the chain below untouched. An explicit per-conversation
-    // override (picker choice) always outranks policy - user intent beats defaults.
-    if (conversationChatModelId == null && assistant.brainPolicy != BrainPolicy.EDGE) {
+    // US-008 brain policy refined by US-010: AutoRouter decides, so an AUTO turn with an unreachable
+    // Tomb drops to the local chain with a notice instead of failing. EDGE is untouched, and an
+    // explicit per-conversation override (picker choice) always outranks policy.
+    val edgeChain = listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
+    val decision = AutoRouter.decide(
+        policy = assistant.brainPolicy,
+        tombReachable = tombReachableCache,
+        hasLocalFallback = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) } != null,
+    )
+    if (conversationChatModelId == null && decision == Decision.TOMB) {
         providers.filterIsInstance<ProviderSetting.Nazarick>()
             .firstOrNull { it.enabled }
             ?.models
             ?.firstOrNull()
             ?.let { return it }
     }
-    return listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
-        .firstNotNullOfOrNull { providers.findModelById(it) }
+    return edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
 }
 
 private const val FALLBACK_CONTEXT_COMPACTION_TARGET_TOKENS = 2_000
