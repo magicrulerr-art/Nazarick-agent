@@ -69,6 +69,7 @@ import me.rerere.rikkahub.utils.cancelNotification
 import me.rerere.rikkahub.utils.sendNotification
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.AssistantResolver
+import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.vector.MemoryIndexCoordinator
 import me.rerere.rikkahub.runtime.AutomationRecorder
 import me.rerere.rikkahub.data.ai.toLoopAssistant
@@ -2595,9 +2596,35 @@ class ChatService(
                 cancelLiveUpdateNotification(conversationId)
 
                 // 可能被取消了，或者意外结束，兜底更新
-                val updatedConversation = getConversationFlow(conversationId).value.copy(
-                    messageNodes = getConversationFlow(conversationId).value.messageNodes.map { node ->
-                        node.copy(messages = node.messages.map { it.finishReasoning() })
+                //
+                // US-009r: this is where the turn's answer stops changing, so it is also where
+                // the answering brain gets recorded — from the model/provider this attempt
+                // resolved (a routed retry re-enters handleMessageComplete with its own model,
+                // so each attempt stamps what it actually called). Scoped to the LAST node: a
+                // user message opens a new node and the answer lands in it, which keeps every
+                // older turn at "" and therefore badge-free (AC3). First stamp wins, so a
+                // continuation from a routed model's partial reply keeps recording the brain that
+                // wrote that reply instead of overwriting it mid-stream.
+                val brainKind = BrainBadge.stored(BrainBadge.kind(model, resolvedProvider))
+                val streamingConversation = getConversationFlow(conversationId).value
+                val lastNodeIndex = streamingConversation.messageNodes.lastIndex
+                val updatedConversation = streamingConversation.copy(
+                    messageNodes = streamingConversation.messageNodes.mapIndexed { index, node ->
+                        node.copy(
+                            messages = node.messages.map { message ->
+                                val finished = message.finishReasoning()
+                                if (
+                                    brainKind.isNotEmpty() &&
+                                    index == lastNodeIndex &&
+                                    finished.role == MessageRole.ASSISTANT &&
+                                    finished.brainKind.isEmpty()
+                                ) {
+                                    finished.copy(brainKind = brainKind)
+                                } else {
+                                    finished
+                                }
+                            }
+                        )
                     },
                     updateAt = Instant.now()
                 )

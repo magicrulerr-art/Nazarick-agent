@@ -45,4 +45,25 @@ class BrainBadgeTest {
     fun `missing both has no badge`() {
         assertEquals(BadgeKind.NONE, BrainBadge.kind(null, null))
     }
+
+    // US-009r: the finalize site that writes UIMessage.brainKind lives in ChatService and is
+    // not JVM-testable, so the pure mapping it uses is covered here instead.
+    @Test
+    fun `kinds store as the policy literals`() {
+        assertEquals("tomb", BrainBadge.stored(BadgeKind.TOMB))
+        assertEquals("edge", BrainBadge.stored(BadgeKind.EDGE))
+    }
+
+    @Test
+    fun `no kind stores empty which is also the legacy value`() {
+        assertEquals("", BrainBadge.stored(BadgeKind.NONE))
+    }
+
+    @Test
+    fun `end to end mapping from provider to stored kind`() {
+        assertEquals("tomb", BrainBadge.stored(BrainBadge.kind(model, ProviderSetting.Nazarick())))
+        assertEquals("edge", BrainBadge.stored(BrainBadge.kind(model, ProviderSetting.OpenAI())))
+        // No resolvable brain => "" => the bubble renders no chip (AC3).
+        assertEquals("", BrainBadge.stored(BrainBadge.kind(null, null)))
+    }
 }
