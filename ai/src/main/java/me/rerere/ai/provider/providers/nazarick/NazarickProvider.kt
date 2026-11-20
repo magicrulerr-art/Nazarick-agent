@@ -21,6 +21,7 @@ import me.rerere.ai.ui.ImageGenerationItem
 import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
@@ -102,7 +103,7 @@ class NazarickProvider(
         val body = nazarickChatRequestBody(
             input = input,
             sessionId = nazarickSessionId(deviceSlug, params.sessionId),
-        ).toRequestBody(JSON_MEDIA_TYPE)
+        ).toRequestBody(JSON_MEDIA_TYPE.toMediaType())
         val request = nazarickRequest(
             url = url,
             token = providerSetting.token,
