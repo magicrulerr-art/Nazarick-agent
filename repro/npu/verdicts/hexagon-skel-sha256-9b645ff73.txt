@@ -1,0 +1,5 @@
+US-004 AC2 staged artifacts, CI run 44473243874 job 135387534856 (SUCCESS) commit 9b645ff73
+libggml-htp-v79.so  858944 B  sha256=2c26f6bd1fcb91949df9eb3f0d72cbfc6e7d6c0ce7b7d30108eff1c2a50a6d67
+libggml-htp-v73.so  842528 B  sha256=6eab0e10a8faf1aa844ca4f16b422e2961084b02e899bd5288192c8a5227838f
+libggml-htp-v73.so  842528 B  sha256=6eab0e10a8faf1aa844ca4f16b422e2961084b02e899bd5288192c8a5227838f
+libggml-htp-v79.so  858944 B  sha256=2c26f6bd1fcb91949df9eb3f0d72cbfc6e7d6c0ce7b7d30108eff1c2a50a6d67

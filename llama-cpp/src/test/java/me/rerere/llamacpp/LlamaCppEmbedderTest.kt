@@ -234,6 +234,53 @@ class LlamaCppEmbedderTest {
         }
     }
 
+    /**
+     * US-004 (Cocytus HOLD 2026-11-14, finding 2): the ledger must be consulted BEFORE
+     * loadModel maps the weights. A decline here is the designed degradation (semantic
+     * search off), so the fake must never see a native open and the ledger must record
+     * nothing for the declined id.
+     */
+    @Test
+    fun `a declined embed load never opens the native model`() = runBlocking {
+        NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
+        NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
+        NativeAdmission.budget.release(NativeAdmission.LITERT_ID)
+        val f = java.io.File.createTempFile("aura021-embed", ".gguf")
+        f.writeBytes(ByteArray(2048))
+        f.deleteOnExit()
+        assertTrue(NativeAdmission.budget.tryReserve(NativeAdmission.CHAT_ID, 4_096L, 5_120L) is MemoryBudget.Result.Granted)
+        val native = FakeEmbedNative()
+
+        val err = runCatching { LlamaCppEmbedder(native).load(f.absolutePath, availableRamBytes = 5_120L) }
+            .exceptionOrNull()
+
+        assertTrue("expected a budget decline, got $err", err is NativeAdmission.DeclinedByBudgetException)
+        assertNull("a declined load must never touch the native open", native.loadedPath)
+        assertEquals("the declined id must not linger on the ledger",
+            setOf(NativeAdmission.CHAT_ID), NativeAdmission.budget.outstanding().keys)
+        NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
+    }
+
+    /**
+     * Same finding, other edge: when the native open itself fails after the pre-charge,
+     * the charge must leave with it (the 0d2eb1191 defect class, now on the pre-open side).
+     */
+    @Test
+    fun `a native open failure after the pre-charge releases the ledger`() = runBlocking {
+        NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
+        NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
+        NativeAdmission.budget.release(NativeAdmission.LITERT_ID)
+        val f = java.io.File.createTempFile("aura021-embed-fail", ".gguf")
+        f.writeBytes(ByteArray(2048))
+        f.deleteOnExit()
+        val native = FakeEmbedNative().apply { loadModelFails = true }
+
+        runCatching { LlamaCppEmbedder(native).load(f.absolutePath, availableRamBytes = 50_000_000_000L) }
+
+        assertTrue("the failed load must leave nothing reserved, got ${NativeAdmission.budget.outstanding()}",
+            NativeAdmission.budget.outstanding().isEmpty())
+    }
+
     @Test
     fun `pooling is taken from the model, not assumed`() = runBlocking {
         // Qwen3-Embedding declares last-token pooling; a hardcoded mean would silently produce

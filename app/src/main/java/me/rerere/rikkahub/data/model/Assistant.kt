@@ -33,6 +33,8 @@ data class Assistant(
     val enableRecentChatsReference: Boolean = true,
     val messageTemplate: String = "{{ message }}",
     val presetMessages: List<UIMessage> = emptyList(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val brainPolicy: BrainPolicy = BrainPolicy.EDGE,
     val quickMessageIds: Set<Uuid> = emptySet(),
     val regexes: List<AssistantRegex> = emptyList(),
     val reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,
@@ -209,6 +211,18 @@ data class Assistant(
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     @Serializable(with = LenientLocalToolListSerializer::class)
     val toolAllowlist: List<LocalToolOption>? = null,
+    // AURA-021 v1.0 (contract LC-2) - the ID-level ceiling, enforced where the finished List<Tool>
+    // leaves the harness (ToolSurfaceGuard.enforce). [toolAllowlist] above narrows the local face by
+    // GROUP, and ToolSurfaceResolver is indeed the only place that face is built; but ChatService
+    // stacks skill, MCP and workspace tools on top of it at two inline sites that never pass through
+    // that resolver. A ceiling that stops at the local face is not a ceiling: one installed skill
+    // re-widens it. This field speaks exact Tool.name values, so it binds the whole outgoing list.
+    // null (every assistant until a roster is written for it) = no ceiling, byte-identical to today;
+    // [] = no tools at all; a list = exactly those ids, a ceiling and never a preference.
+    // Assistants live in the settings JSON blob, not a Room table, so this costs no migration.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val allowedToolNames: List<String>? = null,
 )
 
 @Serializable
@@ -440,4 +454,18 @@ fun getTriggeredInjections(
     return injections
         .filter { it.isTriggered(context) }
         .sortedByDescending { it.priority }
+}
+
+/**
+ * Which brain answers this assistant (Companion-Edge V2 US-008).
+ * EDGE = existing local/engines chain; TOMB = route turns to the enabled Nazarick
+ * instance agent regardless of bound model; AUTO currently behaves as TOMB (US-010
+ * refines it into heuristic routing + offline queue). Legacy payloads without this
+ * field decode to EDGE — that default IS the migration.
+ */
+@Serializable
+enum class BrainPolicy {
+    @SerialName("edge") EDGE,
+    @SerialName("tomb") TOMB,
+    @SerialName("auto") AUTO,
 }
