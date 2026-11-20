@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import me.rerere.ai.core.LlmFinishReason
 import me.rerere.ai.core.TokenUsage
 
 /**
@@ -152,5 +153,13 @@ sealed class StreamChunk {
         val finishReason: String? = null,
         val responseId: String? = null,
         val model: String? = null,
+        /**
+         * Typed classification (AURA-021, LC-1). Providers that know why they stopped —
+         * llama measures the cap, OpenAI dialects carry finish_reason — set this at the
+         * boundary; [finishReason] keeps the wire string. [LlmFinishReason.Unknown]
+         * means the provider stayed silent and the handler falls back to normalizing
+         * [finishReason] itself.
+         */
+        val reason: LlmFinishReason = LlmFinishReason.Unknown,
     ) : StreamChunk()
 }

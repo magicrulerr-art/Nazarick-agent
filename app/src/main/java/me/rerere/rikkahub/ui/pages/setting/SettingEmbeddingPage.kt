@@ -113,6 +113,9 @@ fun SettingEmbeddingPage() {
     val conversationIndex: ConversationIndexCoordinator = koinInject()
     val conversationIndexStatus by conversationIndex.status.collectAsStateWithLifecycle()
     val toolVectors: ToolVectorIndex = koinInject()
+    // AURA-021 (LC-7): read-only here — the page surfaces WHY embedding is off
+    // when the memory budget declined it, which no file-state check can see.
+    val embeddingService: me.rerere.rikkahub.data.vector.EmbeddingService = koinInject()
     val toolIndexStatus by toolVectors.state.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
@@ -236,6 +239,18 @@ fun SettingEmbeddingPage() {
                             text = heroFacts,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                    // AURA-021 (LC-7): the file can be installed while the global native
+                    // budget refuses to seat the engine — a live chat model owns the room.
+                    // Without this line the card would say "Ready" above a semantic search
+                    // that silently never embeds; the engine's own message names the bytes.
+                    embeddingService.declineReason?.let { reason ->
+                        Text(
+                            text = reason,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 4.dp),
                         )
                     }

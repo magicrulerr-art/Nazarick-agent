@@ -86,6 +86,7 @@ import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.costguards.TokenBudgetTracker
+import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.usage.TurnFooter
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.runtime.findProvider
@@ -940,6 +941,11 @@ private fun TopBar(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (model != null) {
+                        // US-009: the brain that answers this conversation, shown after the
+                        // model name. Resolved from the provider that actually owns the model.
+                        val brainBadge = brainBadgeLabel(
+                            BrainBadge.kind(model, model.findProvider(settings.providers)),
+                        )
                         // Aggregate conversation token consumption across all turns and tool calls.
                         // UsageLedger (turnFooters) is the ground truth (includes all tool loop steps);
                         // fallback to TokenBudgetTracker for legacy or imported conversations without ledger rows.
@@ -958,7 +964,11 @@ private fun TopBar(
                         // text instead of stretching to the title slot.
                         TopBarSubtitleLine(
                             assistantName = assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) },
-                            modelName = model.displayName,
+                            modelName = if (brainBadge.isEmpty()) {
+                                model.displayName
+                            } else {
+                                "${model.displayName} · $brainBadge"
+                            },
                             usedTokens = usedTokens,
                             color = LocalContentColor.current.copy(0.65f),
                             style = MaterialTheme.typography.labelSmall.copy(

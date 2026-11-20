@@ -69,6 +69,7 @@ import me.rerere.rikkahub.utils.cancelNotification
 import me.rerere.rikkahub.utils.sendNotification
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.AssistantResolver
+import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.vector.MemoryIndexCoordinator
 import me.rerere.rikkahub.runtime.AutomationRecorder
 import me.rerere.rikkahub.data.ai.toLoopAssistant
@@ -144,6 +145,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.AutoCompactionThresholdMode
+import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
 import me.rerere.rikkahub.data.datastore.DEFAULT_AUTO_MODEL_ID
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.runtime.findProvider
@@ -773,7 +775,12 @@ class ChatService(
                 id = id,
                 initial = Conversation.ofId(
                     id = id,
-                    assistantId = settings.getCurrentAssistant().id
+                    // Cold-boot guard: settingsFlow.value can be an empty-DataStore snapshot
+                    // (assistants not loaded yet) — the throwing getCurrentAssistant() crashed
+                    // ChatVM on launch (z7 SafeMode loop, 2026-11-15). Albedo's seed id is the
+                    // documented fallback for new conversations; it resolves once load lands.
+                    assistantId = AssistantResolver.currentOrNull(settings.assistants, settings.assistantId)?.id
+                        ?: DEFAULT_ASSISTANT_ID
                 ),
                 scope = appScope,
                 onIdle = { removeSession(it) },
@@ -1180,11 +1187,18 @@ class ChatService(
         // router fires inherit the right assistant id (workflows / sub-agents / etc).
         me.rerere.rikkahub.subagent.SubAgentDispatchProfileRules
             .setLiveDispatchProfile(settingsStore.settingsFlow.first().subAgentDispatchProfile)
-        val tools = ToolSurfaceResolver.resolve(
-            localTools = localTools,
-            assistant = assistant,
-            context = ToolSurfaceResolver.fastPathContext(assistant, conversationId),
+        val tools = me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+            ToolSurfaceResolver.resolve(
+                localTools = localTools,
+                assistant = assistant,
+                context = ToolSurfaceResolver.fastPathContext(assistant, conversationId),
+            ),
+            assistant.allowedToolNames,
         )
+        // LC-2 covers EXECUTION as well as declaration: the fast path fires a tool without asking
+        // the model, so without this a router match could run something the guardian's row never
+        // granted. Hardline already guards this site from the other side (side effects); this
+        // guards capability.
         val tool = tools.firstOrNull { it.name == match.toolName } ?: run {
             android.util.Log.d("FastPathRouter", "matched intent=${match.intent} but tool=${match.toolName} not registered for assistant; falling through")
             return false
@@ -1541,7 +1555,12 @@ class ChatService(
                 val model = resolveGenerationModel(settings, conversation)
                     ?: return RerunToolResult.Failure("no chat model selected")
 
-                val tools = buildToolsForRerun(assistant, conversationId, conversation, model, settings)
+                // LC-2 again, same reason on the regenerate path: the ceiling is a property of the
+                // assistant, not of whichever code happens to hold the tool list.
+                val tools = me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+                    buildToolsForRerun(assistant, conversationId, conversation, model, settings),
+                    assistant.allowedToolNames,
+                )
                 val tool = tools.firstOrNull { it.name == toolPart.toolName }
                     ?: return RerunToolResult.Failure("tool '${toolPart.toolName}' is not available")
 
@@ -2461,7 +2480,11 @@ class ChatService(
                         // pinned or opened and reaches the rest through `tool_search`.
                         // What the user's own words retrieved. Without vectors this yields
                         // nothing, and the turn carries exactly what was pinned or opened.
-                        val ranked = if (lastUserText.isNotBlank()) {
+                        // LC-2 (US-008 criterion b) - a rostered assistant gets NO dynamic ranking.
+                        // Its surface is a reviewed constant, so retrieving tools by meaning can only
+                        // smuggle back rows the roster never approved, and it costs an embedding query
+                        // on every turn to do so. null roster = the ranked catalogue exactly as before.
+                        val ranked = if (assistant.allowedToolNames == null && lastUserText.isNotBlank()) {
                             toolVectors.ranking(lastUserText, catalog)
                         } else {
                             emptyList()
@@ -2540,19 +2563,68 @@ class ChatService(
                     // P3-04 — attached here, not above, so the listing it renders can already see
                     // what the catalogue decided. Empty in the ordinary case of no skills.
                     addAll(skillTools)
-                }.let { me.rerere.rikkahub.subagent.SubAgentSurface.apply(conversationId, it) },
+                }.let { me.rerere.rikkahub.subagent.SubAgentSurface.apply(conversationId, it) }
+                    // LC-2 - the last gate before the prompt. Everything above is the harness's
+                    // own assembly: local groups, external search, workspace and cold-memory tools,
+                    // skill tools, MCP, the catalogue's static half. Only here does the list exist
+                    // in full, so only here can a ceiling be sure of itself. Null for every
+                    // assistant without a roster, which is the byte-identical old behaviour.
+                    .let { me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(it, assistant.allowedToolNames) },
                 // The dynamic half of the catalogue — null on any path that built no catalogue,
                 // in which case the loop gets exactly the snapshot above.
-                extraToolsProvider = { liveCatalogueTools?.invoke() ?: emptyList() },
+                // LC-2 again: the catalogue's dynamic half arrives DURING the loop, when the model
+                // opens a tool. Without the same filter a `tool_open` mid-generation would widen a
+                // rostered surface on step 3 of a five-step turn, which is precisely the drift the
+                // ceiling exists to stop.
+                extraToolsProvider = {
+                    me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+                        liveCatalogueTools?.invoke() ?: emptyList(),
+                        assistant.allowedToolNames,
+                    )
+                },
+                // LC-2 third path (US-002): the loop's own memory tools are built inside
+                // :runtime, below this gate. Route them through the same guard so the ceiling
+                // covers every tool the model is offered, not only the ones assembled here.
+                filterInjectedTools = {
+                    me.rerere.rikkahub.data.ai.ToolSurfaceGuard.enforce(
+                        it, assistant.allowedToolNames,
+                    )
+                },
                 continuationFromPartial = continuationFromPartial,
             ).onCompletion { completionCause ->
                 // 取消 Live Update 通知
                 cancelLiveUpdateNotification(conversationId)
 
                 // 可能被取消了，或者意外结束，兜底更新
-                val updatedConversation = getConversationFlow(conversationId).value.copy(
-                    messageNodes = getConversationFlow(conversationId).value.messageNodes.map { node ->
-                        node.copy(messages = node.messages.map { it.finishReasoning() })
+                //
+                // US-009r: this is where the turn's answer stops changing, so it is also where
+                // the answering brain gets recorded — from the model/provider this attempt
+                // resolved (a routed retry re-enters handleMessageComplete with its own model,
+                // so each attempt stamps what it actually called). Scoped to the LAST node: a
+                // user message opens a new node and the answer lands in it, which keeps every
+                // older turn at "" and therefore badge-free (AC3). First stamp wins, so a
+                // continuation from a routed model's partial reply keeps recording the brain that
+                // wrote that reply instead of overwriting it mid-stream.
+                val brainKind = BrainBadge.storedDetail(model, resolvedProvider)
+                val streamingConversation = getConversationFlow(conversationId).value
+                val lastNodeIndex = streamingConversation.messageNodes.lastIndex
+                val updatedConversation = streamingConversation.copy(
+                    messageNodes = streamingConversation.messageNodes.mapIndexed { index, node ->
+                        node.copy(
+                            messages = node.messages.map { message ->
+                                val finished = message.finishReasoning()
+                                if (
+                                    brainKind.isNotEmpty() &&
+                                    index == lastNodeIndex &&
+                                    finished.role == MessageRole.ASSISTANT &&
+                                    finished.brainKind.isEmpty()
+                                ) {
+                                    finished.copy(brainKind = brainKind)
+                                } else {
+                                    finished
+                                }
+                            }
+                        )
                     },
                     updateAt = Instant.now()
                 )
@@ -2916,15 +2988,24 @@ class ChatService(
         ).toMutableList()
 
         // Semantic search joins the two exact-name tools. Registration does not depend on a model
-        // being installed: the tool reports that state itself, which is how the model finds out to
-        // fall back to memory_index rather than to stop looking for its notes.
+        // being installed: with no model - or one the memory budget declined, which is the normal
+        // state while a chat model holds the GPU - the search degrades to keyword ranking over the
+        // same notes and labels the hits, instead of answering "unavailable". AINA-002 on z7: the
+        // tool was present, armed, and useless for exactly this reason.
         tools += buildMemorySearchTool(
             dirLabel = if (dir.isEmpty()) {
                 ColdMemoryRules.WORKSPACE_PREFIX
             } else {
                 "${ColdMemoryRules.WORKSPACE_PREFIX}/$dir"
             },
-            search = { query, limit -> memoryIndex.search(dir, query, limit) },
+            search = { query, limit ->
+                memoryIndex.searchWithKeywordFallback(
+                    dir = dir,
+                    query = query,
+                    limit = limit,
+                    workspaceId = workspaceId,
+                )
+            },
         )
         return tools
     }
