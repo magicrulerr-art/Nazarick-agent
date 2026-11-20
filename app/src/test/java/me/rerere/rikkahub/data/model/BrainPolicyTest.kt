@@ -1,10 +1,11 @@
 package me.rerere.rikkahub.data.model
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 import kotlinx.serialization.SerializationException
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
 import kotlinx.serialization.json.Json
 
 /** US-008: brainPolicy defaults are the migration; values are wire-exact. */
@@ -41,7 +42,7 @@ class BrainPolicyTest {
 
     @Test
     fun unknownPolicyValueFailsLoud() {
-        kotlin.test.assertFailsWith<SerializationException> {
+        assertThrows(SerializationException::class.java) {
             json.decodeFromString(Assistant.serializer(), """{"name":"x","brainPolicy":"cloud"}""")
         }
     }
