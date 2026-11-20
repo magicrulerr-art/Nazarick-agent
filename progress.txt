@@ -1,0 +1,26 @@
+---
+## US-004 finisher-reviewer — 2026-11-19 18:35 CT (fresh session, worker timed out pre-commit)
+
+**Commit:** 1d7034b0301cbdce2959ff18aec069f8b9614cc2 (pushed, new remote branch story/v2-US-004)
+**CI:** run id 44647054386 (run #241), head_sha matches the commit above — dispatched via build.yml workflow_dispatch.
+
+### Files (5, +476/-18)
+- `ai/.../nazarick/NazarickClient.kt` — added CHAT_PATH=/api/console/chat; nazarickRequest gained optional `body: RequestBody?` (POST when non-null, GET otherwise; header rules untouched, existing GET callers unaffected).
+- `ai/.../nazarick/NazarickProvider.kt` — streamText implemented: POST {baseUrl}/api/console/chat, Accept: text/event-stream, blocking readUtf8Line -> NazarickResponsesParser.feedLine -> eventsToChunks -> emit; break on ResponseCompleted; EOF-without-completed emits TextEnd+Finish(stream_closed); non-2xx -> NazarickHttpException; Job invokeOnCompletion -> call.cancel() so Stop kills the socket; generateText = collect of streamText; DI now injects shared client.
+- `ai/.../nazarick/NazarickChat.kt` (NEW) — pure seam: nazarickChatRequestBody {input, stream:true, session_id}, nazarickSessionId (delegates US-003 appSessionId, null->unknown-chat fallback), nazarickLastUserText, eventsToChunks (TextStart-once/TextDelta/TextEnd/Finish, ResponseStarted id carried, MessageOpened dropped with TODO(US-005)).
+- `app/.../di/DataSourceModule.kt` — NazarickProvider(client = get()) rides the shared OkHttpClient (same pattern as line 139).
+- `ai/src/test/.../nazarick/NazarickChatTest.kt` (NEW, authored by finisher-reviewer) — 8 JVM unit tests for the seam + request shape (AC's missing leg, see gap 1).
+
+### Gaps found in review
+1. **Was missing, now closed:** the AC's "pure seam ... WITH a JVM unit test" had no test file (grep for eventsToChunks/nazarickChatRequestBody in ai/src/test was empty; NazarickSessionIdTest covers US-003 only). NazarickChatTest.kt added in the same commit — CI compiles/runs it (no local gradle per mission ground rules).
+2. deviceSlug is a provider var defaulting to "device" until US-005/006 inject real device identity — documented in code, not a US-004 blocker.
+3. reasoning/tool (data) events are dropped by design (TODO(US-005)); only text is surfaced.
+4. NOT EXERCISED here: no local compile (mission said greps-only); CI run 241 is the compile/test proof.
+
+### Consistency greps (all pass)
+- NazarickResponsesParser API == usage: feedLine(line:String?), events TextDelta(sequenceNumber,msgId,text)/ResponseStarted/ResponseCompleted(responseId,sequenceNumber)/MessageOpened(msgId,msgType) all exist, names match.
+- nazarickRequest new 4-arg signature == its two call sites (chat POST + existing GETs in NazarickClient).
+- StreamChunk shapes verified against StreamChunk.kt (TextStart/TextDelta/TextEnd/Finish{finishReason,responseId,model}); Finish idiom matches ResponseApiStreamDecoder.kt:348; UIMessagePart.Text at UIMessagePart.kt:78; UIMessage.toText() at Message.kt:42; ProviderSetting.Nazarick{baseUrl,token,agentId} at ProviderSetting.kt:655.
+- No NAZARICK_CHAT_PENDING references left anywhere.
+
+No passes flag set (reviewer does not self-ratify).

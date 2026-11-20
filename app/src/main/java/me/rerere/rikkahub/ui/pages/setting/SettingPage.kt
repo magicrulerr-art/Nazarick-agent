@@ -221,6 +221,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text(stringResource(R.string.setting_model_page_title)) },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.SettingEnginePacks) },
+                        leadingContent = { Icon(HugeIcons.Cpu, null) },
+                        supportingContent = { Text("Signed native engine packs (backends, versions, install)") },
+                        headlineContent = { Text("Engine Packs") },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingProvider) },
                         leadingContent = { Icon(HugeIcons.Brain02, null) },
                         supportingContent = { Text(stringResource(R.string.setting_page_providers_desc)) },
@@ -476,12 +482,6 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                             }
                         },
                         headlineContent = { Text(stringResource(R.string.setting_page_about)) },
-                    )
-                    item(
-                        onClick = { navController.navigate(Screen.SettingSponsor) },
-                        leadingContent = { Icon(HugeIcons.InLove, null) },
-                        supportingContent = { Text(stringResource(R.string.setting_page_sponsor_desc)) },
-                        headlineContent = { Text(stringResource(R.string.setting_page_sponsor)) },
                     )
                     item(
                         onClick = {
