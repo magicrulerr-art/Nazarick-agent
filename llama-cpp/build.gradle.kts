@@ -85,6 +85,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 
+    // JUnit4 only: kotlin.test never resolved on this module's unit-test
+    // classpath (CI run 44100584573: 69 unresolved-reference errors); both
+    // engine-pack suites use org.junit like every sibling suite in here.
     testImplementation(libs.junit)
     // Real org.json impl for JVM unit tests: the stub android.jar throws "not mocked" on
     // every JSONObject call, and ChatRequestMapper builds its request with org.json to

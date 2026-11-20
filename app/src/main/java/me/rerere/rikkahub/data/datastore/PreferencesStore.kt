@@ -35,7 +35,9 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.registry.ModelRegistry
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.AssistantResolver
+import me.rerere.rikkahub.data.ai.AutoRouter
 import me.rerere.rikkahub.data.ai.ContextWindowResolver
+import me.rerere.rikkahub.data.ai.Decision
 import me.rerere.rikkahub.data.ai.DefaultAssistantPrompt
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LIBRARY_IMAGE_PROMPT
@@ -949,6 +951,10 @@ class SettingsStore(
                         is ProviderSetting.GeminiOAuth -> provider.copy(
                             models = dropDeniedGeminiOAuthModels(provider.models)
                         )
+
+                        is ProviderSetting.Nazarick -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
                     }
                 },
                 assistants = settings.assistants.distinctBy { it.id }.map { assistant ->
@@ -1588,6 +1594,11 @@ fun Settings.getCurrentChatModel(): Model? {
     return findModelById(this.getCurrentAssistant().chatModelId ?: this.chatModelId)
 }
 
+/** Last known Tomb reachability, read by the AUTO branch of [resolveChatModel] (US-010). Defaults to
+ * true so a cold process behaves as it did under US-008; US-012 replaces that default with a real
+ * health probe writing into it. Nothing else should. */
+var tombReachableCache: Boolean = true
+
 /**
  * The chat model a conversation will actually talk to: the conversation's own override, then the
  * model of the assistant the conversation belongs to, then the global default.
@@ -1602,8 +1613,23 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     val assistant = assistantId
         ?.let { AssistantResolver.forConversation(this, it).assistant }
         ?: getCurrentAssistant()
-    return listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
-        .firstNotNullOfOrNull { providers.findModelById(it) }
+    // US-008 brain policy refined by US-010: AutoRouter decides, so an AUTO turn with an unreachable
+    // Tomb drops to the local chain with a notice instead of failing. EDGE is untouched, and an
+    // explicit per-conversation override (picker choice) always outranks policy.
+    val edgeChain = listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
+    val decision = AutoRouter.decide(
+        policy = assistant.brainPolicy,
+        tombReachable = tombReachableCache,
+        hasLocalFallback = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) } != null,
+    )
+    if (conversationChatModelId == null && decision == Decision.TOMB) {
+        providers.filterIsInstance<ProviderSetting.Nazarick>()
+            .firstOrNull { it.enabled }
+            ?.models
+            ?.firstOrNull()
+            ?.let { return it }
+    }
+    return edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
 }
 
 private const val FALLBACK_CONTEXT_COMPACTION_TARGET_TOKENS = 2_000
@@ -1669,8 +1695,14 @@ fun Settings.getEffectiveContextLength(model: Model?): Int? =
  * P2-01 — every assistant lookup funnels through [AssistantResolver]; these extensions stay
  * for source compatibility but no longer carry logic of their own.
  */
+// Cold-boot safe (z7 launch-loop, 2026-11-15): the ChatInput/UseAssistant compose path calls
+// this during View.dispatchAttachedToWindow against an unloaded DataStore snapshot; the old
+// throwing resolver crash-looped the whole UI (stateIn attach frame -> FATAL main). The seed
+// Albedo card is the documented default for exactly this state — a placeholder for the frames
+// before the load lands, never persisted.
 fun Settings.getCurrentAssistant(): Assistant =
-    AssistantResolver.current(this.assistants, assistantId)
+    AssistantResolver.currentOrNull(this.assistants, assistantId)
+        ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo")
 
 fun Settings.getAssistantById(id: Uuid): Assistant? =
     AssistantResolver.byId(this.assistants, id)

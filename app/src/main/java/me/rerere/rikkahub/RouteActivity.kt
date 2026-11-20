@@ -124,6 +124,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNetworkPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
 import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingFilesPage
+import me.rerere.rikkahub.ui.pages.setting.SettingEnginePacksPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMcpPage
 import me.rerere.rikkahub.ui.pages.setting.SettingModelPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPage
@@ -133,7 +134,6 @@ import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingsSearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
-import me.rerere.rikkahub.ui.pages.setting.SettingSponsorPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSubAgentsPage
 // P2-32 ssh hosts page
 import me.rerere.rikkahub.ui.pages.setting.SettingSshPage
@@ -524,10 +524,6 @@ class RouteActivity : ComponentActivity() {
                                 SettingAboutPage()
                             }
 
-                            entry<Screen.SettingSponsor> {
-                                SettingSponsorPage()
-                            }
-
                             entry<Screen.SettingSearch> {
                                 SettingSearchPage()
                             }
@@ -543,6 +539,10 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.SettingMcp> {
                                 SettingMcpPage()
+                            }
+
+                            entry<Screen.SettingEnginePacks> {
+                                SettingEnginePacksPage()
                             }
 
                             entry<Screen.SettingSubAgents> {
@@ -842,10 +842,10 @@ sealed interface Screen : NavKey {
     data object SettingEmbedding : Screen
 
     @Serializable
-    data object SettingAbout : Screen
+    data object SettingEnginePacks : Screen
 
     @Serializable
-    data object SettingSponsor : Screen
+    data object SettingAbout : Screen
 
     @Serializable
     data object SettingSearch : Screen
