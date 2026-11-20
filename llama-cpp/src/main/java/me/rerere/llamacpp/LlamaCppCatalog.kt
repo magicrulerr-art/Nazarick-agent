@@ -98,5 +98,26 @@ object LlamaCppCatalog {
             minMemGb = 8,
             tags = listOf("thinking", "tools"),
         ),
+        LlamaCppCatalogEntry(
+            displayName = "Qwen3.5 4B",
+            // The AURA-013 UAT-A reference: this exact file, trim fix, clean tool round-trip
+            // on z7 with zero template errors (2026-11-12). Unsloth repack; size from the
+            // HuggingFace API at add time, not from memory.
+            repo = "unsloth/Qwen3.5-4B-GGUF",
+            file = "Qwen3.5-4B-Q4_K_M.gguf",
+            sizeBytes = 2740937888L,
+            minMemGb = 8,
+            tags = listOf("tools"),
+        ),
+        LlamaCppCatalogEntry(
+            displayName = "Qwen3.5 9B",
+            // AURA-014 ladder premium slot: best small tool-caller on 16 GB hardware (z8
+            // class). Not a z7 daily driver - 12 GB is its floor, not its comfort zone.
+            repo = "unsloth/Qwen3.5-9B-GGUF",
+            file = "Qwen3.5-9B-Q4_K_M.gguf",
+            sizeBytes = 5680522464L,
+            minMemGb = 12,
+            tags = listOf("tools"),
+        ),
     )
 }

@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.datastore
 
+import me.rerere.rikkahub.data.model.BrainPolicy
 import android.content.Context
 import android.util.Log
 import androidx.datastore.core.CorruptionException
@@ -949,6 +950,10 @@ class SettingsStore(
                         is ProviderSetting.GeminiOAuth -> provider.copy(
                             models = dropDeniedGeminiOAuthModels(provider.models)
                         )
+
+                        is ProviderSetting.Nazarick -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
                     }
                 },
                 assistants = settings.assistants.distinctBy { it.id }.map { assistant ->
@@ -1602,6 +1607,16 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     val assistant = assistantId
         ?.let { AssistantResolver.forConversation(this, it).assistant }
         ?: getCurrentAssistant()
+    // US-008 brain policy: TOMB/AUTO sends the turn to the enabled Nazarick instance agent,
+    // outranking bound models; EDGE keeps the chain below untouched. An explicit per-conversation
+    // override (picker choice) always outranks policy - user intent beats defaults.
+    if (conversationChatModelId == null && assistant.brainPolicy != BrainPolicy.EDGE) {
+        providers.filterIsInstance<ProviderSetting.Nazarick>()
+            .firstOrNull { it.enabled }
+            ?.models
+            ?.firstOrNull()
+            ?.let { return it }
+    }
     return listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
         .firstNotNullOfOrNull { providers.findModelById(it) }
 }
@@ -1669,8 +1684,14 @@ fun Settings.getEffectiveContextLength(model: Model?): Int? =
  * P2-01 — every assistant lookup funnels through [AssistantResolver]; these extensions stay
  * for source compatibility but no longer carry logic of their own.
  */
+// Cold-boot safe (z7 launch-loop, 2026-11-15): the ChatInput/UseAssistant compose path calls
+// this during View.dispatchAttachedToWindow against an unloaded DataStore snapshot; the old
+// throwing resolver crash-looped the whole UI (stateIn attach frame -> FATAL main). The seed
+// Albedo card is the documented default for exactly this state — a placeholder for the frames
+// before the load lands, never persisted.
 fun Settings.getCurrentAssistant(): Assistant =
-    AssistantResolver.current(this.assistants, assistantId)
+    AssistantResolver.currentOrNull(this.assistants, assistantId)
+        ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo")
 
 fun Settings.getAssistantById(id: Uuid): Assistant? =
     AssistantResolver.byId(this.assistants, id)
