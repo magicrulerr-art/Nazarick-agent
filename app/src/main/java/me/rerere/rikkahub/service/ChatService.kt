@@ -2605,7 +2605,7 @@ class ChatService(
                 // older turn at "" and therefore badge-free (AC3). First stamp wins, so a
                 // continuation from a routed model's partial reply keeps recording the brain that
                 // wrote that reply instead of overwriting it mid-stream.
-                val brainKind = BrainBadge.stored(BrainBadge.kind(model, resolvedProvider))
+                val brainKind = BrainBadge.storedDetail(model, resolvedProvider)
                 val streamingConversation = getConversationFlow(conversationId).value
                 val lastNodeIndex = streamingConversation.messageNodes.lastIndex
                 val updatedConversation = streamingConversation.copy(

@@ -41,9 +41,11 @@ internal fun brainBadgeLabel(kind: BadgeKind): String = brainBadgeLabel(BrainBad
  * US-009r: the same text read back from a message's stored `brainKind`, so the per-message chip
  * on a bubble and the top-bar badge of a live conversation can never disagree on wording.
  * Anything unrecognised — including `""`, which is what every pre-US-009r message decodes to —
- * yields no label, hence no chip.
+ * yields no label, hence no chip. What a message stores may carry detail behind the kind
+ * (`tomb:aura@host`, `edge:gemini-x`, from `BrainBadge.storedDetail`), so only the part before
+ * the first `:` is matched: the wording stays coarse and identical to the top bar either way.
  */
-internal fun brainBadgeLabel(stored: String): String = when (stored) {
+internal fun brainBadgeLabel(stored: String): String = when (stored.substringBefore(':')) {
     BrainBadge.STORED_TOMB -> "Tomb"
     BrainBadge.STORED_EDGE -> "Edge"
     else -> ""
