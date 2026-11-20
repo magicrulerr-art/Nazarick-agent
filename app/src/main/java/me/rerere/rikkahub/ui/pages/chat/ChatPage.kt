@@ -90,6 +90,7 @@ import me.rerere.rikkahub.data.usage.TurnFooter
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.runtime.findProvider
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+import me.rerere.rikkahub.data.datastore.lastAutoOfflineNotice
 import me.rerere.rikkahub.data.datastore.resolveChatModel
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
@@ -958,7 +959,15 @@ private fun TopBar(
                         // text instead of stretching to the title slot.
                         TopBarSubtitleLine(
                             assistantName = assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) },
-                            modelName = model.displayName,
+                            // US-010r: an AUTO turn that answered locally because the Tomb was
+                            // unreachable says so on the badge. "kind == EDGE" is the resolved model
+                            // not belonging to the enabled Nazarick (Tomb) provider.
+                            modelName = model.displayName +
+                                if (lastAutoOfflineNotice && !isTombModel(settings, model)) {
+                                    " offline: answered locally"
+                                } else {
+                                    ""
+                                },
                             usedTokens = usedTokens,
                             color = LocalContentColor.current.copy(0.65f),
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -999,6 +1008,21 @@ private fun TopBar(
         },
     )
 }
+
+/**
+ * US-010r: true when [model] is served by the enabled Nazarick instance (the Tomb). Everything else
+ * is answered on-device, i.e. kind == EDGE, which is the case the offline notice may annotate.
+ *
+ * Reads the plain `lastAutoOfflineNotice` var, so the badge refreshes with the next recomposition of
+ * the title (any send or settings change triggers one) rather than observing the flag directly.
+ */
+private fun isTombModel(settings: Settings, model: Model): Boolean = settings
+    .providers
+    .filterIsInstance<ProviderSetting.Nazarick>()
+    .firstOrNull { it.enabled }
+    ?.models
+    ?.any { it.id == model.id }
+    ?: false
 
 /**
  * The title bar keeps its transparent background (the conversation shows through); only the three
