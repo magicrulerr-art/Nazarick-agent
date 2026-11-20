@@ -8,6 +8,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import okio.IOException
 
 /**
@@ -50,6 +51,43 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
         }
     }
 
+    /**
+     * `POST {baseUrl}/api/console/chat/stop?chat_id=<sessionId>&cancel_reason=USER` (US-006) —
+     * asks the instance to stop the run the app is cancelling.
+     *
+     * Server contract (source-verified in the shipped qwenpaw `console.py`): `chat_id` is a
+     * **query parameter** and there is **no JSON body** — HTTP needs a body to make the request a
+     * POST, so it is empty. The server reads `chat_id` as a ChatSpec id first and falls back to a
+     * `session_id` lookup for `channel=console`, which is exactly the namespaced
+     * `app-<device>-<chat>` id the US-004 chat stream sends, so the app passes its own session id.
+     * 200 means stopped, 404 means the server has no such run (already over, or never started).
+     *
+     * Returns a [NazarickStopOutcome] instead of throwing: the caller is a *cancelled* chat stream
+     * firing this fire-and-forget under `NonCancellable`, and a failed stop follow-up must never
+     * surface as a second exception on its way out.
+     */
+    suspend fun stopChat(
+        baseUrl: String,
+        token: String,
+        agentId: String? = null,
+        sessionId: String,
+    ): NazarickStopOutcome {
+        val url = nazarickUrl(baseUrl, STOP_PATH)
+            ?.newBuilder()
+            ?.addQueryParameter("chat_id", sessionId)
+            ?.addQueryParameter("cancel_reason", CANCEL_REASON_USER)
+            ?.build()
+            ?: return NazarickStopOutcome.NetworkError   // no parseable host: nothing was called
+        return withContext(Dispatchers.IO) {
+            try {
+                client.newCall(nazarickRequest(url, token, agentId, EMPTY_BODY)).await()
+                    .use { response -> stopOutcome(response.code) }
+            } catch (_: IOException) {
+                NazarickStopOutcome.NetworkError
+            }
+        }
+    }
+
     private suspend fun get(
         url: HttpUrl?,
         auth: String?,
@@ -74,6 +112,15 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
 
         /** US-004 chat endpoint: `POST {baseUrl}/api/console/chat`, SSE Responses-shaped body. */
         const val CHAT_PATH = "/api/console/chat"
+
+        /** US-006 stop endpoint: `POST {baseUrl}/api/console/chat/stop?chat_id=…&cancel_reason=USER`. */
+        const val STOP_PATH = "/api/console/chat/stop"
+
+        /** Server-side default for `cancel_reason`; sent explicitly so the audit line is unambiguous. */
+        const val CANCEL_REASON_USER = "USER"
+
+        /** Stop takes no JSON body; an empty body only exists to make the request a POST. */
+        val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null)
     }
 }
 
@@ -159,3 +206,56 @@ fun nazarickRequest(
 /** Non-2xx answer from a nazarick endpoint that was expected to return data. */
 class NazarickHttpException(val status: Int, val body: String) :
     Exception("nazarick request failed: HTTP $status (${body.take(200)})")
+
+/**
+ * Result of [NazarickClient.stopChat] (US-006). Sealed and total: the cancelled chat stream
+ * fires the stop fire-and-forget, so the four cases exist for callers that *want* to distinguish
+ * "already over" (NotFound) from "instance unreachable" (NetworkError), not because the stop
+ * path branches on them.
+ */
+sealed class NazarickStopOutcome {
+    /** 200 — the instance acknowledged the stop for this chat/session. */
+    object OK : NazarickStopOutcome()
+
+    /** 404 — unknown chat_id *and* session_id: nothing runs under this id any more. */
+    object NotFound : NazarickStopOutcome()
+
+    /** Any other status (401, 5xx, …): the instance answered, just not with a stop. */
+    data class HttpError(val code: Int) : NazarickStopOutcome()
+
+    /** No answer at all — connection refused/dropped, or an unparseable baseUrl. */
+    object NetworkError : NazarickStopOutcome()
+}
+
+/**
+ * Pure stop-URL builder (US-006), the shape [NazarickClient.stopChat] sends:
+ * `{baseUrl}/api/console/chat/stop?chat_id=<sessionId>&cancel_reason=USER`.
+ *
+ * Percent-encoding is HttpUrl's job and covers the query component fully — a session id holding
+ * a space, a `%` or a `&` still addresses exactly one run (`%20`, `%25`, `%26`) instead of
+ * splitting into extra parameters. `chat_id` stays a **query parameter** per the server contract;
+ * there is no body variant to drift into.
+ *
+ * Throws [IllegalArgumentException] for an unparseable baseUrl — [NazarickClient.stopChat] checks
+ * with [nazarickUrl] first and returns NetworkError without reaching this.
+ */
+fun stopUrl(baseUrl: String, sessionId: String): String {
+    val base = nazarickUrl(baseUrl, NazarickClient.STOP_PATH)
+        ?: throw IllegalArgumentException("invalid nazarick baseUrl: $baseUrl")
+    return base.newBuilder()
+        .addQueryParameter("chat_id", sessionId)
+        .addQueryParameter("cancel_reason", NazarickClient.CANCEL_REASON_USER)
+        .build()
+        .toString()
+}
+
+/**
+ * Pure HTTP-status -> [NazarickStopOutcome] mapping (US-006). 200 is the only success; 404 is a
+ * *sane* answer (the run already ended between the user's tap and the POST), every other code is
+ * carried with its number so a log or a snackbar can name it.
+ */
+fun stopOutcome(httpCode: Int): NazarickStopOutcome = when (httpCode) {
+    200 -> NazarickStopOutcome.OK
+    404 -> NazarickStopOutcome.NotFound
+    else -> NazarickStopOutcome.HttpError(httpCode)
+}

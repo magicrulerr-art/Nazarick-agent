@@ -2,6 +2,7 @@ package me.rerere.ai.provider.providers.nazarick
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.ImageGenerationParams
 import me.rerere.ai.provider.Model
@@ -100,9 +102,13 @@ class NazarickProvider(
             throw IllegalArgumentException("nazarick chat needs a user text message to send")
         }
 
+        // One id on both wires (US-006): the chat POST starts the run under this session_id and
+        // the stop POST addresses the run by it — the server resolves session_id -> chat for
+        // channel=console, so the tap cannot stop somebody else's conversation.
+        val sessionId = nazarickSessionId(deviceSlug, params.sessionId)
         val body = nazarickChatRequestBody(
             input = input,
-            sessionId = nazarickSessionId(deviceSlug, params.sessionId),
+            sessionId = sessionId,
         ).toRequestBody(JSON_MEDIA_TYPE.toMediaType())
         val request = nazarickRequest(
             url = url,
@@ -120,6 +126,14 @@ class NazarickProvider(
         val stopHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause != null) call.cancel()
         }
+        // US-006 needs to tell a clean end from a cut stream in the finally below:
+        //  serverRunStarted — the POST was accepted, so an instance-side run exists to stop;
+        //  normalEnd       — the read loop finished by itself (completed line or EOF).
+        // The stop POST fires only for a run that started and did NOT end normally, i.e. a
+        // cancellation or a mid-stream fault: exactly the cases where the agent would otherwise
+        // keep generating into a socket nobody reads.
+        var serverRunStarted = false
+        var normalEnd = false
         try {
             val parser = NazarickResponsesParser()
             var textOpen = false
@@ -131,6 +145,7 @@ class NazarickProvider(
                     val errorBody = runCatching { response.body?.string() }.getOrNull().orEmpty()
                     throw NazarickHttpException(response.code, errorBody)
                 }
+                serverRunStarted = true
                 val source = response.body?.source()
                     ?: throw IllegalStateException("nazarick chat returned no body")
 
@@ -160,6 +175,7 @@ class NazarickProvider(
                     }
                 }
             }
+            normalEnd = true
 
             if (!completed) {
                 // No status=completed line: the connection ended first. Close the text part so the
@@ -175,6 +191,32 @@ class NazarickProvider(
             }
         } finally {
             stopHandle?.dispose()
+            if (serverRunStarted && !normalEnd) {
+                // US-006: the stream was cut while the instance was generating (user Stop, or a
+                // mid-stream fault). call.cancel() above only tears down the client side — tell
+                // the server too, or the agent burns tokens on an answer nobody will read.
+                //
+                // withContext(NonCancellable) is what GUARANTEES the POST still runs: this
+                // coroutine is already cancelled here and a plain suspend call would re-throw
+                // CancellationException before the request left. The flow body runs on
+                // Dispatchers.IO (flowOn below), so stopChat's await() is off the main thread.
+                //
+                // runCatching on purpose: the ai module has no logging idiom (neighbours carry
+                // only stray debug printlns) and a failed stop follow-up must never replace the
+                // original cancellation. The reason is not lost — stopChat returns it as a
+                // [NazarickStopOutcome] (pure-mapped by [stopOutcome], unit-tested); surfacing it
+                // in the UI is a follow-up past this story.
+                withContext(NonCancellable) {
+                    runCatching {
+                        NazarickClient(client).stopChat(
+                            baseUrl = providerSetting.baseUrl,
+                            token = providerSetting.token,
+                            agentId = providerSetting.agentId,
+                            sessionId = sessionId,
+                        )
+                    }
+                }
+            }
         }
     // Unbounded buffer, same reason the OpenAI/Google providers give one: a buffered channel that
     // fills would drop a delta, and a dropped delta is a missing word in the middle of an answer.
