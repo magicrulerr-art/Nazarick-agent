@@ -87,6 +87,10 @@ import me.rerere.rikkahub.data.ai.ContextCompactionPresentation
 import me.rerere.rikkahub.data.ai.CompactedMessageView
 import me.rerere.rikkahub.data.ai.ContextCompactionView
 import me.rerere.rikkahub.data.ai.ToolSurfaceResolver
+import me.rerere.rikkahub.data.ai.TOMB_QUEUED_NOTICE
+import me.rerere.rikkahub.data.ai.TombSendGate
+import me.rerere.rikkahub.data.ai.withReplayedTombTurn
+import me.rerere.rikkahub.data.ai.withTombQueuedTurn
 import me.rerere.rikkahub.data.ai.TranslationHandler
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.tools.TOOL_CATALOG_MAX_SUMMARY_CHARS
@@ -153,6 +157,7 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.datastore.getEffectiveContextLength
 import me.rerere.rikkahub.data.datastore.resolveChatModel
+import me.rerere.rikkahub.data.datastore.tombReachableProbed
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
@@ -1095,9 +1100,35 @@ class ChatService(
                 ).assistant
                 val processedContent = preprocessUserInputParts(content, assistant)
 
-                // 添加消息到列表
-                val withUser = currentConversation.copy(
-                    messageNodes = currentConversation.messageNodes + UIMessage(
+                // US-010 AC2: a tomb-bound turn offered while the Tomb is unreachable is held by
+                // TombSendGate instead of failing. Reconnect is detected probe-at-next-send (there is
+                // no connectivity listener until US-012 owns a background pump), so the backlog is
+                // drained here — oldest first, before the turn being sent now.
+                val tombReachable = settings.tombReachableProbed()
+                if (answer) {
+                    for (turn in TombSendGate.drainOnReconnect(tombReachable)) {
+                        saveConversation(conversationId, session.state.value.withReplayedTombTurn(turn.text))
+                        handleMessageComplete(conversationId)
+                    }
+                    if (TombSendGate.onSubmit(
+                            policy = assistant.brainPolicy,
+                            tombReachable = tombReachable,
+                            turnText = processedContent.filterIsInstance<UIMessagePart.Text>()
+                                .joinToString("\n") { it.text },
+                            turnId = queued.id.toString(),
+                            ) == TombSendGate.Gate.QUEUED
+                    ) {
+                        saveConversation(conversationId, currentConversation.withTombQueuedTurn(processedContent))
+                        session.submittingMessage = null
+                        queued.reply?.completeWith(runCatching { TOMB_QUEUED_NOTICE })
+                        return@launchGenerationJob
+                    }
+                }
+
+                // 添加消息到列表 — re-read first: a drained backlog must not be overwritten
+                val base = session.state.value
+                val withUser = base.copy(
+                    messageNodes = base.messageNodes + UIMessage(
                         role = MessageRole.USER,
                         parts = processedContent,
                     ).toMessageNode(),
@@ -1125,7 +1156,7 @@ class ChatService(
                     check(messages.none { message -> message.parts.any { it is UIMessagePart.Tool && it.isPending } }) {
                         context.getString(R.string.chat_page_voice_tool_approval)
                     }
-                    val previousIds = currentConversation.currentMessages.map { it.id }.toSet()
+                    val previousIds = base.currentMessages.map { it.id }.toSet()
                     messages.filter { it.id !in previousIds && it.role == MessageRole.ASSISTANT }
                         .joinToString("\n") { it.toText() }
                 })

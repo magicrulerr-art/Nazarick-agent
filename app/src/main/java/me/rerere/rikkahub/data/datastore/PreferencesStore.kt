@@ -1669,10 +1669,9 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     // US-010r consumer: the offline AUTO turn is reported through this flag and surfaced by the chat
     // badge. True only for EDGE_OFFLINE_NOTICE; any TOMB route (and any explicit EDGE) clears it.
     lastAutoOfflineNotice = decision == Decision.EDGE_OFFLINE_NOTICE
-    // enqueue point: send-path integration scheduled - an explicit BrainPolicy.TOMB turn whose probe
-    // came back false belongs in TombQueue, but enqueue needs the turn text and a stable turn id and
-    // neither is an argument here (this function resolves a Model, it does not own the turn). The
-    // send path owns both and will call TombQueue.enqueue in US-012; KDoc-only on purpose.
+    // enqueue point: done in US-010 - this function resolves a Model, it does not own the turn, so it
+    // never enqueues. The send path owns the turn text and the stable turn id and holds the pending
+    // turns through TombSendGate (TombSendGate.onSubmit / drainOnReconnect in ChatService).
     if (conversationChatModelId == null && decision == Decision.TOMB) {
         providers.filterIsInstance<ProviderSetting.Nazarick>()
             .firstOrNull { it.enabled }
