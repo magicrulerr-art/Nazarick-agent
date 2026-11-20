@@ -1099,6 +1099,7 @@ class DoctorChecks(
                     is me.rerere.ai.provider.ProviderSetting.Codex -> p.enabled  // OAuth, no API key
                     is me.rerere.ai.provider.ProviderSetting.Grok -> p.enabled  // OAuth, no API key
                     is me.rerere.ai.provider.ProviderSetting.GeminiOAuth -> p.enabled  // OAuth, no API key
+                    is me.rerere.ai.provider.ProviderSetting.Nazarick -> p.token.isNotBlank()  // remote instance: the Bearer token is the credential
                 }
             }
             add(
