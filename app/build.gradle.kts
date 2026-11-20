@@ -100,8 +100,11 @@ android {
             if (providers.gradleProperty("PLAY_BETA").isPresent) {
                 applicationId = "com.nazarick.agent.beta"
             }
-            versionCode = 19
-            versionName = "0.81"
+            // v1.0-rc1 / vc20 (AURA-021): first release-candidate of the converged loop.
+            // Unpublished builds carry the -rc suffix by house rule; the number goes plain only
+            // when the owner approves publishing. The flavour block stays the single source.
+            versionCode = 20
+            versionName = "1.0"
             // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
             // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
             // only as the upstream fallback in main's strings.xml.
@@ -136,9 +139,14 @@ android {
 
     signingConfigs {
         create("release") {
-            // Only consulted when hasReleaseSigning is true, so the !! below is a
-            // statement about that check, not a hope.
-            val storePath = releaseSigning.getValue("storeFile")!!
+            // `create` runs this block at configuration time whether or not signing is
+            // configured, so `!!` here made a machine with neither NAZARICK_* nor
+            // local.properties fail the WHOLE build with a bare NullPointerException at
+            // app/build.gradle.kts:144 - not even `:llama-cpp:testDebugUnitTest` could be
+            // configured. The documented contract above is that signing is never a hard
+            // requirement to build, so absent means absent: leave this config empty and let
+            // the release variant come out unsigned.
+            val storePath = releaseSigning.getValue("storeFile") ?: return@create
             storeFile = file(storePath)
             storePassword = releaseSigning.getValue("storePassword")
             keyAlias = releaseSigning.getValue("keyAlias")

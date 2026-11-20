@@ -5,6 +5,7 @@ import me.rerere.rikkahub.data.model.Assistant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import kotlin.uuid.Uuid
 
@@ -35,6 +36,18 @@ class AssistantResolverTest {
         // Unknown pointer and no pointer at all both fall back to the first assistant.
         assertSame(assistantA, AssistantResolver.current(assistants, ghost))
         assertSame(assistantA, AssistantResolver.current(assistants, null))
+    }
+
+    @Test
+    fun `currentOrNull is null on the empty list while current keeps throwing`() {
+        // Cold-boot regression (z7 SafeMode loop, 2026-11-15): ChatService hydrated a session
+        // against an unloaded DataStore snapshot; the throwing current() killed ChatVM on
+        // launch. Callers that can supply a seeded fallback must take the null-safe form.
+        assertNull(AssistantResolver.currentOrNull(emptyList(), a))
+        assertNull(AssistantResolver.currentOrNull(emptyList(), null))
+        assertThrows(NoSuchElementException::class.java) {
+            AssistantResolver.current(emptyList(), a)
+        }
     }
 
     @Test
