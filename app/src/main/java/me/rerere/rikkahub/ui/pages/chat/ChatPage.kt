@@ -90,6 +90,10 @@ import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.usage.TurnFooter
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.runtime.findProvider
+import me.rerere.rikkahub.data.ai.ImageDestination
+import me.rerere.rikkahub.data.ai.initialChoice
+import me.rerere.rikkahub.data.ai.tombEnabled
+import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.lastAutoOfflineNotice
 import me.rerere.rikkahub.data.datastore.resolveChatModel
@@ -425,6 +429,28 @@ private fun ChatPageContent(
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val assistant = setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
+    // US-011r AC1: Edge|Tomb destination for images on this draft. The default and whether
+    // Tomb may be picked come from the pure helpers in ComposerImageToggle; the choice is
+    // applied to the turn at send (Tomb = the enabled Nazarick model, whose provider encodes
+    // the image part; Edge = the assistant's own model, so the image never leaves the device).
+    val tombProvider = setting.providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled && it.baseUrl.isNotBlank() }
+    var imageDestination by rememberSaveable { mutableStateOf<ImageDestination?>(null) }
+    val draftHasImage = inputState.messageContent.any { it is UIMessagePart.Image }
+    val effectiveImageDestination = if (draftHasImage) {
+        imageDestination ?: initialChoice(assistant.brainPolicy, tombProvider != null)
+    } else {
+        null
+    }
+    fun applyImageDestination() {
+        val target = when (effectiveImageDestination) {
+            null -> return
+            ImageDestination.TOMB -> tombProvider?.models?.firstOrNull()
+            ImageDestination.EDGE ->
+                setting.providers.findModelById(assistant.chatModelId ?: setting.chatModelId)
+        }
+        if (target != null) vm.setConversationChatModel(target)
+    }
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
@@ -536,6 +562,9 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
+                            // Routing matters only when a turn is generated: the long-press path
+                            // (answer = false) stores the message without ever calling a provider.
+                            applyImageDestination()
                             vm.handleMessageSend(inputState.getContents())
                             scope.launch {
                                 delay(100.milliseconds)
@@ -582,6 +611,9 @@ private fun ChatPageContent(
                     onMoreClick = {
                         showFilesSheet = true
                     },
+                    imageDestination = effectiveImageDestination,
+                    tombSelectable = tombEnabled(assistant.brainPolicy),
+                    onImageDestinationChange = { imageDestination = it },
                 )
             },
             containerColor = Color.Transparent,

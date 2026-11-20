@@ -4,6 +4,7 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.UIMessage
@@ -56,8 +57,48 @@ fun nazarickSessionId(deviceSlug: String, chatId: String?): String =
  * 400 "Chat input is empty" (the original US-004 shape, unit-tested but never live-probed, was
  * wrong); `stream` always true (the parser needs deltas); `session_id` namespaced via
  * [nazarickSessionId].
+ *
+ * US-011r: this is now the text-only face of [nazarickChatRequestBodyCore] — it delegates with no
+ * image, so the wire it produces for a plain turn is unchanged apart from gaining the typed
+ * `items` turn (whose content array is the single `input_text` part).
  */
 fun nazarickChatRequestBody(input: String, sessionId: String): String =
+    nazarickChatRequestBodyCore(input = input, sessionId = sessionId, imageDataUri = null)
+
+/**
+ * US-011r — the body for a turn that carries an image to the tomb.
+ *
+ * The live-proven server contract (loopback probe, 2026-11-20) accepts a content part of the shape
+ * `{"type":"input_image","image_url":"data:image/png;base64,…"}` (and plain https URLs) on
+ * `POST /api/console/chat`, answering 200 with the usual SSE stream. [imageDataUri] is therefore
+ * put on the wire **verbatim** — the caller owns mime sniffing and base64, this function owns only
+ * placement, so a bytes-to-data-URI bug can never hide in a string munged twice.
+ *
+ * @param imageDataUri a complete data URI (`data:image/png;base64,…`) or an absolute https URL.
+ *                     Blank falls back to the text-only body rather than emitting an
+ *                     `input_image` part with an empty `image_url`, which the server would have to
+ *                     guess about.
+ */
+fun nazarickChatRequestBodyWithImage(input: String, sessionId: String, imageDataUri: String): String =
+    nazarickChatRequestBodyCore(input = input, sessionId = sessionId, imageDataUri = imageDataUri)
+
+/**
+ * The one place the chat body is assembled.
+ *
+ * `input` stays a plain string with the turn's text (the US-004 contract, proven end-to-end), and
+ * the turn is *additionally* described in Responses-API `items` form —
+ * `[{role: "user", content: [input_text, (input_image)]}]` — which is where the image travels.
+ * The redundancy is deliberate: the text field keeps every text-only turn byte-identical to the
+ * shape the instance already answers, while the typed array gives the image a ratified home
+ * instead of smuggling it through prose. Content-part key names copy the house emitter in
+ * `ResponseAPI.kt` (`input_text`/`text`, `input_image`/`image_url`) so the app speaks one dialect
+ * to every Responses-shaped endpoint.
+ */
+private fun nazarickChatRequestBodyCore(
+    input: String,
+    sessionId: String,
+    imageDataUri: String?,
+): String =
     buildJsonObject {
         putJsonArray("input") {
             addJsonObject {
@@ -72,6 +113,23 @@ fun nazarickChatRequestBody(input: String, sessionId: String): String =
         }
         put("stream", true)
         put("session_id", sessionId)
+        putJsonArray("items") {
+            add(buildJsonObject {
+                put("role", "user")
+                putJsonArray("content") {
+                    add(buildJsonObject {
+                        put("type", "input_text")
+                        put("text", input)
+                    })
+                    if (!imageDataUri.isNullOrBlank()) {
+                        add(buildJsonObject {
+                            put("type", "input_image")
+                            put("image_url", imageDataUri)
+                        })
+                    }
+                }
+            })
+        }
     }.toString()
 
 /**

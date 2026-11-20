@@ -26,6 +26,9 @@ import me.rerere.ai.ui.UIMessagePart
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.io.IOException
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /**
@@ -98,7 +101,11 @@ class NazarickProvider(
         val url = nazarickUrl(providerSetting.baseUrl, NazarickClient.CHAT_PATH)
             ?: throw IllegalArgumentException("invalid nazarick baseUrl: ${providerSetting.baseUrl}")
         val input = nazarickLastUserText(messages)
-        if (input.isBlank()) {
+        // US-011r: an image on the outgoing turn is read and encoded *before* the POST, so a
+        // missing or unreadable file fails loudly here instead of silently degrading to the
+        // text-only turn the user did not ask for.
+        val imageDataUri = nazarickTurnImageUri(messages)
+        if (input.isBlank() && imageDataUri == null) {
             throw IllegalArgumentException("nazarick chat needs a user text message to send")
         }
 
@@ -106,10 +113,18 @@ class NazarickProvider(
         // the stop POST addresses the run by it — the server resolves session_id -> chat for
         // channel=console, so the tap cannot stop somebody else's conversation.
         val sessionId = nazarickSessionId(deviceSlug, params.sessionId)
-        val body = nazarickChatRequestBody(
-            input = input,
-            sessionId = sessionId,
-        ).toRequestBody(JSON_MEDIA_TYPE.toMediaType())
+        val body = if (imageDataUri == null) {
+            nazarickChatRequestBody(
+                input = input,
+                sessionId = sessionId,
+            )
+        } else {
+            nazarickChatRequestBodyWithImage(
+                input = input,
+                sessionId = sessionId,
+                imageDataUri = imageDataUri,
+            )
+        }.toRequestBody(JSON_MEDIA_TYPE.toMediaType())
         val request = nazarickRequest(
             url = url,
             token = providerSetting.token,
@@ -247,3 +262,57 @@ class NazarickProvider(
             .build()
     }
 }
+
+/**
+ * US-011r — the wire `image_url` for the outgoing turn's image, or null when that turn carries no
+ * image part.
+ *
+ * `UIMessagePart.Image.url` (ai/ui/UIMessagePart.kt) holds whatever the picker stored, and the app
+ * always copies an attachment into app storage first (`FilesManager.createChatFilesByContents`
+ * returns `file.toUri()`), so the everyday case is a `file://` URI. The three shapes handled:
+ *
+ *  - `data:` / `http(s)://` — already a valid `image_url` for the live-proven contract (the
+ *    2026-11-20 loopback probe accepted both), forwarded **verbatim** rather than re-encoded;
+ *  - `file://` (and a bare absolute path) — read with `java.io` and inlined as a base64 data URI,
+ *    which is the shape the probe verified end-to-end;
+ *  - anything else (`content://`, `res://`, …) — no `java.io` reader exists for it, so it raises
+ *    [NazarickImageUploadException] rather than POSTing a turn whose image silently vanished. That
+ *    is the honest failure the composer's Tomb chip needs to be able to show.
+ *
+ * Called from [NazarickProvider.streamText] before the request is built, so an unreadable image is
+ * reported as a failed turn instead of a wrong one.
+ */
+private fun nazarickTurnImageUri(messages: List<UIMessage>): String? {
+    val url = messages.lastOrNull { it.role == MessageRole.USER }
+        ?.parts
+        ?.filterIsInstance<UIMessagePart.Image>()
+        ?.lastOrNull()
+        ?.url
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+
+    if (url.startsWith("data:") || url.startsWith("http://") || url.startsWith("https://")) return url
+
+    return try {
+        val path = url.removePrefix("file://")
+        val bytes = File(path).readBytes()
+        "data:${nazarickImageMimeFromPath(path)};base64," + Base64.getEncoder().encodeToString(bytes)
+    } catch (e: IOException) {
+        throw NazarickImageUploadException(url, e)
+    }
+}
+
+/**
+ * Mime for a local image path, by extension only (US-011r). `png`/`jpg`/`jpeg`/`webp` map to their
+ * real types; anything unknown reports `image/png`, the one mime the live-proven contract was
+ * verified with — a wrong-but-parseable mime is the server's to tolerate, whereas an unsupported
+ * type string risks a hard reject. Query/fragment suffixes are stripped before the extension is
+ * read, and the comparison is case-insensitive because camera folders disagree about case.
+ */
+internal fun nazarickImageMimeFromPath(path: String): String =
+    when (path.substringBefore('#').substringBefore('?').substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "png" -> "image/png"
+        else -> "image/png"
+    }
