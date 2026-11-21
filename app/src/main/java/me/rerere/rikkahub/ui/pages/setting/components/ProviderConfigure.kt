@@ -70,6 +70,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.providers.nazarick.NazarickAgent
 import me.rerere.ai.provider.providers.nazarick.NazarickCheckOutcome
 import me.rerere.ai.provider.providers.nazarick.NazarickClient
+import me.rerere.ai.provider.providers.nazarick.NazarickLoginOutcome
 import me.rerere.llamacpp.LlamaCppCatalog
 import me.rerere.llamacpp.LlamaCppCatalogEntry
 import me.rerere.locallm.LocalRuntime
@@ -989,6 +990,69 @@ private fun ProviderConfigureNazarick(
                 }
             }
         }
+    }
+
+    // US-002 (mission-20261121-142443): sign in with the instance username+password. The client
+    // POSTs /api/auth/login with expires_in 0 — a PERMANENT token — and the result fills the
+    // Token field above automatically; the user never handles the token itself. The password
+    // lives only in this composable's state (never in ProviderSetting, never persisted) and is
+    // cleared on success. Failures name the client-mapped reason and leave the stored token
+    // untouched: a wrong password must not log the user out of a working connection.
+    var signInUser by remember { mutableStateOf("") }
+    var signInPassword by remember { mutableStateOf("") }
+    var signInVisible by remember { mutableStateOf(false) }
+    var signingIn by remember { mutableStateOf(false) }
+    var loginFeedback by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+
+    OutlinedTextField(
+        value = signInUser,
+        onValueChange = { signInUser = it.trim() },
+        label = { Text("Username") },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = signInPassword,
+        onValueChange = { signInPassword = it },
+        label = { Text("Password") },
+        modifier = Modifier.fillMaxWidth(),
+        visualTransformation = if (signInVisible) VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { signInVisible = !signInVisible }) {
+                Icon(if (signInVisible) HugeIcons.ViewOff else HugeIcons.View, contentDescription = stringResource(if (signInVisible) R.string.accessibility_hide_password else R.string.accessibility_show_password))
+            }
+        },
+    )
+
+    Button(
+        onClick = {
+            scope.launch {
+                signingIn = true
+                loginFeedback = when (val outcome = nazarickClient.login(provider.baseUrl, signInUser, signInPassword)) {
+                    is NazarickLoginOutcome.Success -> {
+                        onEdit(provider.copy(token = outcome.token))
+                        signInPassword = ""
+                        true to "Signed in - token captured (permanent)"
+                    }
+                    NazarickLoginOutcome.CredentialsRejected -> false to "Sign-in failed: username or password rejected by the instance"
+                    NazarickLoginOutcome.AccountLocked -> false to "Sign-in failed: account locked by the instance - wait before retrying"
+                    NazarickLoginOutcome.MalformedResponse -> false to "Sign-in failed: instance answered without a token (malformed response)"
+                    is NazarickLoginOutcome.ServerError -> false to "Sign-in failed: instance returned HTTP " + outcome.code
+                    NazarickLoginOutcome.Unreachable -> false to "Sign-in failed: instance unreachable - check Tailscale and the base URL"
+                }
+                signingIn = false
+            }
+        },
+        enabled = !signingIn && signInUser.isNotBlank() && signInPassword.isNotBlank(),
+    ) {
+        Text(if (signingIn) "Signing in..." else "Sign in")
+    }
+
+    loginFeedback?.let { (ok, message) ->
+        Text(
+            text = message,
+            color = if (ok) Color(0xFF1B8A3C) else Color(0xFFC62828),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 
     Row(
