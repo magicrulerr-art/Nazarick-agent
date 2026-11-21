@@ -33,7 +33,7 @@ class NazarickChatTest {
         assertEquals("user", firstItem["role"]?.jsonPrimitive?.contentOrNull)
         val parts = firstItem["content"] as JsonArray
         val part = parts[0] as JsonObject
-        assertEquals("input_text", part["type"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("text", part["type"]?.jsonPrimitive?.contentOrNull)
         assertEquals("hello tomb", part["text"]?.jsonPrimitive?.contentOrNull)
         assertEquals(true, obj["stream"]?.jsonPrimitive?.booleanOrNull)
         assertEquals("app-z7-chat1", obj["session_id"]?.jsonPrimitive?.contentOrNull)
@@ -69,7 +69,7 @@ class NazarickChatTest {
         )
         val parts = userTurnParts(body)
         assertEquals(
-            listOf("input_text", "input_image"),
+            listOf("text", "input_image"),
             parts.map { it["type"]?.jsonPrimitive?.contentOrNull },
         )
         assertEquals("what is on this picture", parts[0]["text"]?.jsonPrimitive?.contentOrNull)
@@ -108,7 +108,7 @@ class NazarickChatTest {
             imageDataUri = "",
         )
         assertFalse(body.contains("input_image"))
-        assertEquals(listOf("input_text"), userTurnParts(body).map { it["type"]?.jsonPrimitive?.contentOrNull })
+        assertEquals(listOf("text"), userTurnParts(body).map { it["type"]?.jsonPrimitive?.contentOrNull })
     }
 
     @Test

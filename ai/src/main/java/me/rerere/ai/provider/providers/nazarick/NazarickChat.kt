@@ -104,7 +104,7 @@ private fun nazarickChatRequestBodyCore(
                 put("role", "user")
                 putJsonArray("content") {
                     addJsonObject {
-                        put("type", "input_text")
+                        put("type", "text")
                         put("text", input)
                     }
                     if (!imageDataUri.isNullOrBlank()) {
