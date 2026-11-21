@@ -1608,17 +1608,52 @@ var tombReachableCache: Boolean = true
 private var lastResult: Boolean = true
 private var lastEpochMs: Long = 0L
 
-/** Whether the enabled Nazarick instance answers right now, probed by [TombProbe] at most every 30s. */
+/**
+ * Whether the enabled Nazarick instance answers right now, read from the memo that is refreshed at
+ * most every 30s. This entry point MUST stay main-thread-safe: composition reaches it through
+ * [resolveChatModel], and a blocking socket on the main thread dies inside [TombProbe]'s catch-all
+ * with NetworkOnMainThreadException, poisoning the memo to false forever (z7 demo defect,
+ * 2026-11-21: every TOMB turn queued). So the refresh runs on a daemon thread and the caller is
+ * served the current memo; the send path wants a fresh answer and calls [tombReachableProbeNow]
+ * from a background thread instead.
+ */
 fun Settings.tombReachableProbed(): Boolean {
     val now = System.currentTimeMillis()
     if (now - lastEpochMs < TOMB_PROBE_MEMO_MS) return lastResult
     // Nothing configured to probe: keep the cold, optimistic answer rather than declaring offline.
     val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
         .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
-    lastResult = TombProbe.probe(baseUrl).also { tombReachableCache = it }
-    lastEpochMs = now
+    if (probeRefreshInProgress.compareAndSet(false, true)) {
+        Thread({
+            try {
+                probeAndMemo(baseUrl)
+            } finally {
+                probeRefreshInProgress.set(false)
+            }
+        }, "TombProbeRefresh").apply { isDaemon = true }.start()
+    }
     return lastResult
 }
+
+/**
+ * Synchronous probe + memo write. Call off the main thread only — the ChatService send path does it
+ * under `withContext(Dispatchers.IO)` right before consulting TombSendGate, which needs the fresh
+ * answer rather than a 30s-old memo.
+ */
+fun Settings.tombReachableProbeNow(): Boolean {
+    val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
+    return probeAndMemo(baseUrl)
+}
+
+private fun probeAndMemo(baseUrl: String): Boolean =
+    TombProbe.probe(baseUrl).also { result ->
+        tombReachableCache = result
+        lastResult = result
+        lastEpochMs = System.currentTimeMillis()
+    }
+
+private val probeRefreshInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
 
 private const val TOMB_PROBE_MEMO_MS = 30_000L
 

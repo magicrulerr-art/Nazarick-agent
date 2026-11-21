@@ -158,7 +158,7 @@ import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import me.rerere.rikkahub.data.datastore.getCurrentChatModel
 import me.rerere.rikkahub.data.datastore.getEffectiveContextLength
 import me.rerere.rikkahub.data.datastore.resolveChatModel
-import me.rerere.rikkahub.data.datastore.tombReachableProbed
+import me.rerere.rikkahub.data.datastore.tombReachableProbeNow
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.Conversation
@@ -1105,7 +1105,7 @@ class ChatService(
                 // TombSendGate instead of failing. Reconnect is detected probe-at-next-send (there is
                 // no connectivity listener until US-012 owns a background pump), so the backlog is
                 // drained here — oldest first, before the turn being sent now.
-                val tombReachable = settings.tombReachableProbed()
+                val tombReachable = withContext(Dispatchers.IO) { settings.tombReachableProbeNow() }
                 if (answer) {
                     for (turn in TombSendGate.drainOnReconnect(tombReachable)) {
                         saveConversation(conversationId, session.state.value.withReplayedTombTurn(turn.text))
