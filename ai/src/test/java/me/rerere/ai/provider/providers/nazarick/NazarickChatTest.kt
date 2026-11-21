@@ -300,6 +300,9 @@ class NazarickChatTest {
         )
         assertEquals(
             listOf(
+                StreamChunk.ReasoningDelta("r", "think"),
+                StreamChunk.TextStart("t"),
+                StreamChunk.TextDelta("t", "say"),
                 StreamChunk.ReasoningEnd("r"),
                 StreamChunk.TextEnd("t"),
                 StreamChunk.Finish(
