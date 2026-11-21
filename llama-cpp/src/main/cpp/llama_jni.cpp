@@ -396,6 +396,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
 static ggml_type cacheTypeFromId(const std::string &id) {
     if (id == "f16")  return GGML_TYPE_F16;
     if (id == "q8_0") return GGML_TYPE_Q8_0;
+    if (id == "q4_0") return GGML_TYPE_Q4_0;
     // Deliberately not a silent fallback to f16. ContextPlanner sizes the context for the
     // cache type it picked, so substituting a different one hands back a context that does
     // not fit the budget the planner just proved it would fit.
@@ -433,7 +434,7 @@ static bool abortIfCancelled(void *data) {
 extern "C" JNIEXPORT jlong JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeCreateContext(
         JNIEnv *env, jobject, jlong modelHandle, jint nCtx, jint nBatch, jint nUBatch,
-        jstring cacheKIn, jstring cacheVIn, jint nThreads) {
+        jstring cacheKIn, jstring cacheVIn, jint nThreads, jboolean flashAttn) {
     JNI_GUARD(env, 0L, {
         auto *model = reinterpret_cast<llama_model *>(modelHandle);
         if (model == nullptr) {
@@ -453,6 +454,10 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeCreateContext(
         params.n_threads_batch = nThreads;
         params.type_k          = cacheTypeFromId(jstringToUtf8(env, cacheKIn));
         params.type_v          = cacheTypeFromId(jstringToUtf8(env, cacheVIn));
+        // AURA-020: explicit, not default-auto - the Kotlin side owns the offload and
+        // quantised-KV interlocks; AUTO here would let the native layer second-guess them.
+        params.flash_attn_type = flashAttn ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+                                           : LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
         auto gen = std::make_unique<GenerationContext>();
         gen->ctx = llama_init_from_model(model, params);

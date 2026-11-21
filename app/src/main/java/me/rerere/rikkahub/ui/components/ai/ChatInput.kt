@@ -90,6 +90,7 @@ import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ModelType
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.ai.ImageDestination
 import me.rerere.asr.ASRStatus
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Add01
@@ -146,6 +147,13 @@ fun ChatInput(
     onCancelClick: () -> Unit,
     onSendClick: () -> Unit,
     onLongSendClick: () -> Unit,
+    /**
+     * US-011r AC1: non-null only while the draft carries an image — the composer then offers the
+     * Edge|Tomb destination choice. `tombSelectable` is false under `BrainPolicy.EDGE`.
+     */
+    imageDestination: ImageDestination? = null,
+    tombSelectable: Boolean = true,
+    onImageDestinationChange: (ImageDestination) -> Unit = {},
     modifier: Modifier = Modifier,
     completionProviders: List<ChatCompletionProvider> = emptyList(),
     messageQueue: MessageQueueState = MessageQueueState(),
@@ -333,6 +341,23 @@ fun ChatInput(
                                     onUpdateChatModel = onUpdateChatModel,
                                     onUpdateModelReasoningLevel = onUpdateModelReasoningLevel,
                                 )
+
+                                // US-011r AC1: shown only while the draft carries an image — where
+                                // that image gets processed. Tomb is greyed out under
+                                // BrainPolicy.EDGE, which never lets it leave the device.
+                                if (imageDestination != null) {
+                                    TextButton(
+                                        onClick = { onImageDestinationChange(ImageDestination.EDGE) },
+                                    ) {
+                                        Text(if (imageDestination == ImageDestination.EDGE) "Edge ✓" else "Edge")
+                                    }
+                                    TextButton(
+                                        onClick = { onImageDestinationChange(ImageDestination.TOMB) },
+                                        enabled = tombSelectable,
+                                    ) {
+                                        Text(if (imageDestination == ImageDestination.TOMB) "Tomb ✓" else "Tomb")
+                                    }
+                                }
                             }
                         },
                         center = {
