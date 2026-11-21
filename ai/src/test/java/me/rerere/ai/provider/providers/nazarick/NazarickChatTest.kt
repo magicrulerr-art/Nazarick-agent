@@ -93,7 +93,7 @@ class NazarickChatTest {
         val parts = userTurnParts(body)
         assertEquals(
             "an image-less turn must not emit an empty input_image part",
-            listOf("input_text"),
+            listOf("text"),
             parts.map { it["type"]?.jsonPrimitive?.contentOrNull },
         )
         assertEquals("text only", parts[0]["text"]?.jsonPrimitive?.contentOrNull)
