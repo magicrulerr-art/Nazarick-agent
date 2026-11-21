@@ -25,6 +25,9 @@ import me.rerere.ai.ui.UIMessage
  *  - invent tool calls — see the TODO in [eventsToChunks].
  */
 
+/** Part id for the reasoning lane of a Nazarick turn — mirrors the provider's text part id. */
+const val NAZARICK_REASONING_PART_ID = "nazarick-reasoning"
+
 /** Wire value the app falls back to when no conversation id reached the provider. */
 const val NAZARICK_FALLBACK_CHAT_ID = "unknown-chat"
 
@@ -142,6 +145,10 @@ data class NazarickChunkBatch(
     val textOpen: Boolean,
     val completed: Boolean,
     val responseId: String?,
+    /** Whether a reasoning part is open from this batch — carried between lines like [textOpen]. */
+    val reasoningOpen: Boolean = false,
+    /** `msg_id -> type` learned from `MessageOpened` in this batch; the loop accumulates across lines. */
+    val msgKinds: Map<String, String?> = emptyMap(),
 )
 
 /**
@@ -158,20 +165,41 @@ fun eventsToChunks(
     textId: String,
     textOpen: Boolean = false,
     model: String? = null,
+    reasoningId: String = NAZARICK_REASONING_PART_ID,
+    reasoningOpen: Boolean = false,
+    msgKinds: Map<String, String?> = emptyMap(),
 ): NazarickChunkBatch {
     var open = textOpen
+    var thinkOpen = reasoningOpen
     var completed = false
     var responseId: String? = null
+    val kinds = HashMap(msgKinds)
     val chunks = mutableListOf<StreamChunk>()
 
     for (event in events) {
         when (event) {
+            // `object=message` opens a part whose `type` decides the lane: `reasoning` prose is the
+            // model's chain of thought, anything else (`message`) is the answer. The tag is stored,
+            // not emitted — TextDelta carries only msg_id, so the lane lookup must survive it.
+            is NazarickEvent.MessageOpened -> kinds[event.msgId] = event.msgType
+
             is NazarickEvent.TextDelta -> if (event.text.isNotEmpty()) {
-                if (!open) {
-                    chunks += StreamChunk.TextStart(textId)
-                    open = true
+                val isReasoning = event.msgId?.let(kinds::get) == "reasoning"
+                if (isReasoning) {
+                    if (!thinkOpen) {
+                        chunks += StreamChunk.ReasoningStart(reasoningId)
+                        thinkOpen = true
+                    }
+                    chunks += StreamChunk.ReasoningDelta(reasoningId, event.text)
+                } else {
+                    // Unknown or unseen msg_id falls to the answer lane — the pre-tagging behaviour,
+                    // so a server that stops announcing MessageOpened degrades to prose, not silence.
+                    if (!open) {
+                        chunks += StreamChunk.TextStart(textId)
+                        open = true
+                    }
+                    chunks += StreamChunk.TextDelta(textId, event.text)
                 }
-                chunks += StreamChunk.TextDelta(textId, event.text)
             }
 
             is NazarickEvent.ResponseStarted -> {
@@ -179,6 +207,10 @@ fun eventsToChunks(
             }
 
             is NazarickEvent.ResponseCompleted -> {
+                if (thinkOpen) {
+                    chunks += StreamChunk.ReasoningEnd(reasoningId)
+                    thinkOpen = false
+                }
                 if (open) {
                     chunks += StreamChunk.TextEnd(textId)
                     open = false
@@ -192,15 +224,17 @@ fun eventsToChunks(
                 )
             }
 
-            // TODO(US-005): non-text content is out of US-004 scope and is dropped, not invented.
-            //  `object=message, type=reasoning` opens a reasoning part and `object=content,
-            //  type=data` carries plugin-call argument fragments; the app's tool-call + reasoning
-            //  contract belongs to US-005, which owns surfacing them as
-            //  StreamChunk.ReasoningStart/Delta/End and ToolCallStart/Delta/End. Emitting prose or
-            //  a fake tool part here would teach the loop to expect a shape nobody ratified.
-            is NazarickEvent.MessageOpened -> Unit
+            // TODO(US-005): `object=content, type=data` carries plugin-call argument fragments;
+            //  the tool-call contract belongs to US-005, which owns ToolCallStart/Delta/End.
         }
     }
 
-    return NazarickChunkBatch(chunks = chunks, textOpen = open, completed = completed, responseId = responseId)
+    return NazarickChunkBatch(
+        chunks = chunks,
+        textOpen = open,
+        completed = completed,
+        responseId = responseId,
+        reasoningOpen = thinkOpen,
+        msgKinds = kinds,
+    )
 }

@@ -211,12 +211,124 @@ class NazarickChatTest {
     }
 
     @Test
-    fun `message opened events are dropped, not invented into prose`() {
+    fun `message opened events are not invented into prose, only recorded as lane tags`() {
         val batch = eventsToChunks(
             events = listOf(NazarickEvent.MessageOpened("msg_1", "reasoning")),
             textId = "t",
         )
         assertTrue(batch.chunks.isEmpty())
         assertFalse(batch.completed)
+        assertEquals(mapOf("msg_1" to "reasoning"), batch.msgKinds)
+    }
+
+
+    // ---- eventsToChunks: reasoning lane (thinking traces) ----
+
+    @Test
+    fun `reasoning tagged deltas stream as reasoning chunks under its own part id`() {
+        val batch = eventsToChunks(
+            events = listOf(
+                NazarickEvent.MessageOpened("msg_1", "reasoning"),
+                NazarickEvent.TextDelta(1, "msg_1", "The user "),
+                NazarickEvent.TextDelta(2, "msg_1", "wants..."),
+            ),
+            textId = "t",
+            reasoningId = "r",
+        )
+        assertEquals(
+            listOf(
+                StreamChunk.ReasoningStart("r"),
+                StreamChunk.ReasoningDelta("r", "The user "),
+                StreamChunk.ReasoningDelta("r", "wants..."),
+            ),
+            batch.chunks,
+        )
+        assertTrue(batch.reasoningOpen)
+        assertFalse(batch.textOpen)
+    }
+
+    @Test
+    fun `answer message after reasoning closes into the text lane, not the reasoning lane`() {
+        val kinds = mapOf("msg_1" to "reasoning", "msg_2" to "message")
+        val batch = eventsToChunks(
+            events = listOf(
+                NazarickEvent.TextDelta(3, "msg_1", "hmm"),
+                NazarickEvent.TextDelta(4, "msg_2", "Answer."),
+            ),
+            textId = "t",
+            reasoningId = "r",
+            reasoningOpen = true,
+            msgKinds = kinds,
+        )
+        assertEquals(
+            listOf(
+                StreamChunk.ReasoningDelta("r", "hmm"),
+                StreamChunk.TextStart("t"),
+                StreamChunk.TextDelta("t", "Answer."),
+            ),
+            batch.chunks,
+        )
+        assertTrue(batch.textOpen)
+        assertTrue(batch.reasoningOpen)  // closed only by the terminal event, like text
+    }
+
+    @Test
+    fun `unannounced msg id degrades to the answer lane instead of silence`() {
+        val batch = eventsToChunks(
+            events = listOf(NazarickEvent.TextDelta(1, "msg_orphan", "prose")),
+            textId = "t",
+            reasoningId = "r",
+        )
+        assertEquals(
+            listOf(StreamChunk.TextStart("t"), StreamChunk.TextDelta("t", "prose")),
+            batch.chunks,
+        )
+    }
+
+    @Test
+    fun `completion closes reasoning and text lanes each exactly once`() {
+        val batch = eventsToChunks(
+            events = listOf(
+                NazarickEvent.TextDelta(1, "msg_1", "think"),
+                NazarickEvent.TextDelta(2, "msg_2", "say"),
+                NazarickEvent.ResponseCompleted("resp_1", 9),
+            ),
+            textId = "t",
+            reasoningId = "r",
+            reasoningOpen = true,
+            msgKinds = mapOf("msg_1" to "reasoning", "msg_2" to "message"),
+        )
+        assertEquals(
+            listOf(
+                StreamChunk.ReasoningEnd("r"),
+                StreamChunk.TextEnd("t"),
+                StreamChunk.Finish(
+                    finishReason = NAZARICK_FINISH_COMPLETED,
+                    responseId = "resp_1",
+                    model = null,
+                ),
+            ),
+            batch.chunks,
+        )
+        assertFalse(batch.reasoningOpen)
+        assertFalse(batch.textOpen)
+    }
+
+    @Test
+    fun `lane tags accumulate across batches the way the streaming loop carries them`() {
+        val first = eventsToChunks(
+            events = listOf(NazarickEvent.MessageOpened("msg_1", "reasoning")),
+            textId = "t",
+        )
+        val second = eventsToChunks(
+            events = listOf(NazarickEvent.TextDelta(1, "msg_1", "deep")),
+            textId = "t",
+            reasoningId = "r",
+            msgKinds = first.msgKinds,
+        )
+        assertEquals(
+            listOf(StreamChunk.ReasoningStart("r"), StreamChunk.ReasoningDelta("r", "deep")),
+            second.chunks,
+        )
     }
 }

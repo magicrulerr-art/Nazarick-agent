@@ -151,6 +151,10 @@ class NazarickProvider(
         var normalEnd = false
         try {
             val parser = NazarickResponsesParser()
+            var reasoningOpen = false
+            // msg_id -> message type: reasoning prose and answer prose interleave, and the
+            // lane tag is only announced once per part, so the map must outlive single batches.
+            val msgKinds = HashMap<String, String?>()
             var textOpen = false
             var responseId: String? = null
             var completed = false
@@ -180,9 +184,13 @@ class NazarickProvider(
                         textId = TEXT_PART_ID,
                         textOpen = textOpen,
                         model = params.model.modelId,
+                        reasoningOpen = reasoningOpen,
+                        msgKinds = msgKinds,
                     )
                     for (chunk in batch.chunks) emit(chunk)
                     textOpen = batch.textOpen
+                    reasoningOpen = batch.reasoningOpen
+                    msgKinds.putAll(batch.msgKinds)
                     responseId = batch.responseId ?: responseId
                     if (batch.completed) {
                         completed = true
@@ -195,6 +203,7 @@ class NazarickProvider(
             if (!completed) {
                 // No status=completed line: the connection ended first. Close the text part so the
                 // UI stops showing a live cursor, and name the truncation in the finish reason.
+                if (reasoningOpen) emit(StreamChunk.ReasoningEnd(NAZARICK_REASONING_PART_ID))
                 if (textOpen) emit(StreamChunk.TextEnd(TEXT_PART_ID))
                 emit(
                     StreamChunk.Finish(
