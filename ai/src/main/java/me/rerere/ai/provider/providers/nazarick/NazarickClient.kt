@@ -2,8 +2,15 @@ package me.rerere.ai.provider.providers.nazarick
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import me.rerere.common.http.await
 import okhttp3.HttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,6 +38,30 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
 
     suspend fun checkToken(baseUrl: String, token: String, agentId: String? = null): NazarickCheckOutcome =
         get(nazarickUrl(baseUrl, VERIFY_PATH), auth = token, agentId = agentId, mapper = ::nazarickTokenOutcome)
+
+    /**
+     * `POST {baseUrl}/api/auth/login` with `{"username":…,"password":…,"expires_in":0}` (US-001
+     * sign-in) — the exchange that mints the Bearer token every other call in this class rides,
+     * so it is the ONE call sent WITHOUT an Authorization header. `expires_in: 0` is the server's
+     * permanent-token option (qwenpaw `auth.py`: 0 = never expires, still revocable), sent as the
+     * JSON **integer** the endpoint expects; the user never handles the token itself.
+     *
+     * Returns a [NazarickLoginOutcome] instead of throwing, the same contract as [stopChat]: the
+     * caller is a provider-page button that must show a named reason (rejected / locked /
+     * unreachable), never a stack trace.
+     */
+    suspend fun login(baseUrl: String, username: String, password: String): NazarickLoginOutcome {
+        val url = nazarickUrl(baseUrl, LOGIN_PATH) ?: return NazarickLoginOutcome.Unreachable
+        return withContext(Dispatchers.IO) {
+            try {
+                client.newCall(loginRequest(url, username, password)).await().use { response ->
+                    loginOutcome(response.code, response.body?.string().orEmpty())
+                }
+            } catch (_: IOException) {
+                NazarickLoginOutcome.Unreachable
+            }
+        }
+    }
 
     /**
      * `GET {baseUrl}/api/agents` -> parsed roster (US-003). Rides the same central
@@ -115,6 +146,8 @@ class NazarickClient(private val client: OkHttpClient = OkHttpClient()) {
 
         /** US-006 stop endpoint: `POST {baseUrl}/api/console/chat/stop?chat_id=…&cancel_reason=USER`. */
         const val STOP_PATH = "/api/console/chat/stop"
+        /** US-001 sign-in endpoint: `POST {baseUrl}/api/auth/login`, no Authorization header. */
+        const val LOGIN_PATH = "/api/auth/login"
 
         /** Server-side default for `cancel_reason`; sent explicitly so the audit line is unambiguous. */
         const val CANCEL_REASON_USER = "USER"
@@ -273,4 +306,76 @@ fun stopOutcome(httpCode: Int): NazarickStopOutcome = when (httpCode) {
     200 -> NazarickStopOutcome.OK
     404 -> NazarickStopOutcome.NotFound
     else -> NazarickStopOutcome.HttpError(httpCode)
+}
+
+/**
+ * Outcome of [NazarickClient.login] (US-001 sign-in). Sealed and total like [NazarickStopOutcome]:
+ * every answer the login endpoint can give has a named case, so the provider page reports
+ * *what happened* instead of "HTTP 423".
+ */
+sealed class NazarickLoginOutcome {
+    /** 200 with a usable `token` — the permanent Bearer token to store in provider settings. */
+    data class Success(val token: String) : NazarickLoginOutcome()
+
+    /** 401/403 — the instance answered and rejected these credentials. Nothing was stored. */
+    object CredentialsRejected : NazarickLoginOutcome()
+
+    /** 423 — too many failed attempts; the account is temporarily locked. Wait, then retry. */
+    object AccountLocked : NazarickLoginOutcome()
+
+    /** 200 without a usable non-blank `token` field: the instance answered, but not in the shape we promised to read. */
+    object MalformedResponse : NazarickLoginOutcome()
+
+    /** Any other status: answered, but not a shape we promised to interpret. Code carried for the log. */
+    data class ServerError(val code: Int) : NazarickLoginOutcome()
+
+    /** No answer at all — connection refused/dropped (Tailscale down?), or an unparseable baseUrl. */
+    object Unreachable : NazarickLoginOutcome()
+}
+
+/** The login body's media type; same value the chat stream uses, kept local to stay private. */
+private const val LOGIN_JSON_MEDIA = "application/json"
+
+/**
+ * Pure request builder (US-001): `POST {baseUrl}/api/auth/login` carrying
+ * `{"username":…,"password":…,"expires_in":0}`.
+ *
+ * `expires_in` is the JSON **integer** 0 — the server's permanent-token option — and tests pin
+ * the literal so the body can never drift into `"0"` or an omitted field (an omitted field would
+ * silently mint a *session* token the user then has to re-login for). NO Authorization header:
+ * this request mints the token, it does not consume one.
+ */
+fun loginRequest(url: HttpUrl, username: String, password: String): Request {
+    val body = buildJsonObject {
+        put("username", username)
+        put("password", password)
+        put("expires_in", 0)
+    }.toString().toRequestBody(LOGIN_JSON_MEDIA.toMediaType())
+    return nazarickRequest(url, token = null, agentId = null, body = body)
+}
+
+/**
+ * Pure `{"token":…}` reader (US-001). Any malformed or missing shape collapses to null — a
+ * garbage 200 is a named [NazarickLoginOutcome.MalformedResponse], never a crash and never a
+ * stored empty token.
+ */
+fun parseLoginToken(body: String): String? = try {
+    body.let { Json.parseToJsonElement(it).jsonObject["token"]?.jsonPrimitive?.contentOrNull }
+        ?.takeIf { it.isNotBlank() }
+} catch (_: Exception) {
+    null
+}
+
+/**
+ * Pure HTTP-status + body -> [NazarickLoginOutcome] mapping (US-001), unit-tested without a
+ * socket. 200 is the only success and only with a parseable non-blank token; 401 and 403 share
+ * one name because from the app's side they mean the same thing (bad credentials); 423 is the
+ * qwenpaw lockout and deserves its own user-facing sentence.
+ */
+fun loginOutcome(httpCode: Int, body: String): NazarickLoginOutcome = when (httpCode) {
+    200 -> parseLoginToken(body)?.let { NazarickLoginOutcome.Success(it) }
+        ?: NazarickLoginOutcome.MalformedResponse
+    401, 403 -> NazarickLoginOutcome.CredentialsRejected
+    423 -> NazarickLoginOutcome.AccountLocked
+    else -> NazarickLoginOutcome.ServerError(httpCode)
 }
