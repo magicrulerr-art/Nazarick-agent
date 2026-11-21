@@ -2153,6 +2153,14 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="local_llm_catalog_tag_thinking">Thinking</string>
   <string name="local_llm_catalog_tag_speculative">Speculative decoding</string>
   <string name="local_llm_catalog_tag_tools">Tools</string>
+  <string name="local_llm_llamacpp_engine_title">Engine settings</string>
+  <string name="local_llm_llamacpp_engine_subtitle">Flash Attention, KV cache and context window. Applies at the next model load - reopen the chat after changing.</string>
+  <string name="local_llm_llamacpp_flash_attn">Flash Attention</string>
+  <string name="local_llm_llamacpp_kv_title">KV cache</string>
+  <string name="local_llm_llamacpp_ctx_title">Context window</string>
+  <string name="local_llm_llamacpp_ctx_warning">A context the model or memory cannot support will fail to load - pick Auto if unsure.</string>
+  <string name="local_llm_llamacpp_fit_title">Picks for this device (%1$d GB)</string>
+  <string name="local_llm_llamacpp_fit_line">Fast: %1$s  |  Balanced: %2$s  |  Best: %3$s</string>
   <string name="local_llm_llamacpp_catalog_title">Available models</string>
   <string name="local_llm_llamacpp_catalog_subtitle">Curated GGUF models with a tool-calling chat template. Pick one for one-tap install.</string>
   <string name="local_llm_llamacpp_import_action">Install a GGUF you already have</string>

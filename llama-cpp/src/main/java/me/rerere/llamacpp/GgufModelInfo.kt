@@ -33,6 +33,7 @@ data class GgufModelInfo(
 enum class KvCacheType(val id: String, val bytesPerElement: Double) {
     F16("f16", 2.0),
     Q8_0("q8_0", 1.0625), // 34/32
+    Q4_0("q4_0", 0.875), // 28/32: Q4_0 block = 32 * 0.5B values + 12B scale. Exists because a 12 GB phone reaches a 16K context with q4_0 and not otherwise (AURA-020).
 }
 
 /** One declared tool and the byte cost of its JSON schema in the prompt. */
@@ -46,6 +47,8 @@ data class ContextPlan(
     val nCtx: Int,
     val cacheTypeK: KvCacheType,
     val cacheTypeV: KvCacheType,
+    /** Whether the context created from this plan enables Flash Attention (AURA-020). llama.cpp requires it for quantised caches, so ContextPlanner forces true whenever the cache is not F16; with F16 it is the user's setting, on by default. The GPU-offload exception lives at LlamaCppRuntime, not here. */
+    val flashAttn: Boolean = true,
     val nBatch: Int,
     val nUBatch: Int,
     val droppedToolNames: List<String>,
