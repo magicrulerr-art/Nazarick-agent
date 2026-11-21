@@ -254,4 +254,68 @@ class ContextPlannerTest {
             plan.droppedToolNames.isNotEmpty(),
         )
     }
+
+    // US-003: phone-class context ceiling ----------------------------------------------------
+
+    /** spark2_5 as shipped in v1: the model that took 32768 with 4.4 GB free and died. */
+    private fun sparkModel() = GgufModelInfo(
+        nLayers = 36,
+        nEmbd = 4096,
+        nHeadKv = 4,
+        nEmbdHeadK = 128,
+        nEmbdHeadV = 128,
+        nVocab = 151_936,
+        nCtxTrain = 1_048_576,
+        slidingWindow = null,
+        weightsBytes = 3_400_000_000L,
+    )
+
+    @Test
+    fun `a device with 12 GB total never plans above the phone ceiling`() {
+        // z7: 11.1 GB total, 4.4 GB free at crash; release picked 32768 and lmkd reaped
+        // the app mid-prefill (floor/ticket-2026-11-16-v1-spark-lmk-death.md). The cap
+        // binds even though the model advertises a 1M window.
+        ContextPlanner.totalRamBytesOverride = 11L * 1024 * 1024 * 1024
+        try {
+            val plan = ContextPlanner.plan(sparkModel(), 4_400_000_000L, tools(16), 8_000)
+            assertTrue(
+                "phone class must never plan above the ceiling, got nCtx=${plan.nCtx}",
+                plan.nCtx <= ContextPlanner.PHONE_CTX_CEILING,
+            )
+        } finally {
+            ContextPlanner.totalRamBytesOverride = null
+        }
+    }
+
+    @Test
+    fun `ceiling constants are pinned and a bigger device may exceed them`() {
+        assertEquals(16384, ContextPlanner.PHONE_CTX_CEILING)
+        assertEquals(12L * 1024 * 1024 * 1024, ContextPlanner.PHONE_RAM_CEILING_BYTES)
+        ContextPlanner.totalRamBytesOverride = 24L * 1024 * 1024 * 1024
+        try {
+            val plan = ContextPlanner.plan(sparkModel(), 12_000_000_000L, tools(16), 8_000)
+            assertTrue(
+                "a 24 GB device must not be capped by the phone rule, got nCtx=${plan.nCtx}",
+                plan.nCtx > ContextPlanner.PHONE_CTX_CEILING,
+            )
+        } finally {
+            ContextPlanner.totalRamBytesOverride = null
+        }
+    }
+
+    @Test
+    fun `F16 rungs are billed at the FA-off cache layout`() {
+        // Measured on device: spark2_5 KV = 144 KiB/token with FA resolved disabled, not
+        // the 72 KiB the FA-packed arithmetic gives (ticket-2026-11-16-v1-spark-lmk-death).
+        // Growth between two contexts isolates the KV term; weights and compute buffers
+        // cancel. Expected: 36 layers x 4096 extra tokens x 4096 B/token (FA-off layout).
+        val info = sparkModel()
+        val growth = ContextPlanner.estimateBytes(info, 8192, KvCacheType.F16) -
+            ContextPlanner.estimateBytes(info, 4096, KvCacheType.F16)
+        val faOffKv = 36.0 * 4096 * 4096 * ContextPlanner.tunables.headroomWithMetadata
+        // two roundToLong calls can each drift by 1 byte; the KV term itself is exact.
+        kotlin.math.abs(growth - faOffKv.toLong()).let { delta ->
+            assertTrue("KV growth $growth must equal FA-off $faOffKv (±2), delta=$delta", delta <= 2L)
+        }
+    }
 }

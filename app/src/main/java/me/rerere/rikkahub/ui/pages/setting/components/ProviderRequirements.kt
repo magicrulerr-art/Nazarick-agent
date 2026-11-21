@@ -56,6 +56,12 @@ data class ProviderRequirement(
                     severity = TagType.INFO,
                 ),
             )
+            is ProviderSetting.Nazarick -> listOf(
+                ProviderRequirement(
+                    label = "Remote · Nazarick instance + Bearer token",
+                    severity = TagType.INFO,
+                ),
+            )
             else -> emptyList()
         }
     }

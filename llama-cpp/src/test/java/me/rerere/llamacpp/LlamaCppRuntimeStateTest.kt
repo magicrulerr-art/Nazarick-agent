@@ -36,7 +36,7 @@ class LlamaCppRuntimeStateTest {
         """.trimIndent()
         override fun createContext(
             modelHandle: Long, nCtx: Int, nBatch: Int, nUBatch: Int,
-            cacheTypeK: String, cacheTypeV: String, nThreads: Int,
+            cacheTypeK: String, cacheTypeV: String, nThreads: Int, flashAttn: Boolean,
         ): Long { createdCtx = nCtx; return 2L }
         override fun freeContext(handle: Long) { freedContext = true }
         override fun cancelGeneration(handle: Long) { cancelledHandle = handle }

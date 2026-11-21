@@ -27,6 +27,13 @@ data class ColdMemorySearchOutcome(
     /** Some passages were embedded by a different model: a rebuild is needed before trusting it. */
     val stale: Boolean = false,
     val note: String? = null,
+    /**
+     * [KeywordRecall.MARKER] when the hits came from keyword ranking because no
+     * embedding model could be loaded (missing, or declined by the memory budget); null
+     * for semantic hits. The two modes produce incomparable scores, so the mode travels
+     * with the result rather than being inferred from them.
+     */
+    val recall: String? = null,
 )
 
 /**
@@ -44,6 +51,16 @@ object MemorySearchEnvelope {
             put("dir", dirLabel)
             put("query", query)
             put("indexedDocuments", outcome.indexedDocuments)
+            outcome.recall?.let { mode ->
+                put("recall", mode)
+                put(
+                    "recallNote",
+                    "No embedding model could be loaded, so these passages are keyword-ranked "
+                        + "(BM25), not matched by meaning. Scores are not comparable with the "
+                        + "cosine similarities of a semantic search, and a passage that shares no "
+                        + "wording with the query cannot be found this way.",
+                )
+            }
             if (outcome.stale) {
                 put("stale", true)
                 put(
@@ -69,26 +86,21 @@ object MemorySearchEnvelope {
         }.toString()
 
     /**
-     * Sent when no embedding model is installed. The hint matters more than the error: a model that
-     * only finds out semantic search is off will otherwise stop looking for the notes entirely,
-     * when the exact-name tools it already has would have answered the question.
-     */
-    /**
-     * Sent when no embedding model is installed.
-     *
-     * The hint is an instruction, not an alternative. It used to point at `memory_index` /
-     * `memory_read` — a keyword-free way to browse the same directory — but that is a fallback for
-     * a feature that is simply off, and Nazarick does not keep those: the model is what searching by
-     * meaning runs on, so the only thing worth telling anyone is how to install it.
+     * Sent when neither engine could answer: no embedding model loaded AND nothing the
+     * keyword fallback could read either (AURA-021 added that fallback, so this state is
+     * rarer than it used to be - an empty or unreadable directory is now the only way in).
+     * The hint stays an instruction: a model that merely learns search is off stops looking
+     * for its notes entirely.
      */
     fun unavailable(detail: String?): String = buildJsonObject {
         put("error", "unavailable")
         put("detail", detail ?: "no embedding model is installed")
         put(
             "hint",
-            "Searching cold memory needs the embedding model, and none is installed. Ask the user " +
-                "to install one from the assistant's memory settings; until then this knowledge " +
-                "base cannot be searched.",
+            "Neither semantic nor keyword search could run: no embedding model is loaded and " +
+                "no readable Markdown document exists in this knowledge-base directory. Ask " +
+                "the user to install an embedding model from the assistant's memory settings, " +
+                "or list the notes with memory_index.",
         )
     }.toString()
 

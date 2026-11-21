@@ -72,6 +72,7 @@ internal fun providerKind(provider: ProviderSetting): String = when (provider) {
     is ProviderSetting.Codex -> "codex"
     is ProviderSetting.Grok -> "grok"
     is ProviderSetting.GeminiOAuth -> "gemini_oauth"
+    is ProviderSetting.Nazarick -> "nazarick"
 }
 
 internal fun modelTypeWire(type: ModelType): String = when (type) {
