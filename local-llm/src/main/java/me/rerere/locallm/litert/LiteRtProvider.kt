@@ -163,7 +163,7 @@ class LiteRtProvider(
         messages: List<UIMessage>,
         params: TextGenerationParams,
     ): Flow<StreamChunk> = flow {
-        Log.d("US003PROBE", "S7 LiteRtEngine.enter model=${params.model.modelId}")
+        Log.e("US003PROBE", "S7 LiteRtEngine.enter model=${params.model.modelId}")
         val installed = prefs.installedModels(LocalRuntime.LiteRT)
         val modelPath = installed[params.model.modelId]
             ?: throw IllegalStateException("Model ${params.model.modelId} not installed")

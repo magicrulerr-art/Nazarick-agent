@@ -180,7 +180,7 @@ fun ChatInput(
     var isFullScreen by remember { mutableStateOf(false) }
 
     fun sendMessage() {
-        Log.d("US003PROBE", "S0a ChatInput.sendClick loading=$loading stateEmpty=${state.isEmpty()}")
+        Log.e("US003PROBE", "S0a ChatInput.sendClick loading=$loading stateEmpty=${state.isEmpty()}")
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
         if (loading && state.isEmpty()) onCancelClick() else onSendClick()

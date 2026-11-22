@@ -136,7 +136,7 @@ class NazarickProvider(
             .header("Accept", "text/event-stream")
             .build()
 
-        Log.d("US003PROBE", "S7 NazarickProvider.streamText pre-socket url=$url agent=${providerSetting.agentId}")
+        Log.e("US003PROBE", "S7 NazarickProvider.streamText pre-socket url=$url agent=${providerSetting.agentId}")
         val call = client.newCall(request)
         // Stop must reach the socket: a collector that goes away cancels this coroutine, but the
         // blocking read below only notices at its next line, and the instance keeps generating

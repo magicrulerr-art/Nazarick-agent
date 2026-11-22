@@ -1039,7 +1039,7 @@ class ChatService(
         val session = getOrCreateSession(conversationId)
         synchronized(session) {
             if (session.messageQueue.state.value.messages.isEmpty()) session.messageQueue.resume()
-            Log.d("US003PROBE", "S1 ChatService.enqueue cid=${conversationId.toString().take(8)} paused=${session.messageQueue.state.value.paused} job!=null=${session.getJob() != null}")
+            Log.e("US003PROBE", "S1 ChatService.enqueue cid=${conversationId.toString().take(8)} paused=${session.messageQueue.state.value.paused} job!=null=${session.getJob() != null}")
             session.messageQueue.enqueue(content, answer)
             dispatchNextQueuedMessage(conversationId)
         }
@@ -1117,7 +1117,7 @@ class ChatService(
                 // drained here — oldest first, before the turn being sent now.
                 val probeT0 = System.currentTimeMillis()
                 val tombReachable = withContext(Dispatchers.IO) { settings.tombReachableProbeNow() }
-                Log.d("US003PROBE", "S3 probeNow reachable=$tombReachable ms=${System.currentTimeMillis() - probeT0} baseUrl=${settings.providers.filterIsInstance<me.rerere.ai.provider.ProviderSetting.Nazarick>().firstOrNull { it.enabled }?.baseUrl}")
+                Log.e("US003PROBE", "S3 probeNow reachable=$tombReachable ms=${System.currentTimeMillis() - probeT0} baseUrl=${settings.providers.filterIsInstance<me.rerere.ai.provider.ProviderSetting.Nazarick>().firstOrNull { it.enabled }?.baseUrl}")
                 if (answer) {
                     for (turn in TombSendGate.drainOnReconnect(tombReachable)) {
                         saveConversation(conversationId, session.state.value.withReplayedTombTurn(turn.text))
@@ -1130,7 +1130,7 @@ class ChatService(
                                 .joinToString("\n") { it.text },
                             turnId = queued.id.toString(),
                             )
-                    Log.d("US003PROBE", "S5 gate verdict=$gate gateQUEUED=${gate == TombSendGate.Gate.QUEUED} policy=${assistant.brainPolicy} tombReachable=$tombReachable turn=${queued.id.toString().take(8)} cid=${conversationId.toString().take(8)} sessionQueue=${session.messageQueue.state.value.messages.size}")
+                    Log.e("US003PROBE", "S5 gate verdict=$gate gateQUEUED=${gate == TombSendGate.Gate.QUEUED} policy=${assistant.brainPolicy} tombReachable=$tombReachable turn=${queued.id.toString().take(8)} cid=${conversationId.toString().take(8)} sessionQueue=${session.messageQueue.state.value.messages.size}")
                     if (gate == TombSendGate.Gate.QUEUED) {
                         saveConversation(conversationId, currentConversation.withTombQueuedTurn(processedContent))
                         session.submittingMessage = null

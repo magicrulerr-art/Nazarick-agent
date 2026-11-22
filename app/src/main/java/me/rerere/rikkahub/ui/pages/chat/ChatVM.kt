@@ -299,7 +299,7 @@ class ChatVM(
      * @param answer 是否触发消息生成，如果为false，则仅添加消息到消息列表中
      */
     fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
-        Log.d("US003PROBE", "S0b ChatVM.handleMessageSend cid=${_conversationId.toString().take(8)} answer=$answer")
+        Log.e("US003PROBE", "S0b ChatVM.handleMessageSend cid=${_conversationId.toString().take(8)} answer=$answer")
         if (content.isEmptyInputMessage()) {
             Log.w("US003PROBE", "S0b ChatVM.GUARD isEmptyInput -> send DROPPED cid=${_conversationId.toString().take(8)}")
             return
