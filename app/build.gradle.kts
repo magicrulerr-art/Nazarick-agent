@@ -103,8 +103,8 @@ android {
             // v1.0-rc1 / vc20 (AURA-021): first release-candidate of the converged loop.
             // Unpublished builds carry the -rc suffix by house rule; the number goes plain only
             // when the owner approves publishing. The flavour block stays the single source.
-            versionCode = 23
-            versionName = "2.0"
+            versionCode = 24
+            versionName = "2.1"
             // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
             // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
             // only as the upstream fallback in main's strings.xml.
