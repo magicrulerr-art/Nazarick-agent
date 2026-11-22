@@ -1,7 +1,5 @@
 package me.rerere.rikkahub.data.ai
 
-import android.util.Log
-
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -47,7 +45,6 @@ object TombSendGate {
         turnText: String,
         turnId: String,
     ): Gate {
-        Log.d("US003PROBE", "S4 onSubmit turn=${turnId.take(8)} policy=$policy tombReachable=$tombReachable queueBefore=${queue.size}")
         if (tombReachable) return Gate.PASSED_THROUGH
         if (policy == BrainPolicy.EDGE) return Gate.PASSED_THROUGH
         synchronized(lock) { queue.enqueue(TombTurn(id = turnId, text = turnText)) }
@@ -61,7 +58,7 @@ object TombSendGate {
      * background pump until US-012 owns one.
      */
     fun drainOnReconnect(tombReachable: Boolean): List<TombTurn> =
-        if (tombReachable) synchronized(lock) { queue.drain().also { Log.d("US003PROBE", "S4 drain flushed=${it.size}") } } else emptyList()
+        if (tombReachable) synchronized(lock) { queue.drain() } else emptyList()
 
     /** Drops every pending turn - test isolation, and the hook a signed-out session will need. */
     fun clear() {

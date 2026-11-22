@@ -1130,7 +1130,7 @@ class ChatService(
                                 .joinToString("\n") { it.text },
                             turnId = queued.id.toString(),
                             )
-                    Log.d("US003PROBE", "S5 gate verdict=$gate gateQUEUED=${gate == TombSendGate.Gate.QUEUED} policy=${assistant.brainPolicy} tombReachable=$tombReachable cid=${conversationId.toString().take(8)}")
+                    Log.d("US003PROBE", "S5 gate verdict=$gate gateQUEUED=${gate == TombSendGate.Gate.QUEUED} policy=${assistant.brainPolicy} tombReachable=$tombReachable turn=${queued.id.toString().take(8)} cid=${conversationId.toString().take(8)} sessionQueue=${session.messageQueue.state.value.messages.size}")
                     if (gate == TombSendGate.Gate.QUEUED) {
                         saveConversation(conversationId, currentConversation.withTombQueuedTurn(processedContent))
                         session.submittingMessage = null
