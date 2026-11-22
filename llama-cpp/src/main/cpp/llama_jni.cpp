@@ -1,17 +1,88 @@
 #include <jni.h>
 #include <algorithm>
+#include <android/log.h>
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "ggml-backend.h"
 #include "llama.h"
+#include "llama-model.h"  // internal: the per-layer hparams have no public accessor - see headKvMax
 #include "llama_embed.h"
 #include "jni_util.h"
 #include "chat.h"
 #include "sampling.h"
 #include <nlohmann/json.hpp>
+
+// JNI_GUARD bodies are macro arguments: commas survive only inside parentheses,
+// and a template's angle brackets are not parentheses — hence the alias.
+using NazarickMs = std::chrono::duration<double, std::milli>;
+using NazarickLock = std::lock_guard<std::mutex>;
+
+// One GPU, one bus, one very unforgiving driver: the chat context and the embedding
+// context are separate llama_contexts, and when both submit work to the Adreno Vulkan
+// device at once the second submission lands in the driver's fault handler and takes the
+// process down (SIGSEGV in vkGetDeviceFaultInfoEXT under the sched, twice on the Fold:
+// once 1s into a generate while the tool index embedded 16 schemas, once identically).
+// All graph compute is therefore serialised here; load/free stay unlocked because they
+// do not touch the device queue.
+static std::mutex gComputeMutex;
+
+// An empty, NULL-terminated device list. Passing it as llama_model_params::devices pins a
+// model to the CPU: llama_prepare_model_devices takes the explicit-list branch and ends with
+// no device, leaving llama_context to add only the CPU backend (src/llama.cpp). Static rather
+// than a stack array because params only carries the pointer — the storage has to outlive the
+// call that reads it even if a future caller keeps params around.
+static ggml_backend_dev_t gNoDevices[1] = { nullptr };
+
+// llama.cpp and ggml write their diagnostics to stderr, and an Android app process's stderr
+// goes nowhere — so the two lines that actually settle a GPU argument ("ggml_opencl:
+// selecting platform", "offloaded 35/35 layers to GPU") were invisible no matter how much
+// logcat we watched. Both loggers are routed here instead, and the registry's device list is
+// printed around every load, so whether libggml-opencl.so registered at all is a fact on
+// screen rather than an inference from speed. Every level is forwarded (debug included:
+// "register_device: registered opencl" is exactly the line this exists to catch) under a tag
+// of its own, which keeps the perf breadcrumbs readable.
+// The parameter type is load-bearing, not ceremony: llama_log_set and ggml_log_set both take
+// ggml_log_callback = void(*)(enum ggml_log_level, const char*, void*), and C++ will not
+// convert a function pointer whose first parameter is int. Declaring it `int` compiles this
+// file happily and then dies at the two calls below ("no matching function for call to
+// 'llama_log_set'" - CI run 64, 2026-10-30).
+static void jniEngineLog(enum ggml_log_level level, const char *text, void *) {
+    const int prio = level >= GGML_LOG_LEVEL_ERROR ? ANDROID_LOG_ERROR
+                     : level == GGML_LOG_LEVEL_WARN ? ANDROID_LOG_WARN
+                     : level == GGML_LOG_LEVEL_INFO ? ANDROID_LOG_INFO
+                     : ANDROID_LOG_VERBOSE;
+    // The callback hands over partial lines with no trailing newline guarantee; logcat adds
+    // its own, so the newline and anything after it is dropped.
+    __android_log_print(prio, "nazarick-engine", "%.*s", (int) strcspn(text, "\n"), text);
+}
+
+// Names of every ggml device the registry knows about. Empty means no GPU backend got
+// loaded at all, which is the difference between "OpenCL failed" and "OpenCL never arrived".
+static std::string engineDeviceList() {
+    std::string devs;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        const ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        devs += (devs.empty() ? "" : ", ");
+        devs += ggml_backend_dev_name(dev);
+    }
+    return devs;
+}
+
+static void initEngineLogging() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        llama_log_set(jniEngineLog, nullptr);
+        ggml_log_set(jniEngineLog, nullptr);
+    });
+}
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
@@ -23,23 +94,41 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeSystemInfo(JNIEnv *env, jobject) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstring pathIn) {
+Java_me_rerere_llamacpp_LlamaCppJni_nativeLoadModel(JNIEnv *env, jobject, jstring pathIn, jint nGpuLayersIn) {
     JNI_GUARD(env, 0L, {
         llama_backend_init();
         const std::string path = jstringToUtf8(env, pathIn);
+        initEngineLogging();
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-engine",
+                            "load: begin n_gpu_layers=%d devices=[%s]",
+                            (int) nGpuLayersIn, engineDeviceList().c_str());
 
         llama_model_params params = llama_model_default_params();
-        // CPU only for now; the spec keeps GPU offload behind a CMake option.
-        params.n_gpu_layers = 0;
+        // Layer offload is the caller's decision per model: 0 keeps the CPU path, -1 offloads
+        // everything the compiled-in GPU backend (see llama.gpu Gradle property) can take.
+        params.n_gpu_layers = static_cast<int>(nGpuLayersIn);
         // Default params already select mmap; set it explicitly since the field this
         // used to be (a plain use_mmap bool) was replaced by this enum in b10228.
         params.load_mode = LLAMA_LOAD_MODE_MMAP;
+        // Make gpuLayers=0 mean "no GPU at all", not merely "no layers offloaded".
+        // Default device selection binds every GPU it finds even at n_gpu_layers=0, and
+        // the scheduler then routes the non-layer ops — norms, losses, pooling — onto
+        // them. The embedding model loaded with gpuLayers=0 still died in
+        // vkGetDeviceFaultInfoEXT on the Adreno driver with nothing else computing, so
+        // binding it there was the fault, not the concurrency. Callers that want a GPU
+        // ask for it with a positive layer count; the CPU lane gets no device to fault
+        // on.
+        if (nGpuLayersIn == 0) {
+            params.devices = gNoDevices;
+        }
 
         llama_model *model = llama_model_load_from_file(path.c_str(), params);
         if (model == nullptr) {
             throwJava(env, ("failed to load model: " + path).c_str());
             return 0L;
         }
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-engine",
+                            "load: ok devices=[%s]", engineDeviceList().c_str());
         return reinterpret_cast<jlong>(model);
     })
 }
@@ -54,9 +143,10 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeFreeModel(JNIEnv *env, jobject, jlong 
     })
 }
 
-// Reads one integer-valued metadata key, trying the architecture-prefixed name first.
-// Only used for the head dimensions: llama.cpp exposes typed accessors for everything
-// else this file needs (head_count_kv, head_count, sliding window).
+// Reads one scalar integer metadata key, trying the architecture-prefixed name first.
+// Scalars only: llama_model_base::load_hparams builds the gguf_kv string map this reads while
+// skipping every GGUF_TYPE_ARRAY value, so a per-layer key is simply absent from it - see
+// headKvMax for the one such key this shim needs.
 static int metaInt(const llama_model *model, const std::string &suffix, int fallback) {
     char arch[128] = {0};
     llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch));
@@ -73,6 +163,25 @@ static int metaInt(const llama_model *model, const std::string &suffix, int fall
     return fallback;
 }
 
+// Widest KV-head count over all layers, read straight out of the model's hparams.
+// Neither metadata route can answer this for a hybrid model: llama_model_n_head_kv() reports
+// layer 0 alone, and llama_model_meta_val_str reads the gguf_kv string map that load_hparams
+// fills while skipping arrays - so when head_count_kv is declared as the per-layer array
+// [0, 0, 4, 0, 4, ...], as LFM3 does, that key does not exist in the map at all. hparams is
+// the only place the whole array survives. Requires src/ on the include path (llama-model.h).
+static int headKvMax(const llama_model *model) {
+    const llama_hparams & h = model->hparams;
+
+    // n_layer() is a method here, not a field: it is n_layer_all minus any trailing next-n
+    // (speculative) layers, so a draft head cannot inflate what we report - and it stays inside
+    // n_layer_all, the bound n_head_kv(il) GGML_ABORTs past.
+    int best = 0;
+    for (uint32_t il = 0; il < h.n_layer(); ++il) {
+        best = std::max(best, (int) h.n_head_kv(il));
+    }
+    return best;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeModelInfo(JNIEnv *env, jobject, jlong handle) {
     JNI_GUARD(env, nullptr, {
@@ -85,7 +194,23 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeModelInfo(JNIEnv *env, jobject, jlong 
         const int nEmbd     = llama_model_n_embd(model);
         const int nLayers   = llama_model_n_layer(model);
         const int nCtxTrain = llama_model_n_ctx_train(model);
-        const int nHeadKv   = llama_model_n_head_kv(model);
+        // llama_model_n_head_kv() reports hparams.n_head_kv[0] - layer 0 alone. Hybrid
+        // architectures interleave conv and attention layers, and LFM3 declares
+        // lfm3.attention.head_count_kv as the per-layer array [0, 0, 4, 0, 4, ...]: its layer 0
+        // is a conv layer, so the typed accessor returns 0. GgufModelInfo.isComplete reads a 0
+        // as "untrustworthy metadata" and ContextPlanner then refuses to size anything, falling
+        // to LADDER.first() = 4096 - where the conversation-history budget measured 393 bytes
+        // and 12 of 14 tool schemas were dropped, pinned ones included, so the agent could only
+        // answer "I can't check your battery". Take the widest layer's count instead: on a
+        // uniform model that is exactly what the accessor already returned, and on a hybrid one
+        // it bills conv layers as attention, which errs towards a KV cache that is too big
+        // rather than a plan that throws the tools away.
+        int nHeadKv = headKvMax(model);
+        if (nHeadKv <= 0) {
+            // No layer declared a KV head at all - keep the documented accessor's answer so the
+            // value this reports is never better-known-looking than it is.
+            nHeadKv = llama_model_n_head_kv(model);
+        }
         const int nHeadCnt  = llama_model_n_head(model);
         const int slidingWindow = llama_model_n_swa(model);
 
@@ -103,6 +228,13 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeModelInfo(JNIEnv *env, jobject, jlong 
         if (headV == 0 && nHeadCnt > 0 && nHeadKv == nHeadCnt) {
             headV = nEmbd / nHeadCnt;
         }
+
+        // Every field below is a ContextPlanner input, and a wrong one strands the model on the
+        // smallest context rung silently. Print what the shim derived, so the next diagnosis of
+        // "why did the planner pick 4096" is one logcat line instead of an afternoon.
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-engine",
+            "modelInfo: layers=%d head_kv_max=%d head=%d head_k=%d head_v=%d swa=%d embd=%d ctx_train=%d",
+            nLayers, nHeadKv, nHeadCnt, headK, headV, slidingWindow, nEmbd, nCtxTrain);
 
         const llama_vocab *vocab = llama_model_get_vocab(model);
 
@@ -215,7 +347,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
         const common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
 
         nlohmann::ordered_json out;
-        out["prompt"]             = params.prompt;
+        out["prompt"]             = params.prompt.str();
         out["grammar"]            = params.grammar;
         out["grammar_lazy"]       = params.grammar_lazy;
         out["additional_stops"]   = params.additional_stops;
@@ -231,9 +363,11 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
         // substitutes a content-only parser when that is empty, which returns plausible text
         // with every tool call missing. "format" is still carried because the parse side uses
         // it to pick a mapper for two of the formats, but it is not a substitute for this.
-        // The value is itself a JSON document (common_peg_arena::save dumps one), nested here
-        // as a string exactly as llama.cpp's server carries it between the two halves.
-        out["parser"]             = params.parser;
+        // common_peg_arena::save() yields a JSON document of its own (nazarick fork addition —
+        // upstream keeps the arena inside one process and never needed to serialize it).
+        // Reparsed as nlohmann and embedded as an object, so the blob carries one JSON,
+        // not a string-in-a-string; parseChat reparse()s it into common_json on the way in.
+        out["parser"]             = nlohmann::ordered_json::parse(params.parser.save());
 
         // trigger.token (for a COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN trigger) is not carried across:
         // every construction site in common/chat.cpp builds a "word" or "pattern" trigger today,
@@ -262,6 +396,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeApplyTemplate(
 static ggml_type cacheTypeFromId(const std::string &id) {
     if (id == "f16")  return GGML_TYPE_F16;
     if (id == "q8_0") return GGML_TYPE_Q8_0;
+    if (id == "q4_0") return GGML_TYPE_Q4_0;
     // Deliberately not a silent fallback to f16. ContextPlanner sizes the context for the
     // cache type it picked, so substituting a different one hands back a context that does
     // not fit the budget the planner just proved it would fit.
@@ -299,7 +434,7 @@ static bool abortIfCancelled(void *data) {
 extern "C" JNIEXPORT jlong JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeCreateContext(
         JNIEnv *env, jobject, jlong modelHandle, jint nCtx, jint nBatch, jint nUBatch,
-        jstring cacheKIn, jstring cacheVIn, jint nThreads) {
+        jstring cacheKIn, jstring cacheVIn, jint nThreads, jboolean flashAttn) {
     JNI_GUARD(env, 0L, {
         auto *model = reinterpret_cast<llama_model *>(modelHandle);
         if (model == nullptr) {
@@ -319,6 +454,10 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeCreateContext(
         params.n_threads_batch = nThreads;
         params.type_k          = cacheTypeFromId(jstringToUtf8(env, cacheKIn));
         params.type_v          = cacheTypeFromId(jstringToUtf8(env, cacheVIn));
+        // AURA-020: explicit, not default-auto - the Kotlin side owns the offload and
+        // quantised-KV interlocks; AUTO here would let the native layer second-guess them.
+        params.flash_attn_type = flashAttn ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+                                           : LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
         auto gen = std::make_unique<GenerationContext>();
         gen->ctx = llama_init_from_model(model, params);
@@ -423,11 +562,12 @@ static common_grammar_trigger_type grammarTriggerTypeFromName(const std::string 
 // Rebuilds sampling parameters from what nativeApplyTemplate produced, mirroring what
 // llama.cpp's own server does with the same fields (tools/server/server-schema.cpp).
 static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &applied,
-                                                  const llama_vocab            *vocab) {
+                                                  const llama_vocab            *vocab,
+                                                  bool                          armToolGrammar) {
     common_params_sampling sparams;
 
     const std::string grammar = applied.value("grammar", std::string());
-    if (!grammar.empty()) {
+    if (!grammar.empty() && armToolGrammar) {
         // Typed as a tool-call grammar because that is the only kind nativeApplyTemplate can
         // produce: it passes neither a json_schema nor a user grammar, so anything here came
         // from the template's tool declarations. The type is not decoration; it is what
@@ -439,8 +579,12 @@ static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &
         // a GGML_ASSERT aborts the process rather than throwing something catchable.
         sparams.grammar = common_grammar(COMMON_GRAMMAR_TYPE_TOOL_CALLS, grammar);
     }
-    sparams.grammar_lazy      = applied.value("grammar_lazy", false);
     sparams.generation_prompt = applied.value("generation_prompt", std::string());
+    // Disarmed (armToolGrammar == false, the shipped default since Bug #5) must leave
+    // grammar_lazy false, grammar_triggers empty and no throw below — that combination is
+    // exactly what a tools-free request has always produced, which is the shape that ran
+    // 13/13 clean on the z13 control build.
+    sparams.grammar_lazy      = armToolGrammar && applied.value("grammar_lazy", false);
 
     // Preserved tokens are resolved first: the trigger conversion below refuses a single-token
     // trigger word that is not in this set, exactly as the server does.
@@ -453,7 +597,7 @@ static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &
         }
     }
 
-    if (applied.contains("grammar_triggers")) {
+    if (armToolGrammar && applied.contains("grammar_triggers")) {
         for (const auto &entry : applied.at("grammar_triggers")) {
             common_grammar_trigger trigger;
             trigger.type  = grammarTriggerTypeFromName(entry.at("type").get<std::string>());
@@ -490,28 +634,36 @@ static common_params_sampling samplingFromApplied(const nlohmann::ordered_json &
 // extra macro argument.
 using SamplerPtr = std::unique_ptr<common_sampler, void (*)(common_sampler *)>;
 
-extern "C" JNIEXPORT void JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         JNIEnv *env, jobject, jlong ctxHandle, jlong modelHandle, jbyteArray appliedIn,
-        jint maxTokens, jobject sink) {
-    JNI_GUARD_VOID(env, {
+        jint maxTokens, jobject sink, jboolean armToolGrammar) {
+    JNI_GUARD(env, 0, {
         auto *gen   = reinterpret_cast<GenerationContext *>(ctxHandle);
         auto *model = reinterpret_cast<llama_model *>(modelHandle);
+        jint decoded = 0;   // returned to Kotlin: == maxTokens means the budget ran out
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf", "gen: begin maxTokens=%d arm_grammar=%d",
+                (int)maxTokens, (int)armToolGrammar);
         if (gen == nullptr || gen->ctx == nullptr || model == nullptr) {
             throwJava(env, "context or model handle is null");
-            return;
+            return 0;
         }
         if (sink == nullptr) {
             throwJava(env, "token sink is null");
-            return;
+            return 0;
         }
         if (maxTokens <= 0) {
             throwJava(env, "maxTokens must be positive");
-            return;
+            return 0;
         }
 
         llama_context     *ctx   = gen->ctx;
         const llama_vocab *vocab = llama_model_get_vocab(model);
+        // Geometry of the context actually built, not the planner's intent: whether a slow
+        // prefill is small-batch overhead or plain compute depends on these numbers.
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                "gen: ctx n_ctx=%d n_batch=%d n_ubatch=%d",
+                (int)llama_n_ctx(ctx), (int)llama_n_batch(ctx), (int)llama_n_ubatch(ctx));
 
         jclass    sinkCls = env->GetObjectClass(sink);
         jmethodID onToken = env->GetMethodID(sinkCls, "onToken", "([B)Z");
@@ -519,7 +671,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         if (onToken == nullptr) {
             // GetMethodID has already raised NoSuchMethodError. Throwing a second exception on
             // top of a pending one is not allowed, so just unwind.
-            return;
+            return 0;
         }
 
         const nlohmann::ordered_json applied =
@@ -543,14 +695,14 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         }
         if (nPrompt <= 0) {
             throwJava(env, "prompt tokenization failed");
-            return;
+            return 0;
         }
         tokens.resize(static_cast<size_t>(nPrompt));
 
         // Built before the prefill, not after, so an unusable grammar costs nothing: the check
         // that a lazy grammar has triggers is cheap and the prefill it would otherwise follow
         // is the single most expensive thing here.
-        common_params_sampling sparams = samplingFromApplied(applied, vocab);
+        common_params_sampling sparams = samplingFromApplied(applied, vocab, armToolGrammar != JNI_FALSE);
         // common_sampler_init takes its params by non-const reference and may adjust them, so
         // sparams above is a mutable local rather than a temporary. unique_ptr owns the result
         // from here on: every exit below, including the throwing ones and a Kotlin sink that
@@ -558,7 +710,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         SamplerPtr smpl(common_sampler_init(model, sparams), &common_sampler_free);
         if (!smpl) {
             throwJava(env, "failed to initialise the sampler");
-            return;
+            return 0;
         }
 
         // Each generation starts from an empty cache. llama_batch_get_one continues from
@@ -577,20 +729,31 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
         // tracks positions itself, so consecutive calls continue the same sequence, and with a
         // null logits array only the final token of each slice is an output.
         const int32_t batchSize = static_cast<int32_t>(llama_n_batch(ctx));
+        const auto tPrefill0 = std::chrono::steady_clock::now();
         for (int32_t start = 0; start < nPrompt; start += batchSize) {
             // Checked before the first decode as well as between slices, so a cancel that
             // lands in the window between tokenizing and decoding is honoured instead of
             // being read only after a full prefill has already run.
             if (gen->cancelled.load(std::memory_order_relaxed)) {
-                return;
+                __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                        "gen: cancelled before prefill slice %d of %d", (int)start, (int)nPrompt);
+                return decoded;
             }
             const int32_t count = std::min(batchSize, nPrompt - start);
+            const auto  tSlice0 = std::chrono::steady_clock::now();
             const int32_t rc = llama_decode(ctx, llama_batch_get_one(tokens.data() + start, count));
+            const double sliceMs =
+                    std::chrono::duration_cast<NazarickMs>(std::chrono::steady_clock::now() - tSlice0).count();
+            __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                    "gen: prefill slice %d/%d tok this %d tok %.0f ms",
+                    (int)(start + count), (int)nPrompt, (int)count, sliceMs);
             if (rc != 0) {
                 // A cancel that lands mid-decode comes back as rc 2 from the abort callback.
                 // That is the caller getting what it asked for, not a failure.
                 if (gen->cancelled.load(std::memory_order_relaxed)) {
-                    return;
+                    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                            "gen: cancelled mid-prefill decode (rc=%d)", (int)rc);
+                    return decoded;
                 }
                 if (rc == 1) {
                     // The token count is worth saying: the caller planned the context from the
@@ -601,12 +764,17 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 } else {
                     throwJava(env, "failed to evaluate the prompt");
                 }
-                return;
+                return 0;
             }
         }
 
         std::string pending;  // bytes held back because they are mid-character
         bool        stopped = false;
+        const auto  tDecode0 = std::chrono::steady_clock::now();
+        const double prefillMs =
+                std::chrono::duration_cast<NazarickMs>(tDecode0 - tPrefill0).count();
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                "gen: prefill done %d tokens %.0f ms", (int)nPrompt, prefillMs);
 
         for (jint i = 0; i < maxTokens; i++) {
             const llama_token id = common_sampler_sample(smpl.get(), ctx, -1);
@@ -614,6 +782,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 break;
             }
             common_sampler_accept(smpl.get(), id, /*is_generated*/ true);
+            ++decoded;
 
             appendPiece(vocab, id, pending);
             const size_t hold = incompleteUtf8Tail(pending);
@@ -622,7 +791,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 pending.erase(0, pending.size() - hold);
                 if (piece == nullptr) {
                     throwJava(env, "failed to allocate a token buffer");
-                    return;
+                    return decoded;
                 }
                 const jboolean keepGoing = env->CallBooleanMethod(sink, onToken, piece);
                 env->DeleteLocalRef(piece);
@@ -630,15 +799,21 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                     // The sink threw. Its exception is the one the caller should see and no
                     // further JNI call is legal while one is pending, so leave it there and
                     // unwind; the sampler is still freed on the way out.
-                    return;
+                    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                            "gen: sink threw at decoded=%d", (int)decoded);
+                    return decoded;
                 }
                 if (keepGoing == JNI_FALSE) {
+                    __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                            "gen: sink said stop at decoded=%d", (int)decoded);
                     stopped = true;
                     break;
                 }
             }
 
             if (gen->cancelled.load(std::memory_order_relaxed)) {
+                __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                        "gen: cancelled mid-decode at %d tokens", (int)decoded);
                 stopped = true;
                 break;
             }
@@ -658,7 +833,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 throwJava(env, rc == 1
                         ? "ran out of context while generating"
                         : "failed to evaluate a generated token");
-                return;
+                return decoded;
             }
         }
 
@@ -674,6 +849,27 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeGenerate(
                 env->DeleteLocalRef(tail);
             }
         }
+
+        // Bench line for the engine A/B (and every perf probe after it): pure prefill/decode
+        // wall time from this function's own loops. The sink callbacks ride inside the decode
+        // window; they are Kotlin emits, milliseconds at worst against seconds of decode.
+        const double decodeMs = std::chrono::duration_cast<NazarickMs>(
+                std::chrono::steady_clock::now() - tDecode0).count();
+        __android_log_print(ANDROID_LOG_INFO, "nazarick-perf",
+                "prefill %d tok %.0f ms (%.1f tok/s) | decode %d tok %.0f ms (%.1f tok/s)",
+                nPrompt, prefillMs, prefillMs > 0 ? nPrompt * 1000.0 / prefillMs : 0.0,
+                (int)decoded, decodeMs, decodeMs > 0 && decoded > 0 ? decoded * 1000.0 / decodeMs : 0.0);
+
+        // The loud cap (Bug #5): running the loop's full length used to fall out of it
+        // without a word, and nothing downstream could tell a step cut off mid-thought
+        // from a step that had finished. ERROR level because the app surfaces it to the
+        // user the same way — a truncated answer must never read as a complete one.
+        if (!stopped && decoded >= maxTokens) {
+            __android_log_print(ANDROID_LOG_ERROR, "nazarick-perf",
+                    "gen: budget exhausted — decoded==max_tokens==%d, output may be truncated (resumable)",
+                    (int)maxTokens);
+        }
+        return decoded;
     })
 }
 
@@ -705,19 +901,24 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeParseChat(
         common_chat_parser_params params;
         params.format            = formatFromName(applied.at("format").get<std::string>());
         // Prepended to the text before parsing, because most of the parsers the template layer
-        // builds open by matching the generation prompt as a literal.
-        params.generation_prompt = applied.value("generation_prompt", std::string());
+        // builds open by matching the generation prompt as a literal. common_chat_input is the
+        // text-plus-token envelope the new parse API takes; the token vector this ctor builds is
+        // sized to bytes with LLAMA_TOKEN_NULL, and the PEG path only reads .text.
+        params.generation_prompt = common_chat_input(applied.value("generation_prompt", std::string()));
 
-        const std::string parser = applied.value("parser", std::string());
-        if (parser.empty()) {
+        if (!applied.contains("parser")) {
             // common_chat_parse substitutes a content-only parser for an empty one instead of
             // failing, so an applied-template blob that lost this field would keep returning
             // believable text with every tool call quietly gone. Refuse it here instead.
             throw std::runtime_error("applied template carries no parser");
         }
-        params.parser.load(parser);
+        // The blob holds the arena as an embedded JSON object; the arena loads straight from
+        // it. nlohmann and common_json are distinct types here (the latter is llama.cpp's own
+        // pimpl wrapper), so the bridge is dump/parse rather than a conversion.
+        params.parser.load(applied.at("parser").dump());
 
-        const common_chat_msg msg = common_chat_parse(text, isPartial == JNI_TRUE, params);
+        const common_chat_msg msg =
+                common_chat_parse(common_chat_input(text), isPartial == JNI_TRUE, params);
         return utf8ToByteArray(env, msg.to_json_oaicompat().dump());
     })
 }
@@ -761,6 +962,7 @@ Java_me_rerere_llamacpp_LlamaCppJni_nativeFreeEmbedContext(JNIEnv *env, jobject,
 extern "C" JNIEXPORT jstring JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbedModelInfo(JNIEnv *env, jobject, jlong handle) {
     JNI_GUARD(env, nullptr, {
+        NazarickLock guard(gComputeMutex);
         auto *engine = reinterpret_cast<llamajni::EmbedEngine *>(handle);
         if (engine == nullptr) {
             throwJava(env, "embedding handle is null");
@@ -783,6 +985,7 @@ extern "C" JNIEXPORT jfloatArray JNICALL
 Java_me_rerere_llamacpp_LlamaCppJni_nativeEmbed(
         JNIEnv *env, jobject, jlong handle, jbyteArray textIn) {
     JNI_GUARD(env, nullptr, {
+        NazarickLock guard(gComputeMutex);
         auto *engine = reinterpret_cast<llamajni::EmbedEngine *>(handle);
         if (engine == nullptr) {
             throwJava(env, "embedding handle is null");

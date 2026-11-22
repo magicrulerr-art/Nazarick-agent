@@ -660,7 +660,7 @@ data class SkillContent(
  * Rewrite the ASCII product name inside a bundled asset on its way out of the APK.
  *
  * The default skills are one shared source of truth for both shipping flavours, so their
- * prose says "RikkaHub" while the moxw build must seed "Moxw". Rewriting here — at the one
+ * prose says "RikkaHub" while the nazarick build must seed "Nazarick". Rewriting here — at the one
  * place where assets are copied into the user's skills directory — preserves that single
  * source of truth: `pure` substitutes its own name for itself, which is the identity, so
  * its seeded bytes are unchanged.

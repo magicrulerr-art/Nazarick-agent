@@ -18,21 +18,80 @@ object ContextPlanner {
     /** Rough bytes of prompt text per token. JSON tool schemas run denser than prose. */
     const val BYTES_PER_TOKEN = 4
 
+    /**
+     * The knob set in force for this process, installed per model load by
+     * [LlamaCppRuntime.load] from `debug.nazarick.tune` — see [EngineTunables] for why the
+     * planner gets configured at load time instead of at build time.
+     *
+     * Volatile: the planner is a singleton called from the load thread. Tests that set it must
+     * restore [EngineTunables.DEFAULT] afterwards so a tuned case cannot leak into the next.
+     */
+    @Volatile
+    var tunables: EngineTunables = EngineTunables.DEFAULT
+
     /** Fraction of the context reserved for the response. */
-    private const val RESPONSE_RESERVE = 0.5
+    private val RESPONSE_RESERVE: Double get() = tunables.responseReserve
 
     /** Tokens kept free for conversation history growth. */
-    private const val HISTORY_HEADROOM_TOKENS = 750
+    private val HISTORY_HEADROOM_TOKENS: Int get() = tunables.historyHeadroomTokens
 
-    private const val N_BATCH = 512
-    private const val N_UBATCH = 512
+    /**
+     * What a system prompt is actually charged against the input budget.
+     * [ChatRequestMapper.trimToBudget] truncates a persona that does not fit down to exactly
+     * this floor, so billing a 31 KB persona at 31 KB charged the plan for context the
+     * renderer never spends. Measured on a Z Fold 7 with the bundled agent-core persona:
+     * `inputBudgetBytes=0` and 16/16 tools dropped at n_ctx=8192 *and* at n_ctx=16384, which
+     * produced an agent that could only reply "I can't check your battery". A persona cut to
+     * a paragraph is a real cost; an agent with no tools at all is the larger one.
+     *
+     * Was `const` until AURA-008. Still public and still the single number both this planner
+     * and ChatRequestMapper's floor read, so the two cannot drift apart.
+     */
+    val SYSTEM_PROMPT_RESERVE_BYTES: Int get() = tunables.systemPromptReserveBytes
+
+    private val N_BATCH: Int get() = tunables.nBatch
+    private val N_UBATCH: Int get() = tunables.nUBatch
 
     /** Multiplier over the computed total, for allocator overhead. */
-    private const val HEADROOM_WITH_METADATA = 1.1
-    private const val HEADROOM_WITHOUT_METADATA = 1.2
+    private val HEADROOM_WITH_METADATA: Double get() = tunables.headroomWithMetadata
+    private val HEADROOM_WITHOUT_METADATA: Double get() = tunables.headroomWithoutMetadata
 
     /** Never plan to use more than this share of what the device has free. */
-    private const val RAM_SAFETY_FRACTION = 0.8
+    private val RAM_SAFETY_FRACTION: Double get() = tunables.ramSafetyFraction
+
+    /**
+     * Phone-class memory line and the context ceiling that goes with it (US-003).
+     *
+     * v1 died on z7 exactly this way: the ladder walked to 32768 on an 11 GB device with
+     * ~4.4 GB free, the context allocated, and lmkd reaped the app mid-prefill — an OS kill,
+     * not a decision (floor/ticket-2026-11-16-v1-spark-lmk-death.md). 16384 is the measured
+     * safe ceiling there (run103 ladder, ticket-2026-11-16-v1-spark-safe-ceiling.md).
+     * A device whose total memory is at most [PHONE_RAM_CEILING_BYTES] never plans above
+     * [PHONE_CTX_CEILING] unless `ctx_force` deliberately overrides the ladder.
+     */
+    const val PHONE_RAM_CEILING_BYTES = 12L * 1024 * 1024 * 1024
+    const val PHONE_CTX_CEILING = 16384
+
+    /** Test seam for the device's total memory; null reads `/proc/meminfo` (MemTotal, the
+     *  same source the fleet gates big models on). Unknown (<= 0) means unclassified and
+     *  imposes no ceiling — the cap is a phone-device rule, not a JVM-host rule. */
+    @Volatile
+    var totalRamBytesOverride: Long? = null
+
+    fun totalRamBytes(): Long = totalRamBytesOverride ?: readMemTotalBytes()
+
+    internal fun readMemTotalBytes(): Long = try {
+        java.io.File("/proc/meminfo").useLines { lines ->
+            lines.first { it.startsWith("MemTotal:") }
+                .trim().split(Regex("\\s+"))[1].toLong() * 1024L
+        }
+    } catch (t: Throwable) {
+        -1L
+    }
+
+    /** The US-003 hard ceiling for this device: 16384 on anything with <= 12 GB total. */
+    internal fun phoneCtxCeiling(): Int =
+        if (totalRamBytes() in 1..PHONE_RAM_CEILING_BYTES) PHONE_CTX_CEILING else Int.MAX_VALUE
 
     fun plan(
         info: GgufModelInfo,
@@ -59,13 +118,25 @@ object ContextPlanner {
             )
         }
 
-        val rungs = LADDER.filter { it <= info.nCtxTrain }.ifEmpty { listOf(info.nCtxTrain) }
+        // ctx_max caps the ladder; ctx_force skips it outright, because measuring prefill at one
+        // exact window is the whole reason that knob exists. Both are inert by default, so the
+        // shipped behaviour is unchanged on an untuned device. The !isComplete branch above keeps
+        // ignoring them: with untrustworthy metadata there is no KV estimate to size against.
+        // The phone ceiling binds first (hardware class), then ctx_max can only lower it
+        // further; ctx_force below still bypasses both because it is an explicit debug choice.
+        val hardCeiling = minOf(phoneCtxCeiling(), tunables.ctxMax.let { if (it > 0) it else Int.MAX_VALUE })
+        val ceiling = minOf(info.nCtxTrain, hardCeiling)
+        val rungs = if (tunables.ctxForce > 0) {
+            listOf(tunables.ctxForce)
+        } else {
+            LADDER.filter { it <= ceiling }.ifEmpty { listOf(ceiling) }
+        }
 
         // Prefer a bigger context over a higher-precision cache: quantising the cache
         // costs a little quality, while a context too small to hold the tools costs the
         // agent its capabilities outright.
         for (ctx in rungs.reversed()) {
-            for (cache in listOf(KvCacheType.F16, KvCacheType.Q8_0)) {
+            for (cache in cacheRungs()) {
                 val bytes = estimateBytes(info, ctx, cache)
                 if (bytes <= budget) {
                     val request = replanForRequest(ctx, tools, systemPromptBytes)
@@ -73,6 +144,7 @@ object ContextPlanner {
                         nCtx = ctx,
                         cacheTypeK = cache,
                         cacheTypeV = cache,
+                        flashAttn = flashAttnFor(cache),
                         nBatch = N_BATCH,
                         nUBatch = N_UBATCH,
                         droppedToolNames = request.droppedToolNames,
@@ -91,6 +163,7 @@ object ContextPlanner {
             nCtx = smallest,
             cacheTypeK = KvCacheType.Q8_0,
             cacheTypeV = KvCacheType.Q8_0,
+            flashAttn = flashAttnFor(KvCacheType.Q8_0),
             nBatch = N_BATCH,
             nUBatch = N_UBATCH,
             droppedToolNames = request.droppedToolNames,
@@ -100,13 +173,42 @@ object ContextPlanner {
     }
 
     /**
+     * KV cache rungs to try, honouring the exposed preference (AURA-020, OGAM's Cache Type
+     * selector): -1 auto walks F16 -> Q8_0 -> Q4_0 (a bigger context still beats a more
+     * precise cache; q4_0 exists because 16K on a 12 GB phone is q4-or-nothing), 0/1/2 pin
+     * a single rung. A pinned rung that cannot fit falls through to the existing
+     * nothing-fit path and MemoryGuard explains the refusal - the honest behaviour for
+     * an explicit user choice.
+     */
+    private fun cacheRungs(): List<KvCacheType> = when (tunables.kvPreference) {
+        0 -> listOf(KvCacheType.F16)
+        1 -> listOf(KvCacheType.Q8_0)
+        2 -> listOf(KvCacheType.Q4_0)
+        else -> listOf(KvCacheType.F16, KvCacheType.Q8_0, KvCacheType.Q4_0)
+    }
+
+    /** Flash Attention policy (AURA-020): quantised KV is always ON - llama.cpp requires
+     *  it - and F16 follows the user/bench flag, defaulting ON. The GPU-offload exception
+     *  is applied at the offload boundary in [LlamaCppRuntime]. */
+    internal fun flashAttnFor(cache: KvCacheType): Boolean =
+        cache != KvCacheType.F16 || (tunables.flashAttention ?: true)
+
+    /**
      * Weights plus KV cache plus compute buffer, with headroom. Sliding-window models
      * cache only their window, which is why a 32k Gemma context is affordable.
      */
     fun estimateBytes(info: GgufModelInfo, nCtx: Int, cache: KvCacheType): Long {
         val effectiveCtx = info.slidingWindow?.let { minOf(nCtx, it) } ?: nCtx
-        val perToken = info.nHeadKv.toDouble() *
+        var perToken = info.nHeadKv.toDouble() *
             (info.nEmbdHeadK * cache.bytesPerElement + info.nEmbdHeadV * cache.bytesPerElement)
+        // F16 rungs must be billed at the FA-OFF layout. On our GPU-offload devices FA
+        // resolves DISABLED (measured 144 KiB/token vs the 72 KiB FA-on arithmetic on
+        // spark2_5 — floor/ticket-2026-11-16-v1-spark-lmk-death.md): the split K+V cache
+        // is exactly 2x the FA-packed one. The flashAttnFor flag describes what the
+        // planner requests; the offload boundary is where it actually dies, so the
+        // estimate assumes the measured reality instead. Quantised rungs always run FA
+        // and are untouched. Conservative for a hypothetical CPU-only load.
+        if (cache == KvCacheType.F16) perToken *= 2.0
         val kvCache = info.nLayers.toDouble() * effectiveCtx * perToken
         val computeBuffer = (info.nVocab.toDouble() + info.nEmbd) * N_UBATCH * 4
         return ((info.weightsBytes + kvCache + computeBuffer) * HEADROOM_WITH_METADATA).roundToLong()
@@ -125,6 +227,12 @@ object ContextPlanner {
         return inputTokens * BYTES_PER_TOKEN
     }
 
+    /** Tokens one generation step may decode against an [nCtx]-sized context: the response
+     *  half of the plan, mirroring [inputByteBudget] rather than the old fixed 2048, which
+     *  was smaller than a long thought on this model class and cut steps off mid-reasoning
+     *  with no log line anywhere (Bug #5, "hidden limits"). */
+    fun outputTokenBudget(nCtx: Int): Int = (nCtx * RESPONSE_RESERVE).toInt()
+
     /** The per-request outcome of fitting [tools] and the system prompt into [nCtx]'s input
      *  budget: which tools had to be dropped, and how many of the input budget's bytes the
      *  system prompt plus the surviving tools reserve - the two figures a request-specific
@@ -137,12 +245,18 @@ object ContextPlanner {
      * cannot be resized once created. Used both when [plan] first sizes a context and by
      * [LlamaCppRuntime.replan] to re-fit a later request's tools/system prompt against an
      * already-loaded model.
+     *
+     * The system prompt is charged at [SYSTEM_PROMPT_RESERVE_BYTES] rather than its full
+     * [systemPromptBytes], because it is the one component [ChatRequestMapper.trimToBudget]
+     * can still shrink after the fact; billing it whole let it crowd out every tool, which
+     * nothing downstream can recover.
      */
     fun replanForRequest(nCtx: Int, tools: List<ToolDeclaration>, systemPromptBytes: Int): RequestPlan {
-        val kept = fitTools(nCtx, tools, systemPromptBytes)
+        val chargedSystemPromptBytes = minOf(systemPromptBytes, SYSTEM_PROMPT_RESERVE_BYTES)
+        val kept = fitTools(nCtx, tools, chargedSystemPromptBytes)
         return RequestPlan(
             droppedToolNames = kept.dropped,
-            reservedInputBytes = systemPromptBytes + kept.keptBytes,
+            reservedInputBytes = chargedSystemPromptBytes + kept.keptBytes,
         )
     }
 

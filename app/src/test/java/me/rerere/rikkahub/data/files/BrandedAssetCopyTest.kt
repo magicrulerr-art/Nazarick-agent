@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * Coverage for the brand rewrite applied while seeding the bundled default skills. The
  * assets are shared by both shipping flavours, so the rewrite is what lets one tree seed
- * "RikkaHub" on pure and "Moxw" on moxw.
+ * "RikkaHub" on pure and "Nazarick" on nazarick.
  */
 class BrandedAssetCopyTest {
 
@@ -17,17 +17,17 @@ class BrandedAssetCopyTest {
         substituteProductBrand(src.toByteArray(Charsets.UTF_8), brand).toString(Charsets.UTF_8)
 
     @Test fun `substitutes every occurrence`() {
-        assertEquals("a Moxw b Moxw c", subst("a RikkaHub b RikkaHub c", "Moxw"))
+        assertEquals("a Nazarick b Nazarick c", subst("a RikkaHub b RikkaHub c", "Nazarick"))
     }
 
     @Test fun `substitutes adjacent occurrences without dropping one`() {
-        assertEquals("MoxwMoxw", subst("RikkaHubRikkaHub", "Moxw"))
+        assertEquals("NazarickNazarick", subst("RikkaHubRikkaHub", "Nazarick"))
     }
 
     @Test fun `leaves content without the name byte-identical`() {
         val src = "nothing to see here".toByteArray(Charsets.UTF_8)
-        assertSame(src, substituteProductBrand(src, "Moxw"))
-        assertArrayEquals(src, substituteProductBrand(src, "Moxw"))
+        assertSame(src, substituteProductBrand(src, "Nazarick"))
+        assertArrayEquals(src, substituteProductBrand(src, "Nazarick"))
     }
 
     @Test fun `is the identity for the pure brand`() {
@@ -41,18 +41,18 @@ class BrandedAssetCopyTest {
 
     @Test fun `does not touch the lowercase slug used in URLs`() {
         val src = "https://github.com/wuyhong715/rikkahub-agent-pure".toByteArray(Charsets.UTF_8)
-        assertSame(src, substituteProductBrand(src, "Moxw"))
+        assertSame(src, substituteProductBrand(src, "Nazarick"))
     }
 
     @Test fun `keeps surrounding multi-byte utf8 intact`() {
-        assertEquals("设置 → Moxw ← 完", subst("设置 → RikkaHub ← 完", "Moxw"))
+        assertEquals("设置 → Nazarick ← 完", subst("设置 → RikkaHub ← 完", "Nazarick"))
     }
 
     @Test fun `handles the empty input`() {
-        assertArrayEquals(ByteArray(0), substituteProductBrand(ByteArray(0), "Moxw"))
+        assertArrayEquals(ByteArray(0), substituteProductBrand(ByteArray(0), "Nazarick"))
     }
 
     @Test fun `rewrites a name that appears at both ends`() {
-        assertEquals("Moxw mid Moxw", subst("RikkaHub mid RikkaHub", "Moxw"))
+        assertEquals("Nazarick mid Nazarick", subst("RikkaHub mid RikkaHub", "Nazarick"))
     }
 }

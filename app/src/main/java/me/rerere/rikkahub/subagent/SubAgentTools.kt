@@ -631,7 +631,7 @@ fun subagentSendTool(
 /**
  * `subagent_fanout` — 一次调用里并发跑 N 个互相独立的任务。
  *
- * Moxw 的生成循环是**顺序**执行一条消息里的多个工具调用的，所以「一条消息发 4 个 dispatch」
+ * Nazarick 的生成循环是**顺序**执行一条消息里的多个工具调用的，所以「一条消息发 4 个 dispatch」
  * 并不会并发；要么用 `run_in_background` 逐个扔出去，要么用这个工具一次扇出。后者把并发放进
  * dispatch 自己手里，父代理只需要等一次、拿回一张汇总表。
  *

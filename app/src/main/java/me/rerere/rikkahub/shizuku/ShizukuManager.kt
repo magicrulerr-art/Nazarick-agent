@@ -220,7 +220,9 @@ object ShizukuManager {
         .daemon(false)
         .processNameSuffix("shizuku")
         .debuggable(BuildConfig.DEBUG)
-        .version(BuildConfig.VERSION_CODE.toIntOrNull() ?: 1)
+        // Auto-generated BuildConfig.VERSION_CODE is an Int since v0.7 dropped the flavour's
+        // shadow String fields — pass it straight through.
+        .version(BuildConfig.VERSION_CODE)
         .also { cachedArgs = it }
 
     /**

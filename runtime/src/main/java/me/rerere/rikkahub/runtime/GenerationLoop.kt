@@ -35,9 +35,12 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.provider.providers.openai.ResponseStreamErrorException
 import me.rerere.ai.registry.ModelRegistry
+import me.rerere.ai.ui.ServerToolStatus
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
+import me.rerere.ai.core.LlmFinishReason
+import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.StreamChunkHandler
 import me.rerere.ai.ui.handleTextGenerationResult
@@ -331,6 +334,102 @@ private val FRESHNESS_TTL_MS_BY_TOOL: Map<String, Long> = mapOf(
 private val READ_ONLY_OBSERVATION_TOOLS: Set<String> =
     FRESHNESS_TTL_MS_BY_TOOL.keys + "find_node"
 
+/**
+ * Bug #5 (owner report 2026-11-10, "model stops mid thought-stream", screenshot
+ * media/387b9f6547c3480f857fab50b1a11e08_image.png): local thinking models sometimes end a
+ * step right after closing their think block — provider reports a clean stop, no text, no
+ * tool call — and the loop's `toolCalls.isEmpty()` break treated that as a completed turn.
+ * The user sees a thought bubble ending in "let me check..." with no answer and no error.
+ *
+ * [stalledWithoutReply] is the pure predicate; [STALL_NUDGE_INSTRUCTION] is the request-only
+ * retry prompt the loop appends when it trips, budgeted by [MAX_STALL_NUDGES] per user turn.
+ */
+internal const val MAX_STALL_NUDGES = 2
+
+internal const val STALL_NUDGE_INSTRUCTION =
+    "Please continue: act on what you were thinking just now. " +
+        "If you were about to call a tool, emit the tool call now. " +
+        "If you already have the answer, write it for the user directly. " +
+        "Do not stop after thinking again — this reply must contain a tool call or an answer."
+
+// AURA-021 (LC-3 + A1): a step cut by the response-token cap is NOT a stall — the
+// thought is real, the budget was not. The loop continues it with strictly more tokens
+// (nextEscalatedMaxTokens) and the reasoning already in history, budgeted by
+// MAX_CONTINUATIONS per user turn, separate from MAX_STALL_NUDGES because the two
+// faults have different remedies and must not starve each other.
+internal const val MAX_CONTINUATIONS = 2
+
+/**
+ * The honest terminal note (loop contract LC-3): when an answer keeps hitting the response-token
+ * cap, the user is told the budget that was tried and the cap that stopped it, instead of being
+ * handed half a sentence and a shrug.
+ *
+ * Extracted from the loop body for one reason: the test that claims to prove this message exists
+ * must read the SAME string the UI shows. A hand-copied mirror in a test passes long after the
+ * production wording has drifted, which is exactly the false green this program was called for.
+ */
+internal fun continuationCapNote(lastBudget: Int?, cap: Int = MAX_CONTINUATIONS): String =
+    "\n[stopped: this answer kept hitting the response token limit " +
+        "(last budget: max_tokens=$lastBudget, cap $cap continuations). Raise the assistant's token limit " +
+        "or lower the thinking budget to get more.]"
+
+internal const val LENGTH_CONTINUATION_INSTRUCTION =
+    "Your previous answer hit the response token limit mid-generation. Continue exactly " +
+        "where you stopped: same train of thought, same language. Finish the answer, or " +
+        "emit the tool call you were preparing. Do not restart from the beginning."
+
+/**
+ * A1 escalation ladder: strictly greater than [previous]; from [baseline]
+ * (= assistant.maxTokens of the attempt being continued) when nothing was escalated
+ * yet. +50% with a 256 floor: small models need a visible jump, big ones must not
+ * request absurd contexts. Pure so the JVM test can pin the contract.
+ */
+internal fun nextEscalatedMaxTokens(previous: Int?, baseline: Int): Int =
+    previous?.let { it + maxOf(256, it / 2) } ?: (baseline + maxOf(256, baseline / 2))
+
+/** Default baseline when the assistant carries no maxTokens (matches provider defaults). */
+internal const val DEFAULT_CONTINUATION_BASELINE = 4096
+
+/** Typed finish reason recorded on a message, newest wins; null for pre-contract history. */
+internal fun lastFinishReason(msg: UIMessage?): LlmFinishReason? =
+    msg?.annotations?.filterIsInstance<UIMessageAnnotation.FinishReason>()?.lastOrNull()?.reason
+
+
+/**
+ * True when the CURRENT step of [msg] carries no user-visible reply and no fresh tool
+ * progress. A turn accumulates every step into ONE assistant message, so the parts list
+ * mixes history: executed tool envelopes (Tool with output / ServerTool COMPLETED or
+ * FAILED) are step boundaries, and only the parts AFTER the last boundary belong to the
+ * step that just finished. Inside that window, stalled means: no non-blank Text, no
+ * Tool/ServerTool part, no media part. An empty window (the step appended nothing after
+ * its tool result) and reasoning-only windows — the exact bug #5 shape the owner
+ * reproduced post-web_fetch ("Called tool web_fetch / Thought / let me try searching…"
+ * then silence, 2026-11-10) — are stalled. Parts before the boundary are earlier steps'
+ * progress and must NOT mask the current step's silence: that masking was the
+ * first-fix miss (z7 repro 2026-11-10, run158: clean reasoning-only stop after
+ * memory_lookup, no nudge logged, silent break).
+ */
+internal fun stalledWithoutReply(msg: UIMessage?): Boolean {
+    if (msg == null || msg.role != MessageRole.ASSISTANT) return false
+    val parts = msg.parts
+    val boundary = parts.indexOfLast { part ->
+        (part is UIMessagePart.Tool && part.isExecuted) ||
+            (part is UIMessagePart.ServerTool && part.status != ServerToolStatus.IN_PROGRESS)
+    }
+    return parts.asSequence().drop(boundary + 1).none { part ->
+        when (part) {
+            is UIMessagePart.Text -> part.text.isNotBlank()
+            is UIMessagePart.Tool -> true
+            is UIMessagePart.ServerTool -> true
+            is UIMessagePart.Image -> true
+            is UIMessagePart.Video -> true
+            is UIMessagePart.Audio -> true
+            is UIMessagePart.Document -> true
+            else -> false
+        }
+    }
+}
+
 /** One prior executed tool call in the current turn, in chronological order. */
 internal data class PriorToolCall(
     val toolName: String,
@@ -447,6 +546,12 @@ class GenerationLoop(
         // `tool_open` is callable on its very next step, in the same turn. Default: empty, so
         // every caller that does not pass it sends exactly the surface it sent before.
         extraToolsProvider: suspend () -> List<Tool> = { emptyList() },
+        // LC-2 (US-002, Demiurge REJECT 2026-11-14) - the loop builds its OWN tools when
+        // assistant.enableMemory is set, BELOW the ChatService gate, so those tools never meet
+        // ToolSurfaceGuard.enforce and a rostered guardian gets offered memory tools its row
+        // never granted. :app passes the same guard it applies everywhere else; the default is
+        // passthrough, so every caller that does not pass it is byte-identical.
+        filterInjectedTools: (List<Tool>) -> List<Tool> = { it },
         // Read live from the runtime holder, not captured once: the default expression is
         // evaluated per call, so a settings change takes effect on the next turn.
         maxSteps: Int = ToolRuntimeLimits.maxToolSteps,
@@ -520,7 +625,19 @@ class GenerationLoop(
 
         val turnStartMs = android.os.SystemClock.elapsedRealtime()
         var loopGuardTripCount = 0
+        // v0.7 owner report (bug #5): local thinking models sometimes close a step right after
+        // the think block — no visible text, no tool call — and the old code treated that as a
+        // completed turn: the chat went silent with no error. Retry budget for nudging those
+        // steps back to life; see stalledWithoutReply + STALL_NUDGE_INSTRUCTION below.
+        var stallNudgesUsed = 0
+    // AURA-021 (LC-3 + A1): typed-continuation state for THIS user turn (fresh per run,
+    // like stallNudgesUsed beside it — the escalation chain must not leak across turns).
+    var continuationsUsed = 0
+    var escalatedMaxTokens: Int? = null
+    var pendingLengthContinuation = false
+        var pendingStallNudge = false
 
+        Log.e("US003PROBE", "S8 GenerationLoop.enter before first streamText model=${model.id}")
         for (stepIndex in 0 until maxSteps) {
             // Wall-clock cap: any single user turn that has been running longer than the
             // budget is force-ended, regardless of whether the model wants more steps.
@@ -562,7 +679,7 @@ class GenerationLoop(
                         onDelete = { id ->
                             memoryRepo.deleteMemory(id)
                         }
-                    ).let(this::addAll)
+                    ).let { addAll(filterInjectedTools(it)) }
                 }
                 addAll(tools)
                 // Re-read every step (see extraToolsProvider): this is how a tool the model
@@ -621,11 +738,26 @@ class GenerationLoop(
                     // instruction). They must NOT be added to the loop's `messages` var:
                     // generateInternal writes that list back via onUpdateMessages, and
                     // anything in it ends up rendered and persisted in the chat page.
-                    val injections = conversationId
-                        ?.let { ConversationInjections.drain(it) }
-                        .orEmpty()
+                    val injections = buildList {
+                        conversationId
+                            ?.let { ConversationInjections.drain(it) }
+                            ?.let(this::addAll)
+                        // A nudge queued by the stall check below rides this request only —
+                        // same request-only contract as every other synthetic message here.
+                        if (pendingStallNudge) {
+                            add(STALL_NUDGE_INSTRUCTION)
+                            pendingStallNudge = false
+                        }
+                        // AURA-021 (LC-3): same request-only contract as the stall nudge —
+                        // the continuation instruction must never render or persist.
+                        if (pendingLengthContinuation) {
+                            add(LENGTH_CONTINUATION_INSTRUCTION)
+                            pendingLengthContinuation = false
+                        }
+                    }
                     generateInternal(
                         assistant = assistant,
+                        escalatedMaxTokens = escalatedMaxTokens,
                         systemInjection = systemInjection,
                         settings = settings,
                         systemAddendum = systemAddendum,
@@ -712,7 +844,18 @@ class GenerationLoop(
                                 if (messages.isNotEmpty()) {
                                     messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
                                         finishedAt = Clock.System.now()
-                                            .toLocalDateTime(TimeZone.currentSystemDefault())
+                                            .toLocalDateTime(TimeZone.currentSystemDefault()),
+                                        // AURA-021 (LC-1): a user stop is its OWN typed
+                                        // ending — without the stamp the next session's
+                                        // trimming/continuation logic cannot tell a cut
+                                        // thought from a stopped one. Only stamp when the
+                                        // provider never said (pre-contract = Unknown):
+                                        // a real reason outranks the stop.
+                                        annotations = if (lastFinishReason(messages.lastOrNull()) == null) {
+                                            messages.last().annotations + UIMessageAnnotation.FinishReason(LlmFinishReason.Cancelled, raw = null)
+                                        } else {
+                                            messages.last().annotations
+                                        }
                                     )
                                 }
                                 emit(GenerationChunk.Messages(messages))
@@ -733,6 +876,57 @@ class GenerationLoop(
 
                 val toolCalls = messages.last().getTools().filter { !it.isExecuted }
                 if (toolCalls.isEmpty()) {
+                    // Bug #5 stall check: a clean stream end with no visible answer and no
+                    // tool call is NOT a completed turn — it is the silent-stop shape the
+                    // owner reported on local thinking models. Nudge the step back to life
+                    // with a request-only instruction (budget MAX_STALL_NUDGES per turn);
+                    // old break behavior resumes when the budget is spent or the step
+                    // produced real output.
+                    // AURA-021 (LC-3 + A1): a Length-cut step continues with more
+                    // budget and its reasoning in history — BEFORE the stall check, so a
+                    // truncation is never misfiled as a silent stop. Complete tool calls
+                    // that did stream still execute (this branch only sees steps with no
+                    // executable call). After MAX_CONTINUATIONS: honest visible failure
+                    // naming the budget tried and the cap — never an empty bubble.
+                    if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length &&
+                        continuationsUsed < MAX_CONTINUATIONS
+                    ) {
+                        continuationsUsed += 1
+                        val escalated = nextEscalatedMaxTokens(
+                            previous = escalatedMaxTokens,
+                            baseline = assistant.maxTokens ?: DEFAULT_CONTINUATION_BASELINE,
+                        )
+                        escalatedMaxTokens = escalated
+                        pendingLengthContinuation = true
+                        Log.w(
+                            TAG,
+                            "length-cut step: continuation $continuationsUsed/$MAX_CONTINUATIONS at max_tokens=$escalated " +
+                                "(reasoning kept in history)",
+                        )
+                        continue
+                    }
+                    if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length) {
+                        val capNote = continuationCapNote(escalatedMaxTokens ?: assistant.maxTokens)
+                        val last = messages.last()
+                        val lastTextIdx = last.parts.indexOfLast { it is UIMessagePart.Text && it.text.isNotBlank() }
+                        val newParts = if (lastTextIdx >= 0) {
+                            last.parts.mapIndexed { i, part ->
+                                if (i == lastTextIdx) (part as UIMessagePart.Text).copy(text = part.text + capNote) else part
+                            }
+                        } else {
+                            last.parts + UIMessagePart.Text(text = capNote)
+                        }
+                        messages = messages.slice(0 until messages.lastIndex) + last.copy(parts = newParts)
+                        emit(GenerationChunk.Messages(messages))
+                        Log.w(TAG, "length-cut cap exhausted after $MAX_CONTINUATIONS continuations, honest failure surfaced")
+                        break
+                    }
+                    if (stalledWithoutReply(messages.lastOrNull()) && stallNudgesUsed < MAX_STALL_NUDGES) {
+                        stallNudgesUsed += 1
+                        pendingStallNudge = true
+                        Log.w(TAG, "stalled step (no reply, no tool call) — auto-nudge $stallNudgesUsed/$MAX_STALL_NUDGES")
+                        continue
+                    }
                     // no tool calls, break
                     break
                 }
@@ -1055,6 +1249,53 @@ class GenerationLoop(
                         }
                         runCatching {
                             val args = parsedArgs.getOrThrow()
+                            // AURA-021 US-012 (z7 2026-11-14, probe_jensen_logcat_final.txt):
+                            // every tool call in the failing Jensen turns carried no usable
+                            // arguments - the UI chip rendered `Search web: ` empty. The
+                            // `executing tool` line below is debug-build-only, so the release
+                            // beta went silent while the loop burned step after step on calls
+                            // that could never answer (empty-args search_web returns junk the
+                            // model replays). A call missing schema-required parameters cannot
+                            // do anything useful, so reject it with an envelope naming the
+                            // missing fields - the model recovers on the next step instead of
+                            // dying silently at the step budget.
+                            val gateRequired = me.rerere.rikkahub.runtime.tools.RequiredArgsGate
+                                .requiredNames(toolDef.parameters())
+                            if (gateRequired.isNotEmpty()) {
+                                val gateMissing = me.rerere.rikkahub.runtime.tools
+                                    .RequiredArgsGate.missing(gateRequired, args)
+                                if (gateMissing.isNotEmpty()) {
+                                    Log.w(TAG, "generateText: ${toolDef.name} called without required $gateMissing (args=${tool.input.take(120)}) - rejected without executing")
+                                    executedTools += tool.copy(
+                                        output = listOf(
+                                            UIMessagePart.Text(
+                                                json.encodeToString(buildJsonObject {
+                                                    put("error", JsonPrimitive("missing_required_arguments"))
+                                                    put("tool", JsonPrimitive(toolDef.name))
+                                                    put(
+                                                        "missing",
+                                                        kotlinx.serialization.json.JsonArray(
+                                                            gateMissing.map { JsonPrimitive(it) }
+                                                        ),
+                                                    )
+                                                    put("received", JsonPrimitive(tool.input.take(200)))
+                                                    put(
+                                                        "recovery",
+                                                        JsonPrimitive(
+                                                            "Call ${toolDef.name} again with a JSON arguments " +
+                                                                "object containing every required key (" +
+                                                                gateRequired.joinToString(", ") + "). " +
+                                                                "Include the values themselves - an empty object {} " +
+                                                                "or a bare 'name=value' line is not valid tool-call JSON.",
+                                                        ),
+                                                    )
+                                                })
+                                            )
+                                        )
+                                    )
+                                    return@runCatching
+                                }
+                            }
                             if (host.isDebugBuild) {
                                 Log.i(TAG, "generateText: executing tool ${toolDef.name} with args: ${redactSecrets(args)}")
                             }
@@ -1216,8 +1457,11 @@ class GenerationLoop(
             AutomationRecorder.reset()
             host.showOverlay()
         }
-        .onCompletion {
+        .onCompletion { cause ->
             host.hideOverlay()
+            // v0.8: the floating ball reads the turn's outcome as emotion (cheer / fail).
+            // After hideOverlay so the working-orbit always closes before an emote opens.
+            host.turnFinished(turnOutcomeOf(cause))
             handleAutoReturnAfterTurn()
             // Screen-automation screenshots are working artifacts: unless the model asked to
             // keep one (keep=true), drop the files now that the turn is over. Gated on the turn
@@ -1268,6 +1512,12 @@ class GenerationLoop(
         facts: List<LoopFact> = emptyList(),
         factsOmitted: Int = 0,
         stream: Boolean,
+        /**
+         * AURA-021 (A1): when a continuation chain is active, run THIS attempt at the
+         * strictly-escalated budget instead of the assistant's configured maxTokens.
+         * Owned by the caller (GenerationLoop.run) because the chain is per user turn.
+         */
+        escalatedMaxTokens: Int? = null,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         conversationId: Uuid? = null,
@@ -1365,7 +1615,9 @@ class GenerationLoop(
             model = model,
             temperature = assistant.temperature,
             topP = assistant.topP,
-            maxTokens = assistant.maxTokens,
+            // AURA-021 (A1): while a continuation chain is active this attempt runs at
+            // the strictly-escalated budget; assistant.maxTokens returns next user turn.
+            maxTokens = escalatedMaxTokens ?: assistant.maxTokens,
             // Auto-retry is forced on: retrying a transient network failure is strictly better
             // than surfacing it as a dead error, so the switch was removed and the flag ignored.
             maxStreamRetries = settings.responseStreamMaxRetries,

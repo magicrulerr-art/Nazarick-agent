@@ -72,6 +72,36 @@ val DEFAULT_PROVIDERS = listOf(
             Text("On-device - llama.cpp")
         },
     ),
+    // sd.cpp retired in v0.6: no seed, no tile. The ProviderSetting.SdCppLocal class
+    // survives only as a deserialization tombstone, and PreferencesStore drops any
+    // persisted local_sdcpp row on load (old installs converge to tile-less).
+    ProviderSetting.LocalDream(
+        // The NPU drawing tile (QNN context binaries, MNN fallback). Disabled by default for
+        // the same reason as its siblings — its packs are ~1 GB each. It inherited the image
+        // lane from sd.cpp after on-device numbers (512x512 in ~6.5 s on HTP vs minutes on
+        // CPU sd.cpp) made the choice for us.
+        enabled = false,
+        builtIn = true,
+        description = {
+            Text("Generates images on the Hexagon NPU via pre-compiled QNN graphs (MNN CPU fallback). Qualcomm devices only.")
+        },
+        shortDescription = {
+            Text("On-device - NPU images")
+        },
+    ),
+    ProviderSetting.Nazarick(
+        // Remote Nazarick-agent instance (US-001 scaffold). Disabled by default like every
+        // built-in: fill base URL / token / agent id on the provider page and press Test
+        // Connection first. Chat dispatch arrives in US-004.
+        enabled = false,
+        builtIn = true,
+        description = {
+            Text("Talks to a self-hosted Nazarick-agent instance (base URL + Bearer token + agent id). Test Connection proves reachability; chat arrives in US-004.")
+        },
+        shortDescription = {
+            Text("Remote - Nazarick instance")
+        },
+    ),
     // All built-in providers ship DISABLED by default. New installs start with zero
     // network-egress paths so a freshly-installed app can never make an LLM call (or
     // bill any account) until the user explicitly enables a provider AND adds an API
@@ -80,7 +110,9 @@ val DEFAULT_PROVIDERS = listOf(
     // not enabled (same pattern as the AICore default-off comment above).
     ProviderSetting.OpenAI(
         id = Uuid.parse("a8d2d463-e8c0-41f2-b89e-f5eb8e716cce"),
-        name = "RikkaHub",
+        // AURA-014 bug #4 — display renamed for the Nazarick re-brand; the endpoint is
+        // genuinely upstream-hosted (api.rikka-ai.com) and the detail page still shows it.
+        name = "Nazarick Hub",
         baseUrl = "https://api.rikka-ai.com/v1",
         apiKey = "",
         enabled = false,

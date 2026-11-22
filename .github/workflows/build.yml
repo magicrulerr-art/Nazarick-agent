@@ -3,17 +3,20 @@ name: build
 on:
   push:
     branches:
-      - master
+      # main is the trunk of Nazarick-agent — the shipping line, the branch v0.01 was
+      # tagged from. master is the frozen upstream donor (2.5.5-pure.3) that we port
+      # from deliberately rather than merge, so it is no longer gated.
+      - main
       - 'feat/**'
       # Maintenance branches (CI tweaks, dependency bumps, docs) build too — they
       # are still code that will be merged, so they deserve the same gate.
       - 'chore/**'
       # Bug-fix branches build on push too: same gate as feat/**, so a PR into
-      # moxw or master has a green signal before the PR event itself fires.
+      # nazarick or main has a green signal before the PR event itself fires.
       - 'fix/**'
-      # Moxw Agent is a long-lived product branch (not a feature to merge back),
+      # Nazarick Agent is a long-lived product branch (not a feature to merge back),
       # but it is still code: every push runs the same gate.
-      - 'moxw'
+      - 'nazarick'
     # Doc-only pushes (README, notes, licence) do not need a 13-20 min assemble
     # run: no source, resource or build file changes are involved. A push is
     # skipped only when *every* changed path matches; mixing docs with code still
@@ -25,10 +28,10 @@ on:
       - '.gitignore'
   pull_request:
     branches:
-      - master
-      # PRs into the Moxw product branch are gated too: it ships its own flavour,
-      # so a breakage there is a release breakage, not a master-only concern.
-      - 'moxw'
+      - main
+      # PRs into the Nazarick product branch are gated too: it ships its own flavour,
+      # so a breakage there is a release breakage, not a trunk-only concern.
+      - 'nazarick'
     # Same rule for PRs: a docs-only PR stays mergeable without burning a run.
     paths-ignore:
       - '**/*.md'
@@ -50,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        flavor: [moxw]
+        flavor: [nazarick]
     # Include the flavor: both matrix jobs share this workflow ref, and a shared
     # group with cancel-in-progress would let the second job cancel the first.
     concurrency:
@@ -80,7 +83,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools'
+          # cmake;3.31.6 (AURA-016): :sd-cpp pins CMake 3.31.6 because the ggml
+          # fork's htp skel sub-project requires >=3.22.2; AGP auto-installed
+          # only the legacy 3.22.1 and then CXX1300'd (run 122) — pin it.
+          packages: 'platform-tools cmake;3.31.6'
           accept-android-sdk-licenses: true
 
       # NOTE: do *not* cache $ANDROID_HOME/ndk. The runner image already ships
@@ -91,11 +97,47 @@ jobs:
         run: |
           # ubuntu-latest does not ship ccache, so ANDROID_USE_CCACHE alone did
           # nothing. Install it before CMake configures the native toolchain.
-          sudo apt-get install -y -qq ccache > /dev/null 2>&1 || {
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq ccache
-          }
-          ccache --version | head -1
+          # ccache is a cache, not a dependency: on 2026-11-11 two runners in a
+          # row burned full builds on a security.ubuntu.com DNS storm inside
+          # this step, so a mirror failure now degrades to plain clang instead
+          # of red-running the branch. No env dance needed either way: the NDK
+          # routes through ccache only when the binary is on PATH, which is why
+          # ANDROID_USE_CCACHE:'1' alone did nothing.
+          if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+              echo "::warning::ccache unavailable (apt mirror failure) - building without it"
+            fi
+          fi
+          ccache --version | head -1 || echo "no ccache this run - building without"
+
+      # Scoped to the Vulkan experiment: installs the SPIRV-Headers CMake package
+      # that ggml-vulkan's find_package demands but the NDK sysroot hides. Other
+      # branches pay nothing. Remove this step when the engine branch merges.
+      # The Vulkan-default engine is carried by branch lineage, so this used to be an
+      # allowlist of branch names - which turned every new branch into a manual edit and
+      # sprang once already (fix/prompt-fits-context configure-failed on
+      # find_package(SPIRV-Headers) with this step skipped). Test the prefix instead,
+      # matching the push triggers above: any feat/** or fix/** carries the engine.
+      - name: Install SPIRV-Headers (Vulkan shader dependency)
+        if: startsWith(github.ref_name, 'feat/') || startsWith(github.ref_name, 'fix/')
+        run: |
+          git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers "$RUNNER_TEMP/spirv-headers"
+          cmake -S "$RUNNER_TEMP/spirv-headers" -B "$RUNNER_TEMP/sv-build" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sv"
+          cmake --install "$RUNNER_TEMP/sv-build"
+          echo "SPIRV_HEADERS_PREFIX=$RUNNER_TEMP/sv" >> "$GITHUB_ENV"
+          # glslc compiles ggml's compute shaders at build time; FindVulkan can't see
+          # the runner's copy through the NDK toolchain, so name it explicitly.
+          GLSLC_BIN="$(command -v glslc || true)"
+          if [ -z "$GLSLC_BIN" ]; then
+            GLSLC_BIN="$(find "$ANDROID_HOME/ndk" -type f -name glslc 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$GLSLC_BIN" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y glslang-tools
+            GLSLC_BIN="$(command -v glslc || true)"
+          fi
+          echo "GLSLC=$GLSLC_BIN" | tee -a "$GITHUB_ENV"
+          [ -x "$GLSLC_BIN" ] || { echo "no glslc found; candidates:"; find "$ANDROID_HOME" /usr -name 'glslc*' -o -name 'glslangValidator*' 2>/dev/null | head -20; exit 1; }
 
       - name: Cache ccache (native build)
         uses: actions/cache@v4
@@ -156,14 +198,46 @@ jobs:
             bun install
           fi
 
+      # Release signing. The keystore is a base64 Actions secret rather than a file in
+      # the tree, so nothing secret gets committed and a fork with no secrets still
+      # builds (unsigned, by design -- hence the early exit instead of a failure).
+      # Decoding it here and exporting NAZARICK_* is all app/build.gradle.kts needs to
+      # sign the release variant itself.
+      - name: Provision release keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.NAZARICK_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.NAZARICK_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NAZARICK_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${STORE_PASSWORD:-}" ]; then
+            echo "::notice::No keystore secret configured - release variant ships unsigned"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_B64}" | base64 -d > "$RUNNER_TEMP/nazarick-release.p12"
+          echo "keystore: $(wc -c < "$RUNNER_TEMP/nazarick-release.p12") bytes, sha256 $(sha256sum "$RUNNER_TEMP/nazarick-release.p12" | cut -d' ' -f1 | cut -c1-16)"
+          {
+            echo "NAZARICK_KEYSTORE=$RUNNER_TEMP/nazarick-release.p12"
+            echo "NAZARICK_STORE_PASSWORD=${STORE_PASSWORD}"
+            echo "NAZARICK_KEY_PASSWORD=${KEY_PASSWORD}"
+            echo "NAZARICK_KEY_ALIAS=nazarick"
+          } >> "$GITHUB_ENV"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
       # Single Gradle invocation: one daemon, one configuration phase. Build the
       # shipping variant of the matrix flavor (R8 + optimized resource shrinking,
       # keep rules in src/main/keepRules) and run the JVM unit tests against that
       # same variant. The old debug build is gone on purpose: it compiled every
       # library subproject a second time and rebuilt the llama.cpp native libs a
-      # second time, for an artifact nothing shipped. The published APK is
-      # `app-<flavor>-release-unsigned.apk`, re-signed on the VPS with p2.keystore
-      # (dl2.sh apk-moxw).
+      # second time, for an artifact nothing shipped.
+      #
+      # The published APK used to be `app-<flavor>-release-unsigned.apk`, finished off
+      # by a re-sign on the VPS (dl2.sh apk-nazarick, p2.keystore). Since 2026-10-31 the
+      # workflow signs with our own key (step above), so the artifact IS the release.
+      # If anyone still runs that VPS pass it will REPLACE our seal with p2's, and
+      # upgrades then require p2's key forever -- stop running it, or do it on purpose.
       #
       # :ai:testDebugUnitTest is listed explicitly: the app's own unit-test task
       # does not run the library modules' tests, so the provider request-shape
@@ -189,10 +263,50 @@ jobs:
           # tests are flavour-independent and are never reached through :app, so each module is
           # named explicitly. :runtime was extracted in P4 with 19 test files and had been
           # missing from this list since, which left the harness's pure logic ungated.
-          ./gradlew ":app:assemble${F}Release" ":app:test${F}ReleaseUnitTest" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest $FLAGS --stacktrace
+          # DIAG BRANCH ONLY (fix/embed-gpu-race, 2026-10-26): unit tests were cut from this
+          # job's gradle line because the hosted runner took a shutdown signal at ~43 min
+          # elapsed three runs running, every time in the packaging tail *after* a green
+          # 10.5-minute test task; the native diff under diagnosis cannot break JVM tests.
+          # Restored here (fix/prompt-fits-context), which re-opened that wound twice: runs
+          # 42-1 and 42-2 were both cancelled by a runner shutdown, and the job log shows why -
+          # :app:testNazarickReleaseUnitTest is 354 test classes and costs ~11.5 min, which pushes
+          # the job from ~36 min (run 41, green) past the ceiling. The three module suites are
+          # the ones that actually gate a JVM change (this branch's ContextPlannerTest lives in
+          # :llama-cpp and finishes in ~5 s), so they stay here. The app's own suite is dropped
+          # from the shipping job: `git grep` finds zero tests in app/src/test mentioning
+          # ContextPlanner or ChatRequestMapper, so on a JVM-logic branch it is 11.5 minutes of
+          # upstream coverage that cannot fail for this diff. It deserves its own job with
+          # maxParallelForks, tracked as a follow-up rather than smuggled into this ticket.
+          # (:sd-cpp added by AURA-014: its catalog/PNG/repair suites shipped with AURA-012 and
+          # nothing ever ran them — an orphaned suite gates nothing.)
+          # (:local-dream added with the QNN transplant: its suites pin the segfault-shaped
+          # CLI invariants and the exact HF pack sizes — the two things a refactor can break
+          # silently and a device session would only find the hard way.)
+          # (:sd-cpp dropped from this line in v0.6: the module left the build graph when the
+          # sd.cpp provider was retired. Its PngEncoderTest moved to :local-dream, which stays.)
+          ./gradlew ":app:assemble${F}Release" :ai:testDebugUnitTest :llama-cpp:testDebugUnitTest :runtime:testDebugUnitTest :local-dream:testDebugUnitTest $FLAGS --stacktrace
 
       - name: Show ${{ matrix.flavor }} APK sizes
         run: ls -la app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk || true
+
+      # An artifact nobody can identify is a rumour. Print the signing certificate into
+      # the run log so every release carries its own proof: the SHA-256 below must equal
+      # the minted key's certificate digest (AURA-010, a26fbb04a3717785...aebda7d --
+      # `python tools/mob/keystore_check.py` prints it from the .p12). On a fork with no
+      # secrets the step is skipped rather than failed, matching the unsigned-but-green
+      # promise of the provisioning step.
+      - name: Verify release signature
+        if: steps.keystore.outputs.present == 'true'
+        run: |
+          set -eu
+          APK="$(ls app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk | head -n 1)"
+          echo "artifact: $APK"
+          AS="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner 2>/dev/null | sort | tail -n 1)"
+          if [ -z "$AS" ]; then
+            echo "::warning::apksigner not found under \$ANDROID_HOME/build-tools"
+            exit 0
+          fi
+          "$AS" verify --print-certs "$APK"
 
       - name: Show ccache stats
         if: always()
@@ -206,6 +320,87 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Play Store beta (owner directive, 2026-11-04): same code, same key, one
+      # different identity — -PPLAY_BETA re-points the nazarick flavor at
+      # com.nazarick.agent.beta (app/build.gradle.kts) so the Play listing can
+      # live beside direct installs on the same device. Runs AFTER the main APK
+      # upload because it reuses (and first clears) the variant's output dir.
+      # The AAB is the Play-native format (bundleNazarickRelease signs with the same
+      # release key); the APK is uploaded so the exact beta bytes can be
+      # installed and verified on the Fold before anyone uploads.
+      - name: Assemble Play beta (com.nazarick.agent.beta)
+        env:
+          SKIP_LINT: ${{ github.event_name == 'push' && github.ref != 'refs/heads/master' }}
+          FLAVOR: ${{ matrix.flavor }}
+        run: |
+          set -eu
+          F="${FLAVOR^}"
+          FLAGS=""
+          if [ "$SKIP_LINT" = "true" ]; then
+            echo "fast lane: -PskipLintVital"
+            FLAGS="-PskipLintVital"
+          fi
+          rm -f app/build/outputs/apk/${FLAVOR}/release/*.apk
+          ./gradlew ":app:assemble${F}Release" ":app:bundle${F}Release" -PPLAY_BETA $FLAGS --stacktrace
+          # Rename the Play artifact the same way app/build.gradle.kts renames the APKs:
+          # AGP names the bundle `app-<flavor>-release.aab` and that property governs only
+          # the APK outputFileName, so the flavour token "nazarick" leaked onto the file Ainz-sama
+          # downloads for the Console. Rewrite the token in place; the upload glob is *.aab.
+          AAB="app/build/outputs/bundle/${FLAVOR}Release/app-${FLAVOR}-release.aab"
+          DEST="app/build/outputs/bundle/${FLAVOR}Release/App-nazarick-release.aab"
+          if [ -f "$AAB" ]; then
+            if [ "$AAB" != "$DEST" ]; then
+              mv -f "$AAB" "$DEST"
+              echo "renamed bundle -> app-nazarick-release.aab"
+            else
+              echo "bundle already at $DEST - nothing to rename"
+            fi
+          else
+            echo "::warning::bundle not at $AAB — Play artifact keeps the flavour name"
+          fi
+
+      - name: Verify Play beta signature
+        if: steps.keystore.outputs.present == 'true'
+        run: |
+          set -eu
+          APK="$(ls app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk | head -n 1)"
+          echo "artifact: $APK"
+          AS="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner 2>/dev/null | sort | tail -n 1)"
+          if [ -z "$AS" ]; then
+            echo "::warning::apksigner not found under \$ANDROID_HOME/build-tools"
+            exit 0
+          fi
+          "$AS" verify --print-certs "$APK"
+
+      - name: Upload Play beta APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-play-beta
+          path: app/build/outputs/apk/${{ matrix.flavor }}/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Play beta AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab-play-beta
+          path: app/build/outputs/bundle/${{ matrix.flavor }}Release/*.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      # diag branch only: a debuggable APK so `run-as` and debuggerd -b work on the
+      # Fold for the stall hunt, and so Logcat shows unshrunk stack frames.
+      - name: Upload ${{ matrix.flavor }} debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ matrix.flavor }}-debug
+          path: app/build/outputs/apk/${{ matrix.flavor }}/debug/*.apk
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # diag branch only: the debug APK gets its own short job. The shared assemble
+  # job lost two runners to infra shutdown signals at 25-65 min with the debug
+  # native build included; alone it should finish in one runner's attention span.
       - name: Upload unit test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -215,6 +410,7 @@ jobs:
             app/build/reports/tests/
             ai/build/reports/tests/
             runtime/build/reports/tests/
+            llama-cpp/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -229,3 +425,713 @@ jobs:
           path: app/schemas/
           if-no-files-found: ignore
           retention-days: 14
+
+  debug:
+    name: debug apk (diag)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race' || (github.event_name == 'workflow_dispatch' && github.ref_name == 'mission/npu-signed-engine-packs')
+    concurrency:
+      group: debug-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      ANDROID_USE_CCACHE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      - name: Install ccache
+        run: |
+          # Degrade rather than red-run on a mirror failure - see job 1.
+          if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+              echo "::warning::ccache unavailable (apt mirror failure) - building without it"
+            fi
+          fi
+          ccache --version | head -1 || echo "no ccache this run (ANDROID_USE_CCACHE=0)"
+
+      - name: Install SPIRV-Headers (Vulkan shader dependency)
+        run: |
+          git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers "$RUNNER_TEMP/spirv-headers"
+          cmake -S "$RUNNER_TEMP/spirv-headers" -B "$RUNNER_TEMP/sv-build" -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sv"
+          cmake --install "$RUNNER_TEMP/sv-build"
+          echo "SPIRV_HEADERS_PREFIX=$RUNNER_TEMP/sv" >> "$GITHUB_ENV"
+          GLSLC_BIN="$(command -v glslc || true)"
+          if [ -z "$GLSLC_BIN" ]; then
+            GLSLC_BIN="$(find "$ANDROID_HOME/ndk" -type f -name glslc 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$GLSLC_BIN" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y glslang-tools
+            GLSLC_BIN="$(command -v glslc || true)"
+          fi
+          echo "GLSLC=$GLSLC_BIN" | tee -a "$GITHUB_ENV"
+          [ -x "$GLSLC_BIN" ] || { echo "no glslc found; candidates:"; find "$ANDROID_HOME" /usr -name 'glslc*' -o -name 'glslangValidator*' 2>/dev/null | head -20; exit 1; }
+
+      - name: Cache ccache (native build)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-${{ hashFiles('llama-cpp/native/llama.cpp/**', 'llama-cpp/src/main/cpp/**', 'workspace/src/main/cpp/**') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Bootstrap web-ui lockfile
+        working-directory: web-ui
+        run: |
+          if [ ! -f bun.lock ]; then bun install; fi
+
+      - name: Assemble nazarick debug APK
+        run: ./gradlew :app:assembleNazarickDebug -PskipLintVital --stacktrace
+
+      - name: Upload nazarick debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-nazarick-debug
+          path: app/build/outputs/apk/nazarick/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache -s || true
+
+  # AURA-014 — the "the app's own suite deserves its own job" follow-up build.yml has
+  # promised since run 42. Scoped deliberately: the classes that gate the shipped seed
+  # logic (GuardianSeedTest) and the Settings/Preferences-key persistence invariant
+  # (SettingsPersistenceCoverageTest — it fails when a Settings field is added without
+  # its key, exactly the trap that bit autoEnabledDefaultSkills). Compiling the test
+  # source set is most of the cost either way; what the separate job buys is a wall of
+  # its own, instead of pushing the shipping assemble job past the runner ceiling.
+  # Widen the filter here toward the full suite over time.
+  app-unit-tests:
+    name: app unit tests (scoped)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: app-tests-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      # :web:buildWebUi shells out to pnpm (web/build.gradle.kts) — the assemble job
+      # sets both bun and pnpm; a job that builds any :app variant needs pnpm too
+      # (run 92: Cannot run program "pnpm" ... No such file or directory).
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Bootstrap web-ui lockfile
+        working-directory: web-ui
+        run: |
+          if [ ! -f bun.lock ]; then bun install; fi
+
+      # The release variant's signingConfigs block resolves storeFile eagerly at
+      # configuration time (the "only consulted when hasReleaseSigning" comment in
+      # app/build.gradle.kts holds only while the create() block runs with the env
+      # present — run 91 proved a unit-test-only job without it dies on a bare NPE).
+      # Same provisioning step the assemble job uses; testNazarickReleaseUnitTest builds
+      # the release variant and therefore pays the same contract.
+      - name: Provision release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.NAZARICK_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.NAZARICK_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NAZARICK_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${STORE_PASSWORD:-}" ]; then
+            echo "::notice::No keystore secret configured - release variant ships unsigned"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_B64}" | base64 -d > "$RUNNER_TEMP/nazarick-release.p12"
+          {
+            echo "NAZARICK_KEYSTORE=$RUNNER_TEMP/nazarick-release.p12"
+            echo "NAZARICK_STORE_PASSWORD=${STORE_PASSWORD}"
+            echo "NAZARICK_KEY_PASSWORD=${KEY_PASSWORD}"
+            echo "NAZARICK_KEY_ALIAS=nazarick"
+          } >> "$GITHUB_ENV"
+
+      # AURA-021 LC-2: the roster ceiling changes every outgoing tool list, so it is asserted here
+      # rather than left compiling in a job that never executes :app tests. Three classes, seconds.
+      # (Keep the run block comment-free: it is a folded scalar, so a `#` inside it comments out the
+      # REST of the command — run #188 proved the three new filters silently vanished.)
+      - name: Run scoped app unit tests
+        run: >
+          ./gradlew :app:testNazarickReleaseUnitTest --stacktrace
+          --tests "me.rerere.rikkahub.data.guardians.GuardianSeedTest"
+          --tests "me.rerere.rikkahub.data.datastore.SettingsPersistenceCoverageTest"
+          --tests "me.rerere.rikkahub.data.guardians.GuardianToolRosterTest"
+          --tests "me.rerere.rikkahub.data.guardians.GuardianRosterAssemblyTest"
+          --tests "me.rerere.rikkahub.data.guardians.RosterSpecBindingTest"
+          --tests "me.rerere.rikkahub.data.ai.ToolSurfaceGuardTest"
+          --tests "me.rerere.rikkahub.data.db.DatabaseBackupTest"
+          --tests "me.rerere.rikkahub.data.vector.KeywordRecallTest"
+          --tests "me.rerere.rikkahub.data.model.BrainPolicyTest"
+          --tests "me.rerere.rikkahub.data.ai.TombQueueTest"
+          --tests "me.rerere.rikkahub.data.ai.TombSendPathTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainBadgeTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainBadgeDetailTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainKindPersistenceTest"
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-unit-test-report
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # AURA-016: Hexagon HTP (NPU) image generation. Owner directive 2026-11-07
+  # "Do qnn, since GPU is not working" after the OpenCL verdict (slower + white
+  # pixels). Builds ONLY :sd-cpp with -Psd.gpu=hexagon to prove the vendored
+  # ggml-hexagon backend compiles, links against a libcdsprpc soname stub, and
+  # cross-builds the libggml-htp-v73 skel for the Fold's SM8650. Gated to the
+  # feature branch + manual dispatch so main's assemble stays lean; green here
+  # is precondition, not proof (device 512x512 gen with non-white pixels is).
+  hexagon:
+    name: sd-cpp hexagon NPU native (sd.gpu=hexagon)
+    # DEAD since v0.6: sd.cpp is retired and :sd-cpp is no longer in the build graph, so
+    # `:sd-cpp:assembleRelease` below would fail. Gate pinned false to keep the (vendored
+    # ggml-hexagon) steps as history without running them. Physical job + module removal is
+    # the follow-up cleanup ticket.
+    if: false && (github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/hexagon-npu')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: build-hexagon-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      ANDROID_USE_CCACHE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      # snapdragon-toolchain community mirror (no Qualcomm login); matches the
+      # toolchain the vendored htp skels expect.
+      HEXAGON_SDK_URL: https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # cmake;3.31.6 = the exact version :sd-cpp pins (htp skel needs
+          # >=3.22.2, run 120; AGP will not fetch it on its own, run 122).
+          packages: 'platform-tools cmake;3.31.6'
+          accept-android-sdk-licenses: true
+
+      - name: Install ccache
+        run: |
+          # Degrade rather than red-run on a mirror failure - see job 1.
+          if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+            sudo apt-get update -qq || true
+            if ! sudo apt-get install -y -qq ccache > /dev/null 2>&1; then
+              echo "::warning::ccache unavailable (apt mirror failure) - building without it"
+            fi
+          fi
+          ccache --version | head -1 || echo "no ccache this run (ANDROID_USE_CCACHE=0)"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # :app pulls :web:installWebUiDeps (bun-driven) even for a native-lane
+      # proof APK -- run 124: "A problem occurred starting process 'bun'".
+      # Same pair the assemble job installs.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # :app is configured even for a :sd-cpp-only build (settings-level eval), and
+      # app's signingConfigs.create("release") eagerly getValue("storeFile")!! --
+      # run 118 proved that NPEs here when the env trio is absent. Provision the
+      # same way the assemble job does; the sd-cpp AAR itself is unsigned, but the
+      # config phase cannot dodge the app module.
+      - name: Provision release keystore
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.NAZARICK_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.NAZARICK_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.NAZARICK_KEY_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${KEYSTORE_B64:-}" ] || [ -z "${STORE_PASSWORD:-}" ]; then
+            echo "::notice::No keystore secret configured - release variant ships unsigned"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s' "${KEYSTORE_B64}" | base64 -d > "$RUNNER_TEMP/nazarick-release.p12"
+          {
+            echo "NAZARICK_KEYSTORE=$RUNNER_TEMP/nazarick-release.p12"
+            echo "NAZARICK_STORE_PASSWORD=${STORE_PASSWORD}"
+            echo "NAZARICK_KEY_PASSWORD=${KEY_PASSWORD}"
+            echo "NAZARICK_KEY_ALIAS=nazarick"
+          } >> "$GITHUB_ENV"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      # The Hexagon SDK is only needed to (a) compile the DSP skels with
+      # hexagon-clang and (b) supply rpcmem/rpc headers + the IDL stub generator.
+      # Export its extracted root; sd-cpp's CMake fails loudly if it is missing.
+      - name: Fetch Hexagon SDK (community mirror)
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP"
+          curl -fL --retry 3 -o hexagon-sdk.tar.xz "$HEXAGON_SDK_URL"
+          mkdir -p hexagon-sdk
+          tar -xf hexagon-sdk.tar.xz -C hexagon-sdk --strip-components=1
+          # The archive nests a versioned dir; find the real root (has incs/ + tools/).
+          SDK_ROOT="$([ -d hexagon-sdk/incs ] && echo "$PWD/hexagon-sdk" || find "$PWD/hexagon-sdk" -maxdepth 2 -type d -name incs -printf '%h\n' | head -n1)"
+          echo "SDK_ROOT=$SDK_ROOT"
+          test -d "$SDK_ROOT/incs"
+          echo "HEXAGON_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Assemble sd-cpp native (sd.gpu=hexagon)
+        run: |
+          set -eu
+          ./gradlew :sd-cpp:assembleRelease -Psd.gpu=hexagon --stacktrace
+
+      # Device proof (plan W4) needs an installable APK, not just the AAR: the
+      # whole app rebuilt with the NPU lane compiled in (JNI ADSP_LIBRARY_PATH
+      # block + skel merged from :sd-cpp jniLibs). Lint skipped: feat-branch
+      # fast lane, same rule as the assemble job.
+      - name: Assemble hexagon APK (installable proof build)
+        run: |
+          set -eu
+          ./gradlew :app:assembleNazarickRelease -Psd.gpu=hexagon -PskipLintVital --stacktrace
+          ls -la app/build/outputs/apk/nazarick/release/
+
+      # Static proof the NPU lane actually produced artifacts, not a silent CPU
+      # fallthrough: libsdcpp_jni.so must exist AND the v73 skel must ride
+      # INSIDE the shipping APK (jniLibs merge is the only path it travels).
+      - name: Verify hexagon native outputs
+        run: |
+          set -eu
+          echo "=== built native libs ==="
+          find sd-cpp/build -name 'libsdcpp_jni.so' -printf '%p  %s bytes\n'
+          echo "=== htp skels produced (v73 = SM8650/Fold) ==="
+          find . -name 'libggml-htp-v73.so' -printf '%p  %s bytes\n' | head
+          echo "=== jniLibs landing (packaged for arm64) ==="
+          find sd-cpp/src/main/jniLibs -name '*.so' -printf '%p  %s bytes\n' 2>/dev/null || echo "(jniLibs empty - check POST_BUILD copy)"
+          APK="$(ls app/build/outputs/apk/nazarick/release/*.apk | head -n1)"
+          echo "=== APK contents (arm64 native libs) ==="
+          unzip -l "$APK" | grep -E 'arm64-v8a/.*\.so' || true
+          unzip -l "$APK" | grep 'libggml-htp-v73.so' || { echo "FATAL: skel missing from APK"; exit 1; }
+          # FastRPC client: DT_NEEDED libcdsprpc.so is authored by the SDK's
+          # build_idl -- the SDK's android_aarch64 lib must ride along
+          # (runs 125-127: stub=shadowed, excluded=dangled, both crash at load).
+          # NOT a size floor (run 128): AGP's stripper shrinks aarch64 libs
+          # 29520 -> 7880 B before packaging (hexagon-arch skel untouched).
+          # Real gate = the stripped entry still DEFINES the FastRPC fns
+          # htp-drv dlsyms; parse .dynsym straight out of the APK.
+          unzip -p "$APK" lib/arm64-v8a/libcdsprpc.so > "$RUNNER_TEMP/apk_libcdsprpc.so"
+          python3 - "$RUNNER_TEMP/apk_libcdsprpc.so" <<'PY'
+          import struct, sys
+          data = open(sys.argv[1], 'rb').read()
+          assert data[:4] == b'\x7fELF', f'not ELF ({len(data)} B)'
+          e_shoff = struct.unpack_from('<Q', data, 0x28)[0]
+          e_shentsize, e_shnum, e_shstrndx = struct.unpack_from('<HHH', data, 0x3A)
+          secs = []
+          for i in range(e_shnum):
+              off = e_shoff + i * e_shentsize
+              f = struct.unpack_from('<IIQQQQ', data, off)[:6]
+              sh_link = struct.unpack_from('<I', data, off + 40)[0]
+              # tuple = (name, offset, size, link) -- f is
+              # (name,type,flags,addr,offset,size); run 129 stored flags/addr
+              # and never found .dynsym.
+              secs.append((f[0], f[4], f[5], sh_link))
+          stro = secs[e_shstrndx][1]
+          def nm(n):
+              e = data.index(b'\0', stro + n)
+              # llvm-strip leaves garbage in the shstrtab tail (run 129: byte
+              # 0xc0 killed strict utf-8); names we care about are ASCII.
+              return data[stro + n:e].decode('utf-8', 'replace')
+          cands = [s for s in secs if nm(s[0]) == '.dynsym']
+          assert cands, f'no .dynsym in {len(data)} B entry'
+          dynsym = cands[0]
+          so, sz, lk = dynsym[1], dynsym[2], dynsym[3]
+          str_off = secs[lk][1]
+          defined = set()
+          for i in range(sz // 24):
+              st_name, _, _, st_shndx = struct.unpack_from('<IBBH', data, so + i * 24)
+              if st_shndx != 0:
+                  e = data.index(b'\0', str_off + st_name)
+                  defined.add(data[str_off + st_name:e].decode('utf-8', 'replace'))
+          need = {'remote_handle64_open', 'remote_handle64_close',
+                  'remote_session_control', 'remote_handle_invoke',
+                  'rpcmem_alloc', 'rpcmem_free'}
+          missing = sorted(need - defined)
+          n_fast = len([s for s in defined if s.startswith(('remote_', 'rpcmem_', 'dspqueue_'))])
+          print(f'cdsprpc: {len(data)} B stripped, {n_fast} FastRPC fns defined')
+          if missing:
+              print(f'FATAL: APK cdsprpc lib lacks {missing}'); sys.exit(1)
+          print('SYMBOLS OK: skel inside, FastRPC exports intact')
+          PY
+
+      - name: Upload hexagon APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-nazarick-hexagon
+          path: app/build/outputs/apk/nazarick/release/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload hexagon native (aar + skel)
+        uses: actions/upload-artifact@v4
+        with:
+          name: sd-cpp-hexagon-native
+          path: |
+            sd-cpp/build/outputs/aar/*.aar
+            sd-cpp/src/main/jniLibs/**/*.so
+          if-no-files-found: error
+          retention-days: 14
+
+  # US-009: engine-pack release lane. Builds a pack v1 from the arm64 native libs of the
+  # nazarick APK artifact, signs the manifest with the ENGINEPACK_SIGNING_SEED secret
+  # (Ed25519 32-byte hex seed; the app embeds the matching PUBLIC key), and publishes a
+  # GitHub Release named enginepack-<id>-<version>. Without the secret the job FAILS loud
+  # (ff203f18f: a silently-skipped signing step is how US-009 loses its whole point). On
+  # mission branches PACK_DRY_RUN keeps uploads to a draft; main publishes.
+  pack-release:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
+    needs: [assemble]
+    # gh release create/upload writes to the Releases API; the workflow default is
+    # contents: read (build.yml:43), so run 44203008603 died with
+    # "HTTP 403: Resource not accessible by integration" on BOTH the create and the
+    # upload fallback. One permissions key per job - the Actions parser rejects a
+    # duplicate mapping key, which is what a rebase onto 7b61b722b just produced.
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    env:
+      PACK_ID: nazarick-engine-llamacpp
+      PACK_VERSION: "1"
+      PACK_DRY_RUN: ${{ github.ref_name != 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk-nazarick
+          path: apk-in
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assemble pack (extract engine libs, pack, sign)
+        env:
+          ENGINEPACK_SIGNING_SEED: ${{ secrets.ENGINEPACK_SIGNING_SEED }}
+        run: |
+          set -eu
+          if [ -z "${ENGINEPACK_SIGNING_SEED:-}" ]; then
+            echo "::error::ENGINEPACK_SIGNING_SEED (64-hex ed25519 seed) is not configured; signing must fail loudly, never silently skip (US-009)."
+            exit 1
+          fi
+          mkdir -p stage pack-out
+          python - "$PWD" <<'PY'
+          import os, sys, zipfile
+          here = sys.argv[1]
+          apks = sorted(f for f in os.listdir(os.path.join(here, "apk-in")) if f.endswith(".apk"))
+          # artifact ships 3 splits; ext4 listdir order is arbitrary and x86_64-first
+          # produced a vacuous files=0 pack (run 44372825734). Pin arm64.
+          apk = next(f for f in apks if "arm64" in f)
+          want = ("libllama.so", "libllama-common.so", "libggml.so", "libggml-base.so",
+                  "libggml-cpu.so", "libggml-opencl.so", "libllamajni.so")
+          with zipfile.ZipFile(os.path.join(here, "apk-in", apk)) as z:
+              for n in z.namelist():
+                  if n.startswith("lib/arm64-v8a/") and os.path.basename(n) in want:
+                      open(os.path.join(here, "stage", os.path.basename(n)), "wb").write(z.read(n))
+          PY
+          STAGE_N="$(ls stage | wc -l)"
+          [ "$STAGE_N" -eq 7 ] || { echo "::error::stage has $STAGE_N files, expected 7 (apk=$apk)"; ls -l apk-in; exit 1; }
+          printf '%s' "$ENGINEPACK_SIGNING_SEED" > seed.hex
+          trap 'rm -f seed.hex' EXIT
+          python .github/packtools/enginepack.py create --src stage --out pack-out \
+            --id "$PACK_ID" --version "$PACK_VERSION" --backend cpu,opencl --min-api 26 \
+            --engine-pin "$(git ls-tree HEAD llama-cpp/native/llama.cpp | awk '{print $3}')" \
+            --key seed.hex
+          rm seed.hex
+          # Asset name is a client contract: EnginePackReleases resolves
+          # <release>/<id>-<version>.zip, so that is the only acceptable name on disk here.
+          # packtools has shipped both layouts (HEAD writes <out>.zip beside the dir; the
+          # in-tree revision writes <out>/<id>-<version>.zip inside it), so normalise to the
+          # contract instead of betting on one revision. Neither present = fail loud.
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"
+          if [ ! -f "$ZIP" ]; then
+            if [ -f pack-out.zip ]; then
+              mv pack-out.zip "$ZIP"
+              echo "normalised pack-out.zip -> $ZIP (CLI wrote the sibling layout)"
+            else
+              echo "::error::enginepack.py produced neither $ZIP nor pack-out.zip"
+              ls -l . pack-out || true
+              exit 1
+            fi
+          fi
+          ls -l pack-out
+      - name: Verify pack (sig + per-file sha, US-009 AC1)
+        run: |
+          set -eu
+          python .github/packtools/enginepack.py verify --dir pack-out --pubkey .github/packtools/test_pub2.hex
+      - name: Publish pack release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG="enginepack-${PACK_ID}-${PACK_VERSION}"
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"   # normalised in the assemble step
+          # NEVER trust `gh release create` against an already-published tag: it exits 0 but
+          # binds the new release to an untagged lease (silent draft; assets invisible at the
+          # app's download URL - proven twice on this lane). Resolve the tag's release id and
+          # upload explicitly; a manifest without its sig is unverifiable, so ship all three.
+          # gh release view returns "release not found" for this tag under GITHUB_TOKEN on
+          # non-default-branch dispatches (run 44244153078; same endpoint answers 200 under a
+          # classic PAT) - so resolve via raw REST and PRINT the body on failure, no more
+          # guessing. POST binds an existing tag cleanly (422 if a release exists, never a
+          # silent untagged lease - that was the gh-cli behavior).
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          BODY="$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$TAG")"
+          RID="$(printf '%s' "$BODY" | jq -r '.id // empty')"
+          if [ -z "$RID" ]; then
+            echo "releases/tags endpoint says: $(printf '%s' "$BODY" | head -c 300)"
+            POST_BODY="$(curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"engine pack $PACK_ID v$PACK_VERSION\",\"body\":\"US-009 CI-signed engine pack\",\"draft\":$PACK_DRY_RUN,\"target_commitish\":\"$GITHUB_SHA\"}")"
+            echo "release POST says: $(printf '%s' "$POST_BODY" | head -c 400)"
+            RID="$(printf '%s' "$POST_BODY" | jq -r '.id // empty')"
+          fi
+          [ -n "$RID" ] || { echo "::error::cannot resolve or create release for tag $TAG"; exit 1; }
+          # gh release upload takes tag/NAME not numeric id ("release not found"), and
+          # gh tag-resolution itself is poisoned under the dispatch token. Full REST:
+          for AID in $(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases/$RID/assets" | jq -r '.[].id'); do
+            curl -s -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" "$API/releases/assets/$AID" >/dev/null
+          done
+          for PAIR in "$ZIP#nazarick-engine-llamacpp-1.zip" "pack-out/manifest.json#manifest.json" "pack-out/.sig#pack.sig"; do
+            F="${PAIR%%#*}"; N="${PAIR##*#}"
+            curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Content-Type: application/octet-stream" \
+              --data-binary "@$F" "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RID/assets?name=$N" | jq -r '.name // .message'
+          done
+          echo "published pack assets to release $RID for tag $TAG (draft=$PACK_DRY_RUN)"
+          curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$API/releases/$RID/assets" | jq -r '.[].name'
+
+# DRAFT — hexagon-skel job, for merge into .github/workflows/build.yml
+# (replaces/gates alongside the dead `hexagon:` job at build.yml line 634+;
+#  do NOT merge my own work — Albedo reviews, Demiurge verifies.)
+# Provenance (floor/ticket-2026-11-17-hexagon-build-lane-plan.md, 2026-11-17):
+#   - SDK = login-free community mirror (snapdragon-toolchain/hexagon-sdk v6.7.0.0,
+#     asset 741,882,016 B, anonymous download verified live 2026-11-17). Mirror
+#     unblocks the lane; official zip + licensing review still owed for anything shipped.
+#   - Vendored cmake (fork pin 4284599ac): GGML_HEXAGON option, reads
+#     HEXAGON_SDK_ROOT / HEXAGON_TOOLS_ROOT env + $HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake.
+#   - PROBE-before-configure is mandatory (fail loud, no 40-min cmake wander).
+#   - Arch: CORRECTION 2026-11-18: z7 = SM8750 (8 Elite) reports DSP V79, NOT v73
+#     (V79-family trap, QNN lane + executorch #21586). v73 stays for older targets;
+#     v79 added as LOUD-OPTIONAL below. ccache (ticket step 7) deferred to follow-up.
+  hexagon-skel:
+    name: hexagon skel (v73 + v79?) native lane
+    needs: []
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'mission/npu-signed-engine-packs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HEXAGON_SDK_URL: https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download + unpack Hexagon SDK (community mirror, ~742 MB)
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o "$HOME/hexagon-sdk.tar.xz" "$HEXAGON_SDK_URL"
+          mkdir -p "$HOME/hexagon-sdk"
+          tar -xJf "$HOME/hexagon-sdk.tar.xz" -C "$HOME/hexagon-sdk"
+          ls "$HOME/hexagon-sdk"
+
+      - name: PROBE SDK layout (fail loud before cmake)
+        run: |
+          set -euo pipefail
+          # Layout of record (run 44150286687): the tarball unpacks to
+          # $HOME/hexagon-sdk/<version>/..., so hexagon_fun.cmake sits at depth 4 - a
+          # maxdepth-3 find misses it and reports "tree reordered" when it is not.
+          export HEXAGON_SDK_ROOT="$(find "$HOME/hexagon-sdk" -maxdepth 4 -type f -path '*/build/cmake/hexagon_fun.cmake' -printf '%h\n' | head -n1 | sed 's#/build/cmake$##')"
+          test -n "$HEXAGON_SDK_ROOT" -a -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake" || {
+            echo "::error::hexagon_fun.cmake not found under $HOME/hexagon-sdk - mirror tree reordered; layout:"
+            find "$HOME/hexagon-sdk" -maxdepth 3 | head -100
+            exit 1
+          }
+          test -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_arch.cmake" || { echo "::error::hexagon_arch.cmake missing (htp/cmake-toolchain.cmake includes it)"; ls "$HEXAGON_SDK_ROOT/build/cmake"; exit 1; }
+          test -d "$HEXAGON_SDK_ROOT/incs" || { echo "::error::incs/ missing - htp include dir absent"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
+          # utils/examples: referenced only as a dangling -I in ggml-hexagon CMakeLists at pin
+          # 4284599ac (byte-audited: 122 htp files, zero #include from that dir; hvx-utils.h,
+          # hex-utils.h, hmx-utils.h all live in-tree). Mirror lacks it -> warn, do not block.
+          test -d "$HEXAGON_SDK_ROOT/utils/examples" || echo "::warning::utils/examples absent (mirror strips it); -I will dangle harmlessly at this pin"
+          test -d "$HEXAGON_SDK_ROOT/rtos/qurt" || { echo "::error::rtos/qurt missing - mirror is userspace-only, QURT links in htp/cmake-toolchain.cmake cannot resolve"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
+          # rtos/qurt existing is not enough: htp/cmake-toolchain.cmake sets
+          # RTOS_DIR=$HEXAGON_SDK_ROOT/rtos/qurt/compute<arch> and links the skel against
+          # $RTOS_DIR/lib/{crt1.o,debugmon.o,libqurt.a,libqurtcfs.a,libtimer_main.a,
+          # libtimer_island.a,libposix.a}. Ask for the arches we actually build (v73 is this
+          # lane's target) rather than trusting the parent dir - a mirror carrying only newer
+          # arches fails here in seconds instead of at the link.
+          for a in v73 v75 v79 v81 v85; do
+            if [ -f "$HEXAGON_SDK_ROOT/rtos/qurt/compute$a/lib/libqurt.a" ]; then
+              echo "qurt OK: compute$a"
+            else
+              echo "qurt MISSING: compute$a"
+            fi
+          done
+          test -f "$HEXAGON_SDK_ROOT/rtos/qurt/computev73/lib/libqurt.a" || {
+            echo "::error::computev73 QURT libs absent - this mirror cannot link a v73 skel"
+            ls "$HEXAGON_SDK_ROOT/rtos/qurt" 2>/dev/null | head -20 || ls "$HEXAGON_SDK_ROOT"
+            exit 1; }
+          echo "HEXAGON_SDK_ROOT=$HEXAGON_SDK_ROOT" >> "$GITHUB_ENV"
+          ls "$HEXAGON_SDK_ROOT/build/cmake"
+          ls "$HEXAGON_SDK_ROOT/rtos/qurt" | head -20
+          # Compiler resolution must not bet on depth or on file-vs-symlink. Evidence:
+          # run 44223164865 listed tools/HEXAGON_Tools/21.0.04 as present, yet
+          # "find tools -maxdepth 5 -type f -name hexagon-clang" found nothing - so the driver
+          # is either a symlink (which -type f drops) or lives one tier deeper. Search both
+          # kinds, then derive the root from the path that actually matched.
+          CLANG="$(find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 6 \( -type f -o -type l \) -name 'hexagon-clang' -print -quit)"
+          if [ -z "$CLANG" ]; then
+            echo "::error::no hexagon-clang (regular file or symlink) under tools/HEXAGON_Tools; tree:"
+            find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 4 | head -60
+            exit 1
+          fi
+          test -x "$CLANG" || { echo "::error::driver found but not executable: $CLANG"; ls -l "$CLANG"; exit 1; }
+          echo "compiler driver: $CLANG"
+          # htp/cmake-toolchain.cmake wants <HEXAGON_TOOLS_ROOT>/Tools/bin/hexagon-clang
+          HEXAGON_TOOLS_ROOT="${CLANG%/Tools/bin/hexagon-clang}"
+          if [ "$HEXAGON_TOOLS_ROOT" = "$CLANG" ]; then
+            echo "::error::driver is not under a Tools/bin/ path - toolchain cannot resolve it: $CLANG"
+            find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 4 | head -60
+            exit 1
+          fi
+          export HEXAGON_TOOLS_ROOT
+          echo "HEXAGON_TOOLS_ROOT=$HEXAGON_TOOLS_ROOT" >> "$GITHUB_ENV"
+          # same toolchain also reads Tools/target/hexagon/lib (TARGET_DIR) and Tools/lib/iss
+          for d in Tools/bin Tools/target/hexagon/lib Tools/lib/iss; do
+            if [ -d "$HEXAGON_TOOLS_ROOT/$d" ]; then echo "tools OK: $d"; else echo "::warning::tools dir missing: $d"; fi
+          done
+          "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" --version | head -3
+          ls "$HEXAGON_SDK_ROOT/rtos/qurt" | grep -i compute | head -10 || true
+
+      - name: cmake configure (GGML_HEXAGON=ON) + build the v73 skel
+        run: |
+          set -euo pipefail
+          export HEXAGON_SDK_ROOT HEXAGON_TOOLS_ROOT
+          # ggml/src/ggml-hexagon/CMakeLists.txt carries no project() of its own (ggml adds
+          # it), so configuring that directory standalone cannot work - it dies on
+          # ggml_add_backend_library. Configure llama.cpp and ask for the skel's
+          # ExternalProject target: build_htp_skel(v73) -> ExternalProject_Add(htp-v73),
+          # which is what emits libggml-htp-v73.so. The host ggml-hexagon lib is not built
+          # here; the skel is the artifact this lane exists for.
+          # ggml-hexagon/CMakeLists.txt:1-6 tests the CMake VARIABLE (file(TO_CMAKE_PATH
+          # "${HEXAGON_SDK_ROOT}") then if (NOT IS_DIRECTORY ...)), not $ENV{...}. Exporting
+          # the variables is not enough - an empty variable reads as "not a directory" and the
+          # job dies with "Make sure HEXAGON_SDK_ROOT point to the correct Hexagon SDK
+          # installation" (run 44233723439, probe green, compiler at
+          # tools/HEXAGON_Tools/21.0.04/Tools/bin/hexagon-clang). Pass both as -D defines;
+          # CMAKE_TRY_COMPILE_PLATFORM_VARIABLES in htp/cmake-toolchain.cmake then carries
+          # them into the ExternalProject sub-configure as well.
+          #
+          # PREBUILT_LIB_DIR is the SDK's bug to route around, not ours to ignore:
+          # SDK 6.7.0.0 build/cmake/hexagon_fun.cmake:99-106 runs
+          #   string(FIND ${PREBUILT_LIB_DIR} "toolvNN" is_toolvNN)
+          # unquoted, and at include time (ggml-hexagon/CMakeLists.txt:22) that variable is
+          # set only inside build_htp_skel's -D list - so the expansion collapses to two
+          # arguments and cmake aborts with "string sub-command FIND requires 3 or 4
+          # parameters" x8 (run 44239759500). A cache entry satisfies it before the include;
+          # each skel ExternalProject still passes its own toolv21_<arch>, and for v73 the
+          # value is exactly what that function would derive. Upstream quotes these lines
+          # after pin 4284599ac - a submodule bump would also fix it, but that changes the
+          # engine pin the packs carry, so it is Demiurge's call, not a side effect here.
+          # Proven locally against the real file + cmake 4.4.5: unset -> the x8 error;
+          # toolv21_v73 -> is_toolv81/84/88 = -1, no errors (repro/npu/findrepro.cmake).
+          cmake -S llama-cpp/native/llama.cpp -B build-hex \
+            -DCMAKE_BUILD_TYPE=Release -DGGML_HEXAGON=ON -DLLAMA_CURL=OFF -DBUILD_TESTING=OFF \
+            -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT" \
+            -DPREBUILT_LIB_DIR=toolv21_v73
+          cmake --build build-hex --target htp-v73 -- -j"$(nproc)"
+          # V79 for SM8750-class devices (z7, Fold7). At pin 4284599ac it is UNKNOWN
+          # whether build_htp_skel enumerates an htp-v79 target: attempt LOUDLY.
+          # A missing target must print SKIPPED with cmake's own error - never silent.
+          set +e
+          cmake --build build-hex --target htp-v79 -- -j"$(nproc)" 2>&1 | tee /tmp/v79.log
+          V79_RC=$?
+          set -e
+          if [ "$V79_RC" -eq 0 ]; then
+            echo "SKEL_V79=FOUND"; find build-hex -name 'libggml-htp-v79.so' -printf '%p  %s bytes\n'
+          else
+            echo "SKEL_V79=SKIPPED (target absent at engine pin 4284599ac)"; tail -5 /tmp/v79.log
+          fi
+
+      - name: Upload skel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexagon-skel
+          path: |
+            build-hex/**/*.so
+          if-no-files-found: error

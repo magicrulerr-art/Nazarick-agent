@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.common.android.Logging
 import me.rerere.common.android.appTempFolder
 import com.whl.quickjs.android.QuickJSLoader
@@ -73,6 +74,8 @@ private const val TOOL_OUTPUT_MAX_BYTES = 200L * 1024L * 1024L
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Engine-pack lanes (US-006): remember app dirs + log what verified on disk.
+        me.rerere.llamacpp.EnginePackRegistry.init(this)
         // Give the accessibility tool bridge an application context so its "service not active"
         // envelope can tell "never enabled" apart from "the system killed it in the background".
         AccessibilityServiceHandle.attach(this)
@@ -182,6 +185,14 @@ class RikkaHubApp : Application() {
         // dir on first launch. SkillManager guards via a per-skill .seeded sentinel so this
         // is a one-time install — user edits / deletes are respected on subsequent launches.
         seedDefaultSkillsIfNeeded()
+
+        // AURA-014 — the Floor Guardians as chat assistants, once per GuardianSeed.SEED_VERSION.
+        // Boot-time rather than a DEFAULT_ASSISTANTS read-path merge on purpose: defaults
+        // reappear on every settings read, a seeded guardian stays deleted when deleted.
+        seedGuardians()
+
+        // sd.cpp's boot-time library heal (repairSdLibrary) went away with the sd.cpp
+        // provider itself in v0.6; local-dream keeps its own pane-open reconcile.
 
         // Increment launch count
         incrementLaunchCount()
@@ -442,6 +453,43 @@ class RikkaHubApp : Application() {
             }
         }
     }
+
+    /**
+     * AURA-014 — seed the bundled guardian pack into the assistant list (see `GuardianSeed`
+     * for the version marker and why). The asset read and the write are both IO; a corrupt
+     * pack costs a log line and a retry on next boot, never a stuck startup.
+     */
+    private fun seedGuardians() {
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                // Gate on the disk load: settingsFlow is a dummy until it lands, update(fn)
+                // refuses dummy writes, and a boot hook that fires first must not lose its
+                // seed either — wait for the real snapshot (Fold v0.0.4 proved a seed
+                // written over the dummy wipes providers on every launch).
+                awaitRealSettings()
+                val text = assets.open(me.rerere.rikkahub.data.guardians.FloorGuardians.ASSET_PATH)
+                    .bufferedReader().use { it.readText() }
+                val inserted = me.rerere.rikkahub.data.guardians.seedGuardianAssistants(
+                    get<SettingsStore>(), text,
+                )
+                Log.i(TAG, "seedGuardians: inserted=$inserted")
+            }.onFailure {
+                Log.e(TAG, "seedGuardians failed", it)
+            }
+        }
+    }
+
+    /** Suspend until [SettingsStore.settingsFlow] carries the disk-backed snapshot. */
+    private suspend fun awaitRealSettings() {
+        val store = get<SettingsStore>()
+        withTimeoutOrNull(15_000) { store.settingsFlow.first { !it.init } }
+            ?: error("settings still dummy after 15s — skipping boot mutations")
+    }
+
+    /**
+     * sd.cpp retired in v0.6: the boot-time repairSdLibrary() heal that lived here went
+     * with the module. Old persisted local_sdcpp rows are dropped by PreferencesStore.
+     */
 
     private fun eagerlyInitChatService() {
         try {

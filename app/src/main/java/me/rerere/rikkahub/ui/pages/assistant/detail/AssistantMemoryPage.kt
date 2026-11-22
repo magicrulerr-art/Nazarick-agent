@@ -401,7 +401,7 @@ private fun AssistantMemoryContent(
             }
         }
 
-        // Moxw P4 — the file library. Sits next to cold memory because it is the same kind of
+        // Nazarick P4 — the file library. Sits next to cold memory because it is the same kind of
         // thing: a directory the user points at, indexed in the background, searched by meaning.
         // What differs is what it will read, and that is why the directory is picked explicitly
         // rather than assumed - a workspace can hold anything.

@@ -1233,6 +1233,18 @@ private fun AssistantItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // "What to expect" subtitle from the pack (owner request v0.7). Shown even
+                // when this is the current assistant — the row below only adds the "Current"
+                // marker on top.
+                if (assistant.description.isNotBlank()) {
+                    Text(
+                        text = assistant.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 if (isCurrentAssistant) {
                     Text(
                         text = stringResource(R.string.assistant_page_current_assistant),

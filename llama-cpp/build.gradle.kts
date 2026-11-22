@@ -20,10 +20,31 @@ android {
                 // C++17 and RTTI/exceptions are required: common links nlohmann/json
                 // and a Jinja implementation, both of which throw.
                 cppFlags += listOf("-std=c++17", "-fexceptions", "-frtti")
+                // GPU backend selector: -Pllama.gpu=cpu|vulkan|opencl.
+                // OpenCL is the Adreno-tuned path and this branch's default: the Vulkan lane
+                // keeps faulting on the Fold's Adreno driver. cpu = upstream behavior.
+                val llamaGpu = providers.gradleProperty("llama.gpu").getOrElse("opencl")
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
-                    "-DLLAMAJNI_ENABLE_OPENCL=OFF",
+                    "-DLLAMAJNI_ENABLE_OPENCL=${if (llamaGpu == "opencl") "ON" else "OFF"}",
+                    "-DLLAMAJNI_ENABLE_VULKAN=${if (llamaGpu == "vulkan") "ON" else "OFF"}",
                 )
+                // CI installs a SPIRV-Headers CMake package for the Vulkan build (see
+                // .github/workflows/build.yml); the NDK's find-root mode would otherwise
+                // hide it, so package lookups are opened to both sysroot and prefix.
+                System.getenv("SPIRV_HEADERS_PREFIX")?.let {
+                    arguments += listOf(
+                        "-DCMAKE_PREFIX_PATH=$it",
+                        "-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH",
+                    )
+                }
+                // FindVulkan resolves glslc (the offline shader compiler ggml needs) from
+                // the desktop Vulkan SDK, which the NDK toolchain hides; CI installs
+                // glslang-tools and exports the path. Local SDK installs keep working
+                // untouched because the variable is simply absent there.
+                System.getenv("GLSLC")?.let {
+                    arguments += "-DVulkan_GLSLC_EXECUTABLE=$it"
+                }
             }
         }
     }
@@ -44,6 +65,12 @@ android {
         // llama.cpp ships its own copies for tooling; keep only ours.
         jniLibs.pickFirsts += "**/libc++_shared.so"
     }
+
+    testOptions {
+        // diag branch only: the provider's nazarick-perf breadcrumbs call android.util.Log,
+        // which throws "not mocked" in JVM unit tests against the stub android.jar.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
@@ -58,6 +85,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
 
+    // JUnit4 only: kotlin.test never resolved on this module's unit-test
+    // classpath (CI run 44100584573: 69 unresolved-reference errors); both
+    // engine-pack suites use org.junit like every sibling suite in here.
     testImplementation(libs.junit)
     // Real org.json impl for JVM unit tests: the stub android.jar throws "not mocked" on
     // every JSONObject call, and ChatRequestMapper builds its request with org.json to

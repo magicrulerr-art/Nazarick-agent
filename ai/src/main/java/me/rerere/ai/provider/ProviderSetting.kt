@@ -390,6 +390,98 @@ sealed class ProviderSetting {
         )
     }
 
+    /**
+     * On-device image generation through sd.cpp. Built-in and **disabled** by default, like the
+     * other local providers: nothing is downloaded and no engine is loaded until the user asks
+     * for it, because the weights are hundreds of megabytes.
+     *
+     * The model list is filled by [SdCppCatalog] on the app side — the `ai` module cannot see
+     * that class (dependency direction), which is why models arrive empty here rather than as a
+     * compiled-in default like [AICORE_DEFAULT_MODELS].
+     */
+    @Serializable
+    @SerialName("local_sdcpp")
+    data class SdCppLocal(
+        override var id: Uuid = SDCPP_PROVIDER_ID,
+        override var enabled: Boolean = false,
+        override var name: String = "Local · sd.cpp",
+        override var models: List<Model> = emptyList(),
+        override val balanceOption: BalanceOption = BalanceOption(),
+        override val customHeaders: List<CustomHeader> = emptyList(),
+        @Transient override val builtIn: Boolean = true,
+        @Transient override val description: @Composable (() -> Unit) = {},
+        @Transient override val shortDescription: @Composable (() -> Unit) = {},
+    ) : ProviderSetting() {
+        override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
+        override fun editModel(model: Model): ProviderSetting =
+            copy(models = models.map { if (it.id == model.id) model else it })
+        override fun delModel(model: Model): ProviderSetting =
+            copy(models = models.filter { it.id != model.id })
+        override fun moveMove(from: Int, to: Int): ProviderSetting =
+            copy(models = models.toMutableList().apply { add(to, removeAt(from)) })
+        override fun copyProvider(
+            id: Uuid,
+            enabled: Boolean,
+            name: String,
+            models: List<Model>,
+            balanceOption: BalanceOption,
+            customHeaders: List<CustomHeader>,
+            builtIn: Boolean,
+            description: @Composable (() -> Unit),
+            shortDescription: @Composable (() -> Unit),
+        ): ProviderSetting = copy(
+            id = id, enabled = enabled, name = name, models = models,
+            builtIn = builtIn, description = description, shortDescription = shortDescription,
+            balanceOption = balanceOption,
+            customHeaders = customHeaders,
+        )
+    }
+
+    /**
+     * On-device image generation through the **local-dream** engine — QNN context binaries on
+     * the Hexagon NPU with an MNN CPU fallback, transplanted from Off Grid AI (MIT). Fifth
+     * member of the local family and the second that draws: it coexists with [SdCppLocal]
+     * deliberately (ggml CPU/OpenCL here, compiled HTP graphs there), because the honest
+     * state of mobile NPU diffusion in 2026-11 is "two engines, measure, keep what wins".
+     */
+    @Serializable
+    @SerialName("local_dream")
+    data class LocalDream(
+        override var id: Uuid = LOCAL_DREAM_PROVIDER_ID,
+        override var enabled: Boolean = false,
+        override var name: String = "Local · QNN NPU",
+        override var models: List<Model> = emptyList(),
+        override val balanceOption: BalanceOption = BalanceOption(),
+        override val customHeaders: List<CustomHeader> = emptyList(),
+        @Transient override val builtIn: Boolean = true,
+        @Transient override val description: @Composable (() -> Unit) = {},
+        @Transient override val shortDescription: @Composable (() -> Unit) = {},
+    ) : ProviderSetting() {
+        override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
+        override fun editModel(model: Model): ProviderSetting =
+            copy(models = models.map { if (it.id == model.id) model else it })
+        override fun delModel(model: Model): ProviderSetting =
+            copy(models = models.filter { it.id != model.id })
+        override fun moveMove(from: Int, to: Int): ProviderSetting =
+            copy(models = models.toMutableList().apply { add(to, removeAt(from)) })
+        override fun copyProvider(
+            id: Uuid,
+            enabled: Boolean,
+            name: String,
+            models: List<Model>,
+            balanceOption: BalanceOption,
+            customHeaders: List<CustomHeader>,
+            builtIn: Boolean,
+            description: @Composable (() -> Unit),
+            shortDescription: @Composable (() -> Unit),
+        ): ProviderSetting = copy(
+            id = id, enabled = enabled, name = name, models = models,
+            builtIn = builtIn, description = description, shortDescription = shortDescription,
+            balanceOption = balanceOption,
+            customHeaders = customHeaders,
+        )
+    }
+
     @Serializable
     @SerialName("codex")
     data class Codex(
@@ -552,6 +644,53 @@ sealed class ProviderSetting {
         }
     }
 
+    /**
+     * Remote **Nazarick-agent instance** provider: the fleet's own server, addressed by
+     * baseUrl + Bearer token + agentId. US-001 lands the scaffold and the connection test
+     * ([me.rerere.ai.provider.providers.nazarick.NazarickClient]); the chat dispatch is a
+     * stub that refuses until US-004 wires the protocol.
+     */
+    @Serializable
+    @SerialName("nazarick")
+    data class Nazarick(
+        override var id: Uuid = NAZARICK_PROVIDER_ID,
+        override var enabled: Boolean = false,
+        override var name: String = "Nazarick",
+        override var models: List<Model> = emptyList(),
+        override val balanceOption: BalanceOption = BalanceOption(),
+        override val customHeaders: List<CustomHeader> = emptyList(),
+        @Transient override val builtIn: Boolean = true,
+        @Transient override val description: @Composable (() -> Unit) = {},
+        @Transient override val shortDescription: @Composable (() -> Unit) = {},
+        var baseUrl: String = "",
+        var token: String = "",
+        var agentId: String = "",
+    ) : ProviderSetting() {
+        override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
+        override fun editModel(model: Model): ProviderSetting =
+            copy(models = models.map { if (it.id == model.id) model else it })
+        override fun delModel(model: Model): ProviderSetting =
+            copy(models = models.filter { it.id != model.id })
+        override fun moveMove(from: Int, to: Int): ProviderSetting =
+            copy(models = models.toMutableList().apply { add(to, removeAt(from)) })
+        override fun copyProvider(
+            id: Uuid,
+            enabled: Boolean,
+            name: String,
+            models: List<Model>,
+            balanceOption: BalanceOption,
+            customHeaders: List<CustomHeader>,
+            builtIn: Boolean,
+            description: @Composable (() -> Unit),
+            shortDescription: @Composable (() -> Unit),
+        ): ProviderSetting = copy(
+            id = id, enabled = enabled, name = name, models = models,
+            builtIn = builtIn, description = description, shortDescription = shortDescription,
+            balanceOption = balanceOption,
+            customHeaders = customHeaders,
+        )
+    }
+
     companion object {
         // Types presented to the user when adding / converting a provider. AICore is
         // intentionally NOT in this list: it is a singleton built-in (one per device,
@@ -577,6 +716,27 @@ enum class AICoreReleaseStage { STABLE, PREVIEW }
 val AICORE_PROVIDER_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000001")
 val LITERT_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000002")
 val LLAMACPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000003")
+
+/**
+ * On-device **image** generation (sd.cpp / Stable Diffusion GGUF). Fourth member of the local
+ * family, and the first one that is not a language model — which is why it needs its own
+ * variant rather than a flag on [LlamaCppLocal]: the two engines share a directory convention
+ * and nothing else.
+ */
+val SDCPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000004")
+
+/**
+ * The local-dream (QNN NPU diffusion) provider. A separate stable ID from sd.cpp because
+ * they are separate engines with separate model directories and separate enabled-state —
+ * the user turns on the NPU, not "images".
+ */
+val LOCAL_DREAM_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000005")
+
+/**
+ * The remote Nazarick-agent instance provider (US-001). Stable ID like the local family so
+ * a seeded row survives re-installs; baseUrl/token/agentId are user-entered, the ID is not.
+ */
+val NAZARICK_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000006")
 private val AICORE_NANO_FAST_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000002")
 private val AICORE_NANO_FULL_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000003")
 

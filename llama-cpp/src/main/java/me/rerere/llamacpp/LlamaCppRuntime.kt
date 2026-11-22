@@ -13,6 +13,11 @@ import org.json.JSONObject
  */
 interface LlamaCppNative {
     fun loadModel(path: String): Long
+
+    /** [loadModel] with GPU layer offload: [nGpuLayers] layers handed to the compiled-in
+     *  GPU backend (-1 = all the backend can take). Defaults to delegating to the 1-arg
+     *  form so JVM fakes stay single-method; the real native overrides it directly. */
+    fun loadModel(path: String, nGpuLayers: Int): Long = loadModel(path)
     fun freeModel(handle: Long)
     fun modelInfo(handle: Long): String
     fun createContext(
@@ -23,6 +28,9 @@ interface LlamaCppNative {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        /** AURA-020: Flash Attention at context creation. llama.cpp requires true for
+         *  quantised cache types; the GPU-offload path forces false. */
+        flashAttn: Boolean,
     ): Long
 
     fun freeContext(handle: Long)
@@ -37,21 +45,30 @@ interface LlamaCppNative {
      * Mirrors [LlamaCppJni.generate]. [appliedTemplateJson] is the opaque blob
      * [LlamaCppJni.nativeApplyTemplate] returned, carrying the prompt, the grammar and
      * the grammar's triggers together; it must be passed through unchanged.
+     *
+     * [armToolGrammar] decides whether the sampler is constrained by the blob's tool-call
+     * grammar for this step (Bug #5 — the phone build armed it from token one and the
+     * reference path that ran 13/13 clean did not; see [EngineTunables.toolGrammar]).
+     *
+     * Returns the number of tokens actually decoded — the caller compares it against
+     * [maxTokens] to tell a truncated step from a completed one.
      */
     fun generate(
         ctxHandle: Long,
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    )
+    ): Int
 
     fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String
 }
 
 /** Delegates straight to [LlamaCppJni]'s String-in/String-out wrappers. */
 object RealLlamaCppNative : LlamaCppNative {
-    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path)
+    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path, 0)
+    override fun loadModel(path: String, nGpuLayers: Int) = LlamaCppJni.nativeLoadModel(path, nGpuLayers)
     override fun freeModel(handle: Long) = LlamaCppJni.nativeFreeModel(handle)
     override fun modelInfo(handle: Long): String = LlamaCppJni.nativeModelInfo(handle)
     override fun createContext(
@@ -62,8 +79,9 @@ object RealLlamaCppNative : LlamaCppNative {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        flashAttn: Boolean,
     ) = LlamaCppJni.nativeCreateContext(
-        modelHandle, nCtx, nBatch, nUBatch, cacheTypeK, cacheTypeV, nThreads,
+        modelHandle, nCtx, nBatch, nUBatch, cacheTypeK, cacheTypeV, nThreads, flashAttn,
     )
 
     override fun freeContext(handle: Long) = LlamaCppJni.nativeFreeContext(handle)
@@ -76,8 +94,9 @@ object RealLlamaCppNative : LlamaCppNative {
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) = LlamaCppJni.generate(ctxHandle, modelHandle, appliedTemplateJson, maxTokens, onPiece)
+    ): Int = LlamaCppJni.generate(ctxHandle, modelHandle, appliedTemplateJson, maxTokens, armToolGrammar, onPiece)
 
     override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String) =
         LlamaCppJni.parseChat(text, isPartial, appliedTemplateJson)
@@ -105,7 +124,14 @@ class ModelTooLargeException(message: String) : RuntimeException(message)
  * that exact pairing is what nativeCancelGeneration's contract forbids - so it and the
  * context-free step share the narrower [cancelFreeLock] instead.
  */
-class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
+class LlamaCppRuntime(
+    private val native: LlamaCppNative = RealLlamaCppNative,
+    /** Persisted settings-UI knob spec (AURA-020), re-read on every load so a settings change
+     *  takes effect at the next model load without killing the process. The app module injects
+     *  it from SharedPreferences; the null default keeps the JVM tests and every other caller
+     *  exactly as before. */
+    private val userSpecProvider: () -> String? = { null },
+) {
 
     @Volatile
     private var modelHandle: Long = 0
@@ -136,10 +162,45 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
         systemPromptBytes: Int,
         availableRamBytes: Long,
         threads: Int = defaultThreads(),
+        gpuLayers: Int = 0,
     ): ContextPlan = mutex.withLock {
         unloadLocked()
 
-        val model = native.loadModel(path)
+        // Read the knob set per load rather than once per process: the tuning loop is
+        // setprop → force-stop → rerun, and an echo line here is what makes a bench run
+        // reproducible from its own logcat. Installed before planning because every value
+        // below is read by ContextPlanner.
+        ContextPlanner.tunables = EngineTunables.fromSystemProperties(userSpecProvider())
+
+        // US-004 (Cocytus HOLD 2026-11-14, finding 2): the ledger used to be consulted
+        // AFTER loadModel — but loadModel is exactly where llama.cpp maps the weights, so
+        // a decline arrived once the bytes were already committed and the OS was free to
+        // kill the process on the way in. Reserve first against the file size (the same
+        // measure the LiteRT path uses); the post-load block below re-charges the exact
+        // weights_bytes via tryReserve's replace semantics. A file that reports 0 bytes is
+        // unreadable metadata: skip the pre-charge and let the weightsBytes<=0 refusal
+        // downstream judge it, exactly as before.
+        val preChargeBytes = java.io.File(path).length()
+        if (preChargeBytes > 0L) {
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.CHAT_ID, preChargeBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw ModelTooLargeException(
+                    "The local model budget cannot seat this model right now: only " +
+                        "${admit.roomBytes / 1_000_000}MB is unreserved of the ${availableRamBytes / 1_000_000}MB free " +
+                        "while this model needs ${admit.requiredBytes / 1_000_000}MB " +
+                        "(held: ${NativeAdmission.budget.outstanding()}). Unload the other local model first.",
+                )
+                is MemoryBudget.Result.Granted -> Unit
+            }
+        }
+        val model = try {
+            native.loadModel(path, gpuLayers)
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            // The pre-charge was taken before the native open; a load that never returned
+            // gives it back (same defect class 0d2eb1191 closed on the embed side).
+            NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
+            throw t
+        }
         val plan = try {
             val info = parseModelInfo(native.modelInfo(model))
             val planned = ContextPlanner.plan(info, availableRamBytes, tools, systemPromptBytes)
@@ -170,19 +231,53 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
                 MemoryGuard.Decision.Ok -> Unit
             }
 
+            // AURA-021 (LC-6/LC-7): the solo guard above only knows this model and this
+            // device's raw free bytes. The global ledger adds what the OTHER native holder
+            // (the embedding engine) has already reserved, so a chat reload against a phone
+            // whose budget is half-spent declines with numbers instead of letting the OS
+            // kill both models mid-load. Reserved here, released wherever the handles go
+            // free — see unloadLocked.
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.CHAT_ID, info.weightsBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw ModelTooLargeException(
+                    "The local model budget cannot seat this model right now: only " +
+                        "${admit.roomBytes / 1_000_000}MB is unreserved of the ${availableRamBytes / 1_000_000}MB free " +
+                        "while this model needs ${admit.requiredBytes / 1_000_000}MB " +
+                        "(held: ${NativeAdmission.budget.outstanding()}). Unload the other local model first.",
+                )
+                is MemoryBudget.Result.Granted -> Unit
+            }
+
             planned
         } catch (t: Throwable) {
             native.freeModel(model)
+            NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
             throw t
         }
 
         val ctx = try {
+            // GPU-offload KV guard (rule battle-tested in production by Off Grid AI's OGAM,
+            // llmHelpers.ts, ported 2026-11-08): on a spread of Adreno devices the OpenCL
+            // backend faults at context creation once explicit cache_type_k/v arrive as
+            // anything but f16 — and flash attention ON is fatal there too, which we get
+            // for free since llama_context_default_params() leaves FA off and nothing here
+            // flips it. ContextPlanner's ladder picks Q8_0 happily when RAM is tight, and
+            // that is right ON CPU; the clamp belongs at the offload boundary, not in the
+            // planner's memory maths (when the bench knob offloads on a Q8_0 plan, the KV
+            // footprint doubles against the estimate — accepted: correctness before the
+            // knob's throughput experiment, and the knob ships at 0).
+            val cache = cacheTypeForOffload(plan.cacheTypeK, gpuLayers)
+            // Flash Attention (AURA-020): the guard above used to get "FA off during
+            // offload" for free because nothing ever flipped FA. The shipped default is now
+            // ON - free speed and half the KV memory on CPU, which is every real load - so
+            // the OpenCL exception has to be stated at the same boundary as the kv clamp.
+            val flashAttn = if (gpuLayers != 0) false else plan.flashAttn
             native.createContext(
                 model, plan.nCtx, plan.nBatch, plan.nUBatch,
-                plan.cacheTypeK.id, plan.cacheTypeV.id, threads,
+                cache.id, cache.id, threads, flashAttn,
             )
         } catch (t: Throwable) {
             native.freeModel(model)
+            NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
             throw t
         }
 
@@ -197,6 +292,10 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
     suspend fun unload() = mutex.withLock { unloadLocked() }
 
     private fun unloadLocked() {
+        // The reservation covers the loaded model only; whatever path frees the handles
+        // frees the bytes behind it. (load() also arrives here first, so a reload swaps
+        // its own reservation cleanly through tryReserve's replace semantics.)
+        NativeAdmission.budget.release(NativeAdmission.CHAT_ID)
         synchronized(cancelFreeLock) {
             if (contextHandle != 0L) {
                 native.freeContext(contextHandle)
@@ -227,6 +326,28 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
         val current = plan ?: error("no model is loaded")
         return (ContextPlanner.inputByteBudget(current.nCtx) - current.reservedInputBytes)
             .coerceAtLeast(0)
+    }
+
+    /** Tokens one generation step may decode in the response half of the planned context —
+     *  the explicit ceiling that replaces the old unannounced `DEFAULT_MAX_TOKENS = 2048`
+     *  (Bug #5: a thought longer than 2048 tokens was cut off at a point no log line
+     *  named). Throws if no model is loaded, like [inputBudgetBytes]. */
+    fun outputTokenBudget(): Int {
+        val current = plan ?: error("no model is loaded")
+        return ContextPlanner.outputTokenBudget(current.nCtx)
+    }
+
+    /**
+     * The tools the planner could not fit into the loaded context's input budget.
+     * [LlamaCppProvider] must omit these from the request it renders: [ContextPlanner]
+     * already decided they do not fit, and forwarding them anyway is what let a request the
+     * planner had rejected reach the engine whole (measured on a Z Fold 7: 16 tools and a
+     * 31 KB system prompt against an 8,192-token context arrived as 10,295 tokens, and the
+     * 600 s first-output watchdog killed every attempt mid-prefill).
+     */
+    fun droppedToolNames(): List<String> {
+        val current = plan ?: error("no model is loaded")
+        return current.droppedToolNames
     }
 
     /**
@@ -271,13 +392,16 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
      * Runs one generation, blocking the calling thread until it completes. Returning
      * false from [onPiece] stops it; so does [cancelGeneration] called from another
      * thread. Throws [IllegalStateException] if no model is loaded, or if another
-     * generation is already running.
+     * generation is already running. Returns the number of tokens actually decoded,
+     * which equals the requested ceiling only when the step consumed the whole
+     * budget (see [LlamaCppNative.generate]).
      */
     fun generate(
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) {
+    ): Int {
         if (!mutex.tryLock()) {
             throw IllegalStateException("this model is busy with another operation (load, unload, or generate)")
         }
@@ -285,7 +409,7 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
             val model = modelHandle
             val ctx = contextHandle
             check(model != 0L && ctx != 0L) { "no model is loaded" }
-            native.generate(ctx, model, appliedTemplateJson, maxTokens, onPiece)
+            return native.generate(ctx, model, appliedTemplateJson, maxTokens, armToolGrammar, onPiece)
         } finally {
             mutex.unlock()
         }
@@ -325,3 +449,12 @@ class LlamaCppRuntime(private val native: LlamaCppNative = RealLlamaCppNative) {
     private fun defaultThreads(): Int =
         (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 8)
 }
+
+/**
+ * Pure form of the GPU-offload KV guard from [load] — see the comment there for the
+ * OGAM-sourced Adreno evidence. Clamped to F16 whenever layers leave the CPU; untouched
+ * when the plan stays on CPU (which is every production load today).
+ */
+internal fun cacheTypeForOffload(planned: KvCacheType, gpuLayers: Int): KvCacheType =
+    if (gpuLayers != 0) KvCacheType.F16 else planned
+

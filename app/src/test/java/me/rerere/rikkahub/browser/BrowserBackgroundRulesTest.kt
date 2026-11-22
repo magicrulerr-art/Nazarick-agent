@@ -42,7 +42,7 @@ class BrowserBackgroundRulesTest {
     }
 
     @Test fun `launch command omits blank extras`() {
-        val cmd = buildBrowserLaunchCommand("com.moxw.agent", 3, null, "  ")
+        val cmd = buildBrowserLaunchCommand("com.nazarick.agent", 3, null, "  ")
         assertFalse(cmd.contains("EXTRA_INITIAL_URL"))
         assertFalse(cmd.contains("EXTRA_CONVERSATION_ID"))
         assertTrue(cmd.contains(" --display 3"))

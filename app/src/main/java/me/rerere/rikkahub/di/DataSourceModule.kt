@@ -85,7 +85,7 @@ val dataSourceModule = module {
     single { get<UsageLedgerDatabase>().usageRecordDao() }
     single { UsageLedger(get()) }
 
-    // Moxw - the vector index also lives in its own database file (see VectorIndexDatabase for
+    // Nazarick - the vector index also lives in its own database file (see VectorIndexDatabase for
     // why). Every row in it is derivable from a document plus an embedding model, so it is a
     // cache rather than user data: it must never sit on the main database's upgrade path, and
     // forgetting it is just deleting the file.
@@ -791,6 +791,18 @@ val dataSourceModule = module {
                     prefs = get(),
                 ),
             )
+            // sd.cpp retired in v0.6: no engine registered. The ProviderSetting.SdCppLocal
+            // data class stays as a deserialization tombstone (old DataStores carry a
+            // local_sdcpp row), and PreferencesStore drops the row on load, so nothing ever
+            // resolves through this name again.
+            // local-dream is lazy: the subprocess only spawns when a
+            // model loads, so registering it here costs nothing on non-Qualcomm devices.
+            pm.registerProvider(
+                "local_dream",
+                me.rerere.localdream.LocalDreamProvider(
+                    context = get(),
+                ),
+            )
             pm.registerProvider(
                 "codex",
                 CodexProvider(
@@ -816,6 +828,14 @@ val dataSourceModule = module {
                     repository = get<GeminiAccountRepository>(),
                     json = json,
                 )
+            )
+            // Nazarick (US-001 scaffold, US-004 chat): a real generator now — POST
+            // /api/console/chat streamed through the US-002 Responses parser. It rides the shared
+            // OkHttpClient (10-minute readTimeout, one connection pool) exactly like the other
+            // remote providers, so a slow Tomb agent does not get cut by a private client default.
+            pm.registerProvider(
+                "nazarick",
+                me.rerere.ai.provider.providers.nazarick.NazarickProvider(client = get()),
             )
         }
     }

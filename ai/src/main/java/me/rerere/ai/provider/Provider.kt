@@ -102,6 +102,31 @@ data class ImageGenerationParams(
     val partialImages: Int = 2,
     val customHeaders: List<CustomHeader> = emptyList(),
     val customBody: List<CustomBody> = emptyList(),
+    // v0.8 sampling levers (owner request 2026-11-10, the full panel: mode/steps/cfg/width/
+    // height/seed/upscale). All optional and null-by-default: a null means "the model/engine's
+    // own default", so every pre-v0.8 caller keeps byte-identical behaviour, and the remote
+    // providers that have no such knob (OpenAI, Gemini, …) simply ignore them. Only local-dream
+    // (the on-device QNN/MNN engine) consumes them today; each field lands on the engine's
+    // HTTP /generate contract where one exists. Appended last on purpose: a new field may
+    // never shift the position of an existing one.
+    /** Diffusion sampling steps. null = the model catalog's default. */
+    val steps: Int? = null,
+    /** Classifier-free guidance ("CFG scale"). null = the model catalog's default. */
+    val guidanceScale: Double? = null,
+    /** Reproducible sampling. `null` or `<= 0` = random per generation (engine convention). */
+    val seed: Long? = null,
+    /** Explicit pixel width. null = derive from [aspectRatio]. */
+    val width: Int? = null,
+    /** Explicit pixel height. null = derive from [aspectRatio]. */
+    val height: Int? = null,
+    /** Post-generation resize factor (2, 4 …). null or 1 = no upscale. Not AI upscaling. */
+    val upscaleFactor: Int? = null,
+    /**
+     * Local engine backend preference: "auto" (NPU when supported, fall back to CPU),
+     * "qnn" (force NPU, fail loudly when unavailable), "mnn" (force CPU/GPU runtime).
+     * null = "auto". Remote providers ignore it.
+     */
+    val engineBackend: String? = null,
 )
 
 @Serializable

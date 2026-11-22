@@ -68,9 +68,12 @@ class ProviderManager(client: OkHttpClient, context: Context) {
             is ProviderSetting.AICore -> getProvider("aicore")
             is ProviderSetting.LiteRtLocal -> getProvider("local_litert")
             is ProviderSetting.LlamaCppLocal -> getProvider("local_llamacpp")
+            is ProviderSetting.SdCppLocal -> getProvider("local_sdcpp")
+            is ProviderSetting.LocalDream -> getProvider("local_dream")
             is ProviderSetting.Codex -> getProvider("codex")
             is ProviderSetting.Grok -> getProvider("grok")
             is ProviderSetting.GeminiOAuth -> getProvider("gemini_oauth")
+            is ProviderSetting.Nazarick -> getProvider("nazarick")
         } as Provider<T>
     }
 }

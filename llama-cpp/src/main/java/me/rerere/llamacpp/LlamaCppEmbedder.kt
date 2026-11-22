@@ -41,7 +41,7 @@ interface LlamaCppEmbedNative {
 
 /** Delegates straight to [LlamaCppJni]. */
 object RealLlamaCppEmbedNative : LlamaCppEmbedNative {
-    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path)
+    override fun loadModel(path: String) = LlamaCppJni.nativeLoadModel(path, 0)
     override fun freeModel(handle: Long) = LlamaCppJni.nativeFreeModel(handle)
     override fun modelInfo(handle: Long): String = LlamaCppJni.nativeModelInfo(handle)
     override fun createEmbedContext(modelHandle: Long, nCtx: Int, nThreads: Int) =
@@ -99,7 +99,30 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
     ): LlamaCppEmbedInfo = mutex.withLock {
         unloadLocked()
 
-        val model = native.loadModel(path)
+        // US-004 (Cocytus HOLD 2026-11-14, finding 2): same ordering fix as the chat
+        // runtime — reserve against the file size BEFORE loadModel maps the weights, so a
+        // declined embedding load never touches native memory at all. The post-load block
+        // re-charges the exact weights_bytes via tryReserve's replace semantics. Unreadable
+        // (0-byte) files skip the pre-charge and stay governed by the weightsBytes<=0
+        // refusal below.
+        val preChargeBytes = java.io.File(path).length()
+        if (preChargeBytes > 0L) {
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.EMBEDDING_ID, preChargeBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw NativeAdmission.DeclinedByBudgetException(
+                    "The embedding model needs ${admit.requiredBytes / 1_000_000}MB but only " +
+                        "${admit.roomBytes / 1_000_000}MB of the local budget is unreserved (held: " +
+                        "${NativeAdmission.budget.outstanding()}); semantic search stays off until room frees up.",
+                )
+                is MemoryBudget.Result.Granted -> Unit
+            }
+        }
+        val model = try {
+            native.loadModel(path)
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
+            throw t
+        }
 
         // Refuse before building the context. An over-budget load is killed by the OS partway
         // through, which reads as a crash rather than as a decision. A weights size of 0 is not
@@ -121,9 +144,23 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
                 )
                 MemoryGuard.Decision.Ok -> Unit
             }
+
+            // AURA-021 (LC-6/LC-7): same ledger as the chat runtime. Embedding is the
+            // DECLINING side by design — it never competes with a live chat turn for the
+            // kill: when the budget cannot seat it, the caller degrades (semantic search
+            // off) rather than crashing both.
+            when (val admit = NativeAdmission.budget.tryReserve(NativeAdmission.EMBEDDING_ID, weightsBytes, availableRamBytes)) {
+                is MemoryBudget.Result.Declined -> throw NativeAdmission.DeclinedByBudgetException(
+                    "The embedding model needs ${admit.requiredBytes / 1_000_000}MB but only " +
+                        "${admit.roomBytes / 1_000_000}MB of the local budget is unreserved (held: " +
+                        "${NativeAdmission.budget.outstanding()}); semantic search stays off until room frees up.",
+                )
+                is MemoryBudget.Result.Granted -> Unit
+            }
             native.createEmbedContext(model, nCtx, threads)
         } catch (t: Throwable) {
             native.freeModel(model)
+            NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
             throw t
         }
 
@@ -135,6 +172,10 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
         } catch (t: Throwable) {
             native.freeEmbedContext(engine)
             native.freeModel(model)
+            // The reservation above charged EMBEDDING_ID for these bytes; freeing the
+            // native side without releasing the ledger left the budget paying for memory
+            // already returned until the next load/unload (Cocytus US-004 HOLD 2026-11-14).
+            NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
             throw t
         }
 
@@ -142,6 +183,35 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
         engineHandle = engine
         facts = info
         info
+    }
+
+    /**
+     * Why the last load was declined ("semantic search off — low memory" and friends),
+     * null while nothing is declined. Read by the settings surface; set by [loadOrDecline].
+     */
+    @Volatile
+    var declineReason: String? = null
+        private set
+
+    /**
+     * [load] with the two budget refusals folded into a null result (AURA-021, LC-7:
+     * the embedding engine DECLINES, it does not throw at its callers). Any other
+     * failure — corrupt file, native error — still propagates: those are not memory
+     * decisions and must stay visible. A successful load clears [declineReason].
+     */
+    suspend fun loadOrDecline(
+        path: String,
+        availableRamBytes: Long = Long.MAX_VALUE,
+        nCtx: Int = DEFAULT_CONTEXT_TOKENS,
+        threads: Int = defaultThreads(),
+    ): LlamaCppEmbedInfo? = try {
+        load(path, availableRamBytes, nCtx, threads).also { declineReason = null }
+    } catch (t: ModelTooLargeException) {
+        declineReason = t.message
+        null
+    } catch (t: NativeAdmission.DeclinedByBudgetException) {
+        declineReason = t.message
+        null
     }
 
     /** Embeds one text, returning its raw pooled vector (see [embedNormalized]). */
@@ -162,6 +232,7 @@ class LlamaCppEmbedder(private val native: LlamaCppEmbedNative = RealLlamaCppEmb
     suspend fun unload() = mutex.withLock { unloadLocked() }
 
     private fun unloadLocked() {
+        NativeAdmission.budget.release(NativeAdmission.EMBEDDING_ID)
         if (engineHandle != 0L) {
             native.freeEmbedContext(engineHandle)
             engineHandle = 0

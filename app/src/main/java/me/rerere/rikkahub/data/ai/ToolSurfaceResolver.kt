@@ -57,7 +57,7 @@ object ToolSurfaceResolver {
         // never hid it from the model — it only made the catalogue smaller, and the ranking, not
         // the size, is what picks. LocalToolGates holds the rule and explains the criterion for
         // the groups that kept their switch.
-        options = LocalToolGates.effective(assistant.localTools),
+        options = LocalToolGates.effective(assistant.localTools, assistant.toolAllowlist),
         invocationContext = context,
         // P2-02 - the per-tool deny-list rides along with the option list it refines.
         disabledToolNames = assistant.disabledLocalTools,

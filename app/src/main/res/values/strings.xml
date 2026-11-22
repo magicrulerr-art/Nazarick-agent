@@ -210,10 +210,10 @@
   <string name="assistant_page_tool_surface_mode">Progressive MCP tool catalog</string>
   <string name="assistant_page_tool_surface_mode_desc">Replaces the MCP tools in each request with a tool_search / tool_open pair, so only the schemas the model opens are sent. Cuts the first-turn tool tokens, but the tool list changes between turns, which can cost prompt-cache hits. Local tools are never catalogued. Off by default.</string>
   <string name="assistant_page_tool_surface_no_model">Semantic tool search is off</string>
-  <string name="assistant_page_tool_surface_no_model_desc">No embedding model is installed, so this request carries no tools at all — Moxw has no keyword fallback to fall back on.</string>
+  <string name="assistant_page_tool_surface_no_model_desc">No embedding model is installed, so this request carries no tools at all — Nazarick has no keyword fallback to fall back on.</string>
   <string name="embedding_gate_later">Later</string>
   <string name="embedding_gate_action">Install</string>
-  <string name="embedding_gate_desc">Moxw searches your memory, files, past conversations and tools by meaning, and all of it runs on a local embedding model. Install one to turn those features on.</string>
+  <string name="embedding_gate_desc">Nazarick searches your memory, files, past conversations and tools by meaning, and all of it runs on a local embedding model. Install one to turn those features on.</string>
   <string name="embedding_gate_title">An embedding model is required</string>
   <string name="assistant_page_tool_surface_no_model_action">Install</string>
   <string name="assistant_page_local_tools_pin">Pin</string>
@@ -1437,6 +1437,7 @@
   <string name="text_area_save">Save</string>
   <string name="theme_name_autumn">Autumn Yellow</string>
   <string name="theme_name_black">Neutral Black</string>
+  <string name="theme_name_nazarick">Nazarick</string>
   <string name="theme_name_claude">Claude</string>
   <string name="theme_name_minimal">Minimal White</string>
   <string name="theme_name_ocean">Ocean Blue</string>
@@ -2120,6 +2121,13 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="local_llm_install_url_hint">HuggingFace /blob/ or /resolve/ URLs both work.</string>
   <string name="local_llm_download_default">Download default model</string>
   <string name="local_llm_installed_models_count">%1$d model(s) installed. Manage them in the Models tab.</string>
+  <!-- sd.cpp — on-device image generation -->
+  <string name="sd_cpp_catalog_title">Curated diffusion models</string>
+  <string name="sd_cpp_catalog_subtitle">Weights land in local-models/sdcpp and inference never leaves the device. Plan on ~1.5 GB per model.</string>
+  <string name="sd_cpp_install_action">Install</string>
+  <string name="sd_cpp_delete_action">Delete</string>
+<string name="local_dream_catalog_title">NPU diffusion models</string>
+<string name="local_dream_catalog_subtitle">QNN context binaries unpack into local-models/localdream and inference never leaves the device. Plan on ~1 GB per pack. Qualcomm devices only.</string>
   <string name="local_llm_accelerator_label">Accelerator: %1$s</string>
   <string name="local_llm_test_model">Test</string>
   <string name="local_llm_manage_files_title">Installed model files</string>
@@ -2145,6 +2153,14 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="local_llm_catalog_tag_thinking">Thinking</string>
   <string name="local_llm_catalog_tag_speculative">Speculative decoding</string>
   <string name="local_llm_catalog_tag_tools">Tools</string>
+  <string name="local_llm_llamacpp_engine_title">Engine settings</string>
+  <string name="local_llm_llamacpp_engine_subtitle">Flash Attention, KV cache and context window. Applies at the next model load - reopen the chat after changing.</string>
+  <string name="local_llm_llamacpp_flash_attn">Flash Attention</string>
+  <string name="local_llm_llamacpp_kv_title">KV cache</string>
+  <string name="local_llm_llamacpp_ctx_title">Context window</string>
+  <string name="local_llm_llamacpp_ctx_warning">A context the model or memory cannot support will fail to load - pick Auto if unsure.</string>
+  <string name="local_llm_llamacpp_fit_title">Picks for this device (%1$d GB)</string>
+  <string name="local_llm_llamacpp_fit_line">Fast: %1$s  |  Balanced: %2$s  |  Best: %3$s</string>
   <string name="local_llm_llamacpp_catalog_title">Available models</string>
   <string name="local_llm_llamacpp_catalog_subtitle">Curated GGUF models with a tool-calling chat template. Pick one for one-tap install.</string>
   <string name="local_llm_llamacpp_import_action">Install a GGUF you already have</string>
@@ -2506,6 +2522,12 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="setting_sub_agents_profile_burst">Burst</string>
   <string name="setting_sub_agents_profile_unleashed">All-out</string>
   <string name="setting_sub_agents_page_title">Sub-agent profiles</string>
+  <string name="guardians_pack_title">The Nine — floor guardians</string>
+  <string name="guardians_pack_subtitle">Nine minified personalities, one per duty: Demiurge oversees, Albedo researches and audits, Shalltear runs the outside, Cocytus guards security and updates, Sebas keeps the house, Victim persuades, Mare makes media, Aura writes code, Pandora\'s Actor runs the game. Each installs as a sub-agent profile with its own memory.</string>
+  <string name="guardians_pack_install">Install the Nine</string>
+  <string name="guardians_pack_overwrite">Re-install</string>
+  <string name="guardians_pack_result">%1$d installed · %2$d updated · %3$d left alone</string>
+  <string name="guardians_pack_failed">Pack refused: %1$s</string>
   <string name="setting_sub_agents_page_empty">No sub-agent profiles yet</string>
   <string name="setting_sub_agents_page_empty_hint">Add one so the assistant can dispatch a sub-agent to it by name.</string>
   <string name="setting_sub_agents_page_add">Add profile</string>
@@ -3001,6 +3023,32 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <string name="imggen_page_deleting">Deleting…</string>
   <string name="imggen_page_selected_count">Selected: %1$d</string>
   <string name="imggen_page_select_image">Select image</string>
+  <!-- v0.8 sampling levers (owner screenshot 2026-11-10) -->
+  <string name="imggen_page_advanced_title">Sampling settings</string>
+  <string name="imggen_page_advanced_desc">Leave fields empty to use the model defaults. Levers apply to on-device engines; remote providers may ignore them.</string>
+  <string name="imggen_page_mode_label">Mode</string>
+  <string name="imggen_page_mode_desc">Which chip the on-device engine runs on</string>
+  <string name="imggen_page_mode_auto">Auto (NPU when available)</string>
+  <string name="imggen_page_mode_npu">NPU (force)</string>
+  <string name="imggen_page_mode_cpu">CPU / GPU</string>
+  <string name="imggen_page_steps_label">Steps</string>
+  <string name="imggen_page_steps_desc">More steps = better detail, slower (1–150)</string>
+  <string name="imggen_page_steps_invalid">Steps must be a whole number between %1$d and %2$d</string>
+  <string name="imggen_page_cfg_label">CFG scale</string>
+  <string name="imggen_page_cfg_desc">How strictly the prompt is followed (0–30)</string>
+  <string name="imggen_page_cfg_invalid">CFG scale must be a number between %1$d and %2$d</string>
+  <string name="imggen_page_width_label">Width</string>
+  <string name="imggen_page_height_label">Height</string>
+  <string name="imggen_page_size_auto">Follow aspect ratio</string>
+  <string name="imggen_page_size_desc">On-device NPU models are compiled for 512-class sizes; other values run on CPU/MNN and may be slower or unsupported</string>
+  <string name="imggen_page_seed_label">Seed</string>
+  <string name="imggen_page_seed_desc">Same seed + same prompt = same image. -1 or empty = random</string>
+  <string name="imggen_page_seed_invalid">Seed must be a whole number (use -1 for random)</string>
+  <string name="imggen_page_upscale_label">Upscale</string>
+  <string name="imggen_page_upscale_desc">Resize the finished image (not AI upscaling)</string>
+  <string name="imggen_page_upscale_off">Off</string>
+  <string name="imggen_page_upscale_2x">2×</string>
+  <string name="imggen_page_upscale_4x">4×</string>
   <string name="workspace_detail_compatibility_mode">Compatibility mode</string>
   <string name="workspace_detail_compatibility_mode_desc">Try enabling this if the terminal fails to start. It may reduce performance. Applies to new terminal tabs and subsequent commands.</string>
   <string name="workspace_detail_settings_save_failed">Failed to save settings</string>
@@ -3106,13 +3154,13 @@ HARDLINE protections still apply: rm -rf /, mkfs, shutdown / reboot, dd to block
   <!-- Getting started (first-run guide) -->
   <string name="getting_started_title">Getting started</string>
   <string name="getting_started_intro_title">Before your first chat</string>
-  <string name="getting_started_intro_desc">Moxw needs two things before it works: a chat model to reply, and an on-device embedding model that memory, file search, past-chat search and the tool catalogue all run on. Set those up, then add the optional extras.</string>
+  <string name="getting_started_intro_desc">Nazarick needs two things before it works: a chat model to reply, and an on-device embedding model that memory, file search, past-chat search and the tool catalogue all run on. Set those up, then add the optional extras.</string>
   <string name="getting_started_progress">Required %1$d of %2$d</string>
   <string name="getting_started_optional">Optional</string>
   <string name="getting_started_step_model_title">Add a chat model</string>
   <string name="getting_started_step_model_desc">Open a provider and paste an API key (OpenRouter, or any OpenAI-compatible endpoint). Without a chat model nothing can reply.</string>
   <string name="getting_started_step_embedding_title">Install the embedding model</string>
-  <string name="getting_started_step_embedding_desc">Every search in Moxw — memory, files, past chats and the tool catalogue — runs on the on-device embedding model. Without it the assistant has no tools and remembers nothing, so pick one small model to start.</string>
+  <string name="getting_started_step_embedding_desc">Every search in Nazarick — memory, files, past chats and the tool catalogue — runs on the on-device embedding model. Without it the assistant has no tools and remembers nothing, so pick one small model to start.</string>
   <string name="getting_started_step_tools_title">Switch on extra capabilities</string>
   <string name="getting_started_step_tools_desc">The tool catalogue is always on and chosen by meaning, so there is nothing to turn on for it. Here you enable the system-level ones that need something only you can provide: screen control, Shizuku, Termux and the like.</string>
   <string name="getting_started_step_permissions_title">Grant permissions</string>

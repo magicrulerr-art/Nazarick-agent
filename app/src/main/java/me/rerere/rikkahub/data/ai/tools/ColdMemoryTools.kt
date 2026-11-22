@@ -382,7 +382,7 @@ private fun errorEnvelope(code: String, detail: String): String = buildJsonObjec
 }.toString()
 
 /**
- * Moxw - semantic search over the cold-memory knowledge base.
+ * Nazarick - semantic search over the cold-memory knowledge base.
  *
  * Sits beside `memory_index` / `memory_read` rather than replacing them: those are exact and free,
  * and a model that already knows the file name should not pay for an embedding call to be told it.
@@ -407,13 +407,19 @@ fun buildMemorySearchTool(
         Each hit names its file, so `memory_read` can pull in the full document when a passage is
         not enough.
 
-        Scores are cosine similarities between the query and each passage, and they are NOT
-        comparable between calls: a loosely related passage of one query can outscore a perfect
-        match of another. Compare the passages within one result set; never treat a particular
-        number as a relevance threshold.
+        Two engines, one verb. Normally hits are semantic: cosine similarities between the query
+        and each passage. When no embedding model can be loaded (none installed, or declined
+        because the chat model holds the memory) the same notes are ranked by keyword instead and
+        the result says so with `"recall": "keyword-fallback"`. Those scores are BM25 - bigger is
+        better within one result set, never comparable with a cosine similarity. In keyword mode a
+        passage worded completely differently from your query can be missed, so try another
+        wording before concluding the notes are silent.
 
-        If it reports that semantic search is unavailable, no embedding model is installed. Say so
-        to the user rather than retrying - there is no keyword fallback any more.
+        Either way a result set only means something within its own call: never treat a number as
+        a relevance threshold.
+
+        Only `"error": "unavailable"` means there is nothing to search at all - no model and no
+        readable Markdown in this directory. Say that to the user instead of retrying.
     """.trimIndent(),
     parameters = {
         InputSchema.Obj(

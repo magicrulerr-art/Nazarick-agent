@@ -1251,6 +1251,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="text_area_save">保存</string>
   <string name="theme_name_autumn">秋黄</string>
   <string name="theme_name_black">中性黑</string>
+  <string name="theme_name_nazarick">纳萨力克</string>
   <string name="theme_name_minimal">极简白</string>
   <string name="theme_name_ocean">海湾蓝</string>
   <string name="theme_name_sakura">樱花粉</string>
@@ -1516,6 +1517,13 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="local_llm_install_url_hint">HuggingFace /blob/ 或 /resolve/ 网址均可。</string>
   <string name="local_llm_install_url_label">或粘贴一个 HuggingFace 网址（/blob/ 或 /resolve/ 均可）</string>
   <string name="local_llm_installed_models_count">已安装 %1$d 个模型。在“模型”标签页中管理它们。</string>
+  <!-- sd.cpp —— 端侧图像生成 -->
+  <string name="sd_cpp_catalog_title">精选扩散模型</string>
+  <string name="sd_cpp_catalog_subtitle">权重下载至 local-models/sdcpp，推理全程不离开设备。每个模型约 1.5 GB。</string>
+  <string name="sd_cpp_install_action">安装</string>
+  <string name="sd_cpp_delete_action">删除</string>
+<string name="local_dream_catalog_title">NPU 扩散模型</string>
+<string name="local_dream_catalog_subtitle">QNN 上下文包解压到 local-models/localdream，推理不离开设备。每个模型包约 1 GB。仅支持高通设备。</string>
   <string name="local_llm_insufficient_memory_format">需要约 %1$d MB 的可用内存（模型 %2$d MB 加上运行时余量），但只有 %3$d MB 可用。请关闭其他应用或选择更小的模型。</string>
   <string name="local_llm_invalid_url">无效网址：必须是 https 且格式正确</string>
   <string name="local_llm_litert_name">本地 · LiteRT</string>
@@ -2346,6 +2354,12 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="setting_sub_agents_profile_burst">高并发</string>
   <string name="setting_sub_agents_profile_unleashed">全派发</string>
   <string name="setting_sub_agents_page_title">子智能体配置</string>
+  <string name="guardians_pack_title">九位楼层守护者 — 精简人格</string>
+  <string name="guardians_pack_subtitle">九位楼层守护者的精简人格，各管一摊：迪米乌哥斯统辖全局，雅儿贝德负责研究与合规，夏提雅负责外部事务与自动化，科塞特斯掌管安全与更新，塞巴斯打理内务与维护，维克提姆负责说服与社交，马雷制作媒体内容，亚乌菈写代码，潘多拉·亚克特扮演与主持。每位都会作为独立的子智能体配置安装，并拥有各自的记忆。</string>
+  <string name="guardians_pack_install">安装九位</string>
+  <string name="guardians_pack_overwrite">重新安装</string>
+  <string name="guardians_pack_result">已安装 %1$d · 已更新 %2$d · 保留 %3$d</string>
+  <string name="guardians_pack_failed">安装包被拒绝：%1$s</string>
   <string name="setting_sub_agents_page_empty">暂无子智能体配置</string>
   <string name="setting_sub_agents_page_empty_hint">添加一个配置，以便助手可以按名称向其派发子智能体。</string>
   <string name="setting_sub_agents_page_add">添加配置</string>
@@ -2764,7 +2778,7 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <string name="assistant_page_tool_surface_no_model_desc">还没有安装向量模型，本次请求不会附带任何工具——本产品不提供关键词回退。</string>
   <string name="embedding_gate_later">稍后</string>
   <string name="embedding_gate_action">去安装</string>
-  <string name="embedding_gate_desc">Moxw 的记忆、文件库、历史对话和工具都按「含义」检索，全部依赖端侧向量模型。装好它，这些功能才会开启。</string>
+  <string name="embedding_gate_desc">Nazarick 的记忆、文件库、历史对话和工具都按「含义」检索，全部依赖端侧向量模型。装好它，这些功能才会开启。</string>
   <string name="embedding_gate_title">需要向量模型</string>
   <string name="assistant_page_tool_surface_no_model_action">去安装</string>
   <string name="assistant_page_local_tools_pin">常驻</string>
@@ -2821,13 +2835,13 @@ HARDLINE 保护仍然生效：rm -rf /、mkfs、shutdown / reboot、向块设备
   <!-- 快速上手（首次运行引导） -->
   <string name="getting_started_title">快速上手</string>
   <string name="getting_started_intro_title">开始聊天之前</string>
-  <string name="getting_started_intro_desc">Moxw 要能干活，先得备齐两件事：一个回话用的对话模型，和一个端侧向量模型——记忆、文件库、历史对话、工具检索全都跑在它上面。装好这两样，再按需开启可选能力。</string>
+  <string name="getting_started_intro_desc">Nazarick 要能干活，先得备齐两件事：一个回话用的对话模型，和一个端侧向量模型——记忆、文件库、历史对话、工具检索全都跑在它上面。装好这两样，再按需开启可选能力。</string>
   <string name="getting_started_progress">必做 %1$d/%2$d</string>
   <string name="getting_started_optional">可选</string>
   <string name="getting_started_step_model_title">添加对话模型</string>
   <string name="getting_started_step_model_desc">进入「模型提供商」，选一个并填入 API Key（OpenRouter，或任何 OpenAI 兼容接口）。没有对话模型，消息发不出去。</string>
   <string name="getting_started_step_embedding_title">安装向量模型</string>
-  <string name="getting_started_step_embedding_desc">Moxw 里的检索——记忆、文件、历史对话、工具目录——全部依赖端侧向量模型。没装它，助手既没有工具、也记不住东西；先装一个小号的即可。</string>
+  <string name="getting_started_step_embedding_desc">Nazarick 里的检索——记忆、文件、历史对话、工具目录——全部依赖端侧向量模型。没装它，助手既没有工具、也记不住东西；先装一个小号的即可。</string>
   <string name="getting_started_step_tools_title">开启额外能力</string>
   <string name="getting_started_step_tools_desc">工具目录始终开启、按语义自动挑选，不需要手动打开。这里开启的是需要你亲自提供前提的系统级能力：屏幕操控、Shizuku、Termux 等。</string>
   <string name="getting_started_step_permissions_title">授予权限</string>

@@ -44,6 +44,24 @@ data class ProviderRequirement(
                     severity = TagType.INFO,
                 ),
             )
+            is ProviderSetting.SdCppLocal -> listOf(
+                ProviderRequirement(
+                    label = "On-device · images · ~2 GB weights",
+                    severity = TagType.INFO,
+                ),
+            )
+            is ProviderSetting.LocalDream -> listOf(
+                ProviderRequirement(
+                    label = "On-device · NPU images · Qualcomm only · ~1 GB packs",
+                    severity = TagType.INFO,
+                ),
+            )
+            is ProviderSetting.Nazarick -> listOf(
+                ProviderRequirement(
+                    label = "Remote · Nazarick instance + Bearer token",
+                    severity = TagType.INFO,
+                ),
+            )
             else -> emptyList()
         }
     }

@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.pages.setting
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -69,13 +70,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -104,6 +108,9 @@ import me.rerere.rikkahub.data.ai.tools.LocalToolPaletteHit
 import me.rerere.rikkahub.data.ai.tools.LocalTools
 import me.rerere.rikkahub.data.files.SkillManager
 import me.rerere.rikkahub.data.files.SkillMetadata
+import me.rerere.rikkahub.data.guardians.FloorGuardians
+import me.rerere.rikkahub.data.guardians.FloorGuardianInstaller
+import me.rerere.rikkahub.data.guardians.GuardianInstallResult
 import me.rerere.rikkahub.subagent.SubAgentRegistry
 import me.rerere.rikkahub.subagent.SubAgentRun
 import me.rerere.rikkahub.subagent.SubAgentStatus
@@ -150,6 +157,15 @@ fun SettingSubAgentsPage(
     val scope = rememberCoroutineScope()
     var expanded by rememberSaveable { mutableStateOf(true) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    // AURA-012b — the Nine face their rows. Portraits are declared by the bundled pack and looked
+    // up by slug, which keeps a column off AgentDefinition: that table lives in its own .db file
+    // precisely so Room's identity hash stops moving, and art is not worth a migration.
+    val portraitContext = LocalContext.current
+    var guardianPortraits by remember { mutableStateOf(emptyMap<String, String>()) }
+    LaunchedEffect(portraitContext) {
+        guardianPortraits = withContext(Dispatchers.IO) { loadGuardianPortraits(portraitContext) }
+    }
+
     val editState = useEditState<AgentDefinitionDraft> { draft ->
         // A create and an update differ only in whether the row already exists. `update` refuses to
         // insert (a stale id must not resurrect a deleted expert), so the branch is explicit.
@@ -281,6 +297,99 @@ fun SettingSubAgentsPage(
                 item {
                     SubAgentRunsSection()
                 }
+
+                // AURA-012 — the bundled Nine. A seeded pack beats an empty library: the CTA below
+                // asks a stranger to invent both a persona and its tool surface, which most users
+                // won't bother to do. Re-running is safe by construction — the plan keeps existing
+                // rows unless "re-install" is picked, so a hand-edited Demiurge is never clobbered
+                // by accident.
+                item {
+                    val context = LocalContext.current
+                    var packResult by remember { mutableStateOf<GuardianInstallResult?>(null) }
+                    var packing by remember { mutableStateOf(false) }
+                    val installPack: (Boolean) -> Unit = { overwrite ->
+                        packResult = null
+                        packing = true
+                        scope.launch {
+                            packResult =
+                                installGuardianPack(context, agentDefinitionRepository, overwrite)
+                            packing = false
+                        }
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CustomColors.cardColorsOnSurfaceContainer,
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            // Mare's mini-Ainz (borrowed from his dashboard sprite set) fronts the
+                            // pack: this card hands you the Tomb's staff, so the Tomb's master
+                            // should be standing on it.
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                AsyncImage(
+                                    model = "file:///android_asset/guardians/ainz.png",
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.size(44.dp),
+                                )
+                                Text(
+                                    text = stringResource(R.string.guardians_pack_title),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(R.string.guardians_pack_subtitle),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { installPack(false) },
+                                    enabled = !packing,
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(stringResource(R.string.guardians_pack_install))
+                                }
+                                TextButton(
+                                    onClick = { installPack(true) },
+                                    enabled = !packing,
+                                ) {
+                                    Text(stringResource(R.string.guardians_pack_overwrite))
+                                }
+                            }
+                            packResult?.let { result ->
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = if (result.ok) {
+                                        stringResource(
+                                            R.string.guardians_pack_result,
+                                            result.inserted,
+                                            result.updated,
+                                            result.kept,
+                                        )
+                                    } else {
+                                        stringResource(
+                                            R.string.guardians_pack_failed,
+                                            result.problems.first(),
+                                        )
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (result.ok) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.error
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (definitions.isEmpty()) {
                     item {
                         Column(
@@ -333,6 +442,7 @@ fun SettingSubAgentsPage(
                     items(definitions, key = { it.id }) { definition ->
                         AgentDefinitionCard(
                             definition = definition,
+                            portrait = definition.slug?.let { guardianPortraits[it] },
                             onEdit = { editState.open(AgentDefinitionDraft.of(definition)) },
                             onDelete = { scope.launch { agentDefinitionRepository.delete(definition.id) } },
                         )
@@ -488,6 +598,7 @@ private fun subAgentRunStatusRes(status: SubAgentStatus): Int = when (status) {
 @Composable
 private fun AgentDefinitionCard(
     definition: AgentDefinition,
+    portrait: String? = null,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -567,7 +678,16 @@ private fun AgentDefinitionCard(
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
+                    // A guardian with art wears it; everything else keeps the robot tile. The tile
+                    // is already clipped to a circle, so the portrait needs no clipping of its own.
+                    if (portrait != null) {
+                        AsyncImage(
+                            model = "file:///android_asset/$portrait",
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else Icon(
                         imageVector = HugeIcons.Robot01,
                         contentDescription = null,
                         tint = if (definition.enabled) {
@@ -1418,4 +1538,39 @@ private fun GlobalConcurrencyItem(settings: Settings) {
             },
         )
     }
+}
+
+/**
+ * AURA-012 — read the bundled guardian pack out of the APK and write it into the library.
+ *
+ * The asset read is on `Dispatchers.IO` because `assets.open` is a real file read (the pack is
+ * ~8 KB, but the page is a settings screen the user is scrolling, and this fires on a tap).
+ * Everything after the read is [FloorGuardianInstaller.install], which refuses to write a thing
+ * when the pack fails validation — so the failure path a user can actually hit is the text in
+ * the card, not a half-populated library.
+ */
+/**
+ * The pack's art, keyed by slug. Read off disk off the main thread and never again: the file is
+ * bundled, so it cannot change under a running app. A pack that will not parse costs the
+ * portraits only — the library itself is Room's, and the install card reports parse failures in
+ * its own right.
+ */
+private fun loadGuardianPortraits(context: Context): Map<String, String> = try {
+    val text = context.assets.open(FloorGuardians.ASSET_PATH).bufferedReader().use { it.readText() }
+    FloorGuardians.portraitsOf(FloorGuardians.parse(text))
+} catch (_: Exception) {
+    emptyMap()
+}
+
+private suspend fun installGuardianPack(
+    context: Context,
+    repo: AgentDefinitionRepository,
+    overwrite: Boolean,
+): GuardianInstallResult = try {
+    val text = withContext(Dispatchers.IO) {
+        context.assets.open(FloorGuardians.ASSET_PATH).bufferedReader().use { it.readText() }
+    }
+    FloorGuardianInstaller(repo).install(text, overwrite)
+} catch (e: Exception) {
+    GuardianInstallResult(problems = listOf(e.message ?: e.toString()))
 }

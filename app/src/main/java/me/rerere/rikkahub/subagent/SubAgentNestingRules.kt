@@ -6,7 +6,7 @@ import kotlin.uuid.Uuid
 /**
  * G 批第二片 — 子代理嵌套的规则（对齐 Claude Code 的 depth-capped subagents）。
  *
- * CC 里子代理可以再派子代理，深度由配置封顶（默认 3）。Moxw 之前是硬拦：`no_recursion` +
+ * CC 里子代理可以再派子代理，深度由配置封顶（默认 3）。Nazarick 之前是硬拦：`no_recursion` +
  * `subagent_` 前缀整体从子代理工具面里剥掉。现在放开成**有深度上限**的嵌套，上限跟着既有的
  * 派发档位走 —— 用户选的还是那个五档开关，不需要再学一个新旋钮。
  *

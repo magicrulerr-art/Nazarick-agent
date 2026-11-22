@@ -20,7 +20,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 private const val TAG = "RikkaHubSearchService"
 
 object RikkaHubSearchService : SearchService<SearchServiceOptions.RikkaHubOptions> {
-    override val name: String = "RikkaHub"
+    override val name: String = "Nazarick Hub"
 
     @Composable
     override fun Description() {

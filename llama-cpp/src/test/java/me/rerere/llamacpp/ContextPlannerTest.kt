@@ -163,4 +163,159 @@ class ContextPlannerTest {
         assertEquals(500, request.reservedInputBytes)
         assertTrue(request.droppedToolNames.isEmpty())
     }
+
+    @Test
+    fun `a persona far beyond its reserve does not evict the whole tool set`() {
+        // The Z Fold 7 regression, from real numbers: a 31,084-byte agent-core persona plus
+        // 16 tools totalling 10,000 bytes against n_ctx=8192 (input budget 13,384 bytes).
+        // Billing the persona at its full size left nothing for tools, so all 16 were
+        // dropped and the agent lost the ability to answer anything about the device.
+        // Charged at the truncation floor it actually occupies, every tool fits.
+        val foldTools = tools(16, bytesEach = 625)
+        val request = ContextPlanner.replanForRequest(
+            nCtx = 8192, tools = foldTools, systemPromptBytes = 31_084,
+        )
+        assertTrue(
+            "the persona must not cost the agent its tools, dropped=${request.droppedToolNames}",
+            request.droppedToolNames.isEmpty(),
+        )
+        assertEquals(
+            ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES + 16 * 625,
+            request.reservedInputBytes,
+        )
+        assertTrue(
+            "the reservation must stay inside the input budget",
+            request.reservedInputBytes <= ContextPlanner.inputByteBudget(8192),
+        )
+    }
+
+    @Test
+    fun `a floored persona still drops a tool set that genuinely overflows`() {
+        // Guard against the fix degenerating into "never drop anything": at 4096 the input
+        // budget is 5,192 bytes, so a 1,200-byte persona leaves room for 5 of the 40 tools.
+        val request = ContextPlanner.replanForRequest(nCtx = 4096, tools = tools(40), systemPromptBytes = 31_084)
+        assertEquals(35, request.droppedToolNames.size)
+        assertEquals(
+            ContextPlanner.SYSTEM_PROMPT_RESERVE_BYTES + 5 * 700,
+            request.reservedInputBytes,
+        )
+    }
+
+    // Hybrid (conv + attention) architectures ------------------------------------------
+
+    /**
+     * LFM3-1.7B as the Fold reports it: 24 layers of which 11 are attention, declared as the
+     * per-layer array `n_head_kv = [0, 0, 4, 0, 4, ...]`, a 256-token sliding window, and
+     * 5,610 MB free at load (logcat 2026-10-29). [nHeadKv] is what the JNI layer hands over,
+     * so it is also where a hybrid model can be misread.
+     */
+    private fun hybridModel(nHeadKv: Int) = GgufModelInfo(
+        nLayers = 24,
+        nEmbd = 2048,
+        nHeadKv = nHeadKv,
+        nEmbdHeadK = 128,
+        nEmbdHeadV = 128,
+        nVocab = 128_000,
+        nCtxTrain = 262_144,
+        slidingWindow = 256,
+        weightsBytes = 1_150_000_000L,
+    )
+
+    @Test
+    fun `a hybrid model reports the widest layer and keeps its tools`() {
+        // With head-kv read per layer (max = 4), the KV estimate is honest and the planner
+        // climbs the ladder; at any rung above 8192 the 14 device tool schemas fit, so the
+        // daily driver keeps its tools.
+        val foldRam = 5_610_000_000L
+        val plan = ContextPlanner.plan(hybridModel(nHeadKv = 4), foldRam, tools(14, bytesEach = 1800), 31_776)
+        assertTrue(
+            "a hybrid model must not be stranded on the smallest rung, got nCtx=${plan.nCtx}",
+            plan.nCtx > ContextPlanner.LADDER.first(),
+        )
+        assertTrue(
+            "every tool must survive at the planned context, dropped=${plan.droppedToolNames}",
+            plan.droppedToolNames.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `head_kv read from a conv layer 0 is treated as untrustworthy metadata`() {
+        // The bug this pins: `llama_model_n_head_kv()` returns layer 0, which is a *conv* layer
+        // on a hybrid model, so it reports 0 and the planner falls to the floor - 4096, whose
+        // input budget cannot hold 14 schemas at 1,800 bytes. The JNI layer now substitutes the
+        // widest layer; this asserts how much was riding on that one value.
+        val foldRam = 5_610_000_000L
+        val zeroHeadKv = hybridModel(nHeadKv = 0)
+        assertFalse("nHeadKv = 0 must not be trusted", zeroHeadKv.isComplete)
+        val plan = ContextPlanner.plan(zeroHeadKv, foldRam, tools(14, bytesEach = 1800), 31_776)
+        assertEquals(ContextPlanner.LADDER.first(), plan.nCtx)
+        assertTrue(
+            "the floor cannot hold the tool set, which is the whole complaint",
+            plan.droppedToolNames.isNotEmpty(),
+        )
+    }
+
+    // US-003: phone-class context ceiling ----------------------------------------------------
+
+    /** spark2_5 as shipped in v1: the model that took 32768 with 4.4 GB free and died. */
+    private fun sparkModel() = GgufModelInfo(
+        nLayers = 36,
+        nEmbd = 4096,
+        nHeadKv = 4,
+        nEmbdHeadK = 128,
+        nEmbdHeadV = 128,
+        nVocab = 151_936,
+        nCtxTrain = 1_048_576,
+        slidingWindow = null,
+        weightsBytes = 3_400_000_000L,
+    )
+
+    @Test
+    fun `a device with 12 GB total never plans above the phone ceiling`() {
+        // z7: 11.1 GB total, 4.4 GB free at crash; release picked 32768 and lmkd reaped
+        // the app mid-prefill (floor/ticket-2026-11-16-v1-spark-lmk-death.md). The cap
+        // binds even though the model advertises a 1M window.
+        ContextPlanner.totalRamBytesOverride = 11L * 1024 * 1024 * 1024
+        try {
+            val plan = ContextPlanner.plan(sparkModel(), 4_400_000_000L, tools(16), 8_000)
+            assertTrue(
+                "phone class must never plan above the ceiling, got nCtx=${plan.nCtx}",
+                plan.nCtx <= ContextPlanner.PHONE_CTX_CEILING,
+            )
+        } finally {
+            ContextPlanner.totalRamBytesOverride = null
+        }
+    }
+
+    @Test
+    fun `ceiling constants are pinned and a bigger device may exceed them`() {
+        assertEquals(16384, ContextPlanner.PHONE_CTX_CEILING)
+        assertEquals(12L * 1024 * 1024 * 1024, ContextPlanner.PHONE_RAM_CEILING_BYTES)
+        ContextPlanner.totalRamBytesOverride = 24L * 1024 * 1024 * 1024
+        try {
+            val plan = ContextPlanner.plan(sparkModel(), 12_000_000_000L, tools(16), 8_000)
+            assertTrue(
+                "a 24 GB device must not be capped by the phone rule, got nCtx=${plan.nCtx}",
+                plan.nCtx > ContextPlanner.PHONE_CTX_CEILING,
+            )
+        } finally {
+            ContextPlanner.totalRamBytesOverride = null
+        }
+    }
+
+    @Test
+    fun `F16 rungs are billed at the FA-off cache layout`() {
+        // Measured on device: spark2_5 KV = 144 KiB/token with FA resolved disabled, not
+        // the 72 KiB the FA-packed arithmetic gives (ticket-2026-11-16-v1-spark-lmk-death).
+        // Growth between two contexts isolates the KV term; weights and compute buffers
+        // cancel. Expected: 36 layers x 4096 extra tokens x 4096 B/token (FA-off layout).
+        val info = sparkModel()
+        val growth = ContextPlanner.estimateBytes(info, 8192, KvCacheType.F16) -
+            ContextPlanner.estimateBytes(info, 4096, KvCacheType.F16)
+        val faOffKv = 36.0 * 4096 * 4096 * ContextPlanner.tunables.headroomWithMetadata
+        // two roundToLong calls can each drift by 1 byte; the KV term itself is exact.
+        kotlin.math.abs(growth - faOffKv.toLong()).let { delta ->
+            assertTrue("KV growth $growth must equal FA-off $faOffKv (±2), delta=$delta", delta <= 2L)
+        }
+    }
 }

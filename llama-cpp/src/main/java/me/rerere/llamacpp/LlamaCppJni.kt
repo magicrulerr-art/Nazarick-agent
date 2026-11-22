@@ -1,5 +1,7 @@
 package me.rerere.llamacpp
 
+import android.util.Log
+
 /**
  * The entire JNI surface for llama.cpp. Nothing else in the codebase calls native code
  * directly, so every native contract change is visible in this one file.
@@ -7,6 +9,21 @@ package me.rerere.llamacpp
 object LlamaCppJni {
 
     init {
+        // The OpenCL ggml backend (libggml-opencl.so) is a hard DT_NEEDED of libllamajni.so
+        // in OpenCL-enabled builds, and the vendor's ICD lives in /vendor/lib64, outside an
+        // app's linker namespace: on the Fold (RFCY71BMBRE) the entire JNI load died with
+        // UnsatisfiedLinkError, taking even the CPU fallback down with it. The app manifest
+        // now declares <uses-native-library android:name="libOpenCL.so">, which is the
+        // sanctioned way in, so loading by soname is the primary path. The absolute-path load
+        // stays underneath as the fallback for any build whose manifest merger dropped the
+        // declaration. Both are caught: a device with no vendor ICD just loses the OpenCL
+        // backend, exactly as before this preload existed.
+        val bySoname = runCatching { System.loadLibrary("OpenCL") }
+        val vendorIcd =
+            if (bySoname.isSuccess) bySoname else runCatching { System.load("/vendor/lib64/libOpenCL.so") }
+        vendorIcd
+            .onSuccess { Log.i("LlamaCppJni", "preloaded vendor OpenCL ICD (by soname: ${bySoname.isSuccess})") }
+            .onFailure { Log.w("LlamaCppJni", "no vendor libOpenCL.so; OpenCL backend will be unavailable", it) }
         System.loadLibrary("llamajni")
     }
 
@@ -17,11 +34,13 @@ object LlamaCppJni {
 
     /**
      * Loads a GGUF and returns an opaque handle. Throws RuntimeException on failure.
+     * [nGpuLayers] offloads layers to the GPU backend compiled in via the `llama.gpu`
+     * Gradle property (0 = CPU only, the upstream default; -1 = as many as possible).
      * The handle is only valid until [nativeFreeModel] releases it: passing it to any
      * function here afterward, or freeing it twice, is undefined behaviour, since nothing
      * here tracks live handles to turn that into a checked error.
      */
-    external fun nativeLoadModel(path: String): Long
+    external fun nativeLoadModel(path: String, nGpuLayers: Int): Long
 
     /** Releases a handle from [nativeLoadModel]. Safe to call with 0; see its doc for the freed-handle caveat. */
     external fun nativeFreeModel(handle: Long)
@@ -61,6 +80,7 @@ object LlamaCppJni {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        flashAttn: Boolean,
     ): Long
 
     /** Releases a handle from [nativeCreateContext]. Safe to call with 0. */
@@ -112,7 +132,8 @@ object LlamaCppJni {
         appliedTemplateJson: ByteArray,
         maxTokens: Int,
         sink: TokenSink,
-    )
+        armToolGrammar: Boolean,
+    ): Int
 
     /**
      * Parses generated text into an OpenAI-shaped message. Safe on partial text.
@@ -132,14 +153,20 @@ object LlamaCppJni {
     /**
      * [nativeGenerate] with String in and out. Decoding each piece separately is safe because
      * native only ever emits whole characters.
+     *
+     * [armToolGrammar] decides whether this step is sampler-constrained by the blob's
+     * tool-call grammar; the blob itself always passes through whole. Returns the number of
+     * tokens decoded — [maxTokens] means the budget was exhausted, anything less is a
+     * natural end (or a stop/cancel), see the native loop.
      */
     fun generate(
         ctxHandle: Long,
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) = nativeGenerate(
+    ): Int = nativeGenerate(
         ctxHandle,
         modelHandle,
         appliedTemplateJson.toByteArray(Charsets.UTF_8),
@@ -148,6 +175,7 @@ object LlamaCppJni {
             override fun onToken(pieceUtf8: ByteArray): Boolean =
                 onPiece(String(pieceUtf8, Charsets.UTF_8))
         },
+        armToolGrammar,
     )
 
     /** [nativeParseChat] with String in and out. */

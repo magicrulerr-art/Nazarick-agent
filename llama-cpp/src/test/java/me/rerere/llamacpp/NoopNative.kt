@@ -17,6 +17,7 @@ class NoopNative : LlamaCppNative {
         cacheTypeK: String,
         cacheTypeV: String,
         nThreads: Int,
+        flashAttn: Boolean,
     ): Long = 2L
 
     override fun freeContext(handle: Long) {}
@@ -27,9 +28,9 @@ class NoopNative : LlamaCppNative {
         modelHandle: Long,
         appliedTemplateJson: String,
         maxTokens: Int,
+        armToolGrammar: Boolean,
         onPiece: (String) -> Boolean,
-    ) {
-    }
+    ): Int = 0
 
     override fun parseChat(text: String, isPartial: Boolean, appliedTemplateJson: String): String = "{}"
 }

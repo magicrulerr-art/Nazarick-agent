@@ -37,7 +37,7 @@ object AppEnvironmentPrompt {
     enum class ShellPrivilege { UNKNOWN, SHELL, ROOT }
 
     data class Info(
-        /** Brand short name, used in shared-folder paths: "Moxw". */
+        /** Brand short name, used in shared-folder paths: "Nazarick". */
         val appName: String,
         /** `context.filesDir.absolutePath`. */
         val privateFilesDir: String,

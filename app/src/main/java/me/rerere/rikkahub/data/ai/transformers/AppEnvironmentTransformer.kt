@@ -16,7 +16,7 @@ import me.rerere.rikkahub.shizuku.PrivilegeLevel
 import me.rerere.rikkahub.shizuku.ShizukuManager
 
 /**
- * App-environment system-prompt injection (Moxw).
+ * App-environment system-prompt injection (Nazarick).
  *
  * Appends an `<app_environment>` block to the system message of every turn so the model knows
  * the app's on-device layout instead of guessing: where the user-visible shared folders are

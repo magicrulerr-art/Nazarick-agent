@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * 1. **续聊**：一个已经结束的子代理可以被同一个父会话再推一句话，保留它原来的上下文、
  *    工具白名单和专家身份。CC 里这是 `SendMessage(agent_id, ...)`。
  * 2. **并行 fan-out**：一次调用里给出 N 个互相独立的任务，并发跑完再一起返回。CC 里这是
- *    一条消息里并发多个 Task 调用；Moxw 的生成循环是顺序执行工具调用的，所以并发必须由
+ *    一条消息里并发多个 Task 调用；Nazarick 的生成循环是顺序执行工具调用的，所以并发必须由
  *    dispatch 自己提供（见 [SubAgentFanoutRules]）。
  *
  * 这里只放「能不能续」「怎么把 fan-out 的 JSON 拆成请求」这类判断，真正的执行仍在

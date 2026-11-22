@@ -11,6 +11,7 @@ import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.runtime.LoopHostBridge
+import me.rerere.rikkahub.runtime.TurnOutcome
 import java.io.File
 import kotlin.uuid.Uuid
 
@@ -46,6 +47,17 @@ class AndroidLoopHostBridge(
 
     override fun hideOverlay() {
         AgentOverlay.hide(context)
+    }
+
+    /** v0.8 — the ball emotes the turn's outcome: Ainz cheers a win, mourns a failure.
+     *  A cancelled turn stays silent (the user walked away; nothing to celebrate). */
+    override fun turnFinished(outcome: TurnOutcome) {
+        val mood = when (outcome) {
+            TurnOutcome.SUCCEEDED -> me.rerere.rikkahub.ui.components.ui.AinzMood.CHEER
+            TurnOutcome.FAILED -> me.rerere.rikkahub.ui.components.ui.AinzMood.FAIL
+            TurnOutcome.CANCELLED -> null
+        } ?: return
+        AgentOverlay.emote(context, mood)
     }
 
     /**

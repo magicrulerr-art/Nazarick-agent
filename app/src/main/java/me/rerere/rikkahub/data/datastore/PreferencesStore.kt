@@ -35,8 +35,11 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.registry.ModelRegistry
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.AssistantResolver
+import me.rerere.rikkahub.data.ai.AutoRouter
 import me.rerere.rikkahub.data.ai.ContextWindowResolver
+import me.rerere.rikkahub.data.ai.Decision
 import me.rerere.rikkahub.data.ai.DefaultAssistantPrompt
+import me.rerere.rikkahub.data.ai.TombProbe
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LIBRARY_IMAGE_PROMPT
 import me.rerere.rikkahub.data.gemini.DENIED_MODEL_IDS
@@ -66,6 +69,7 @@ import me.rerere.rikkahub.subagent.SubAgentDefaults
 import me.rerere.rikkahub.subagent.SubAgentDispatchProfile
 import me.rerere.rikkahub.ui.theme.CustomTheme
 import me.rerere.rikkahub.ui.theme.PresetThemes
+import me.rerere.rikkahub.ui.theme.presets.NazarickThemePreset
 import me.rerere.rikkahub.runtime.util.JsonInstant
 import me.rerere.rikkahub.runtime.SystemInjections
 import me.rerere.rikkahub.utils.toMutableStateFlow
@@ -92,6 +96,19 @@ const val DEFAULT_CONTEXT_COMPACTION_TARGET_PERCENT = 1
  * upgrade is one-shot: a user who later disables memory or replaces the prompt keeps that choice.
  */
 private const val CURRENT_AGENT_DEFAULTS_VERSION = 1
+
+/**
+ * v0.6 Nazarick retag (owner ruling): existing installs move onto the house palette once.
+ * Every settings save persists dynamicColor/themeId wholesale, so after any older launch the
+ * stored values are the OLD defaults written implicitly — "key absent" cannot distinguish
+ * never-touched from defaulted-to, and only a version marker can. On the retag pass:
+ * dynamic color goes off, and a stored themeId equal to the donor default ("sakura", whether
+ * chosen or merely inherited) becomes "nazarick". Anyone who chose ocean/black/claude keeps
+ * it; anyone who explicitly chose sakura loses it once, and one tap gets it back. After the
+ * pass the marker sticks and the user owns the toggles.
+ */
+private const val CURRENT_THEME_RETAG_VERSION = 1
+private const val LEGACY_DEFAULT_THEME_ID = "sakura"
 
 private const val TAG = "PreferencesStore"
 
@@ -208,7 +225,7 @@ class SettingsStore(
         val OCR_MODEL = stringPreferencesKey("ocr_model")
         val OCR_PROMPT = stringPreferencesKey("ocr_prompt")
         /**
-         * Moxw - which installed GGUF the vector index embeds with. A file name inside
+         * Nazarick - which installed GGUF the vector index embeds with. A file name inside
          * `local-models/llamacpp`, because that is what the local-model page writes: the ordinary
          * install flow is the only download UI this needs.
          *
@@ -238,6 +255,8 @@ class SettingsStore(
         val ALLOW_MODEL_MISSION_CREATION = booleanPreferencesKey("allow_model_mission_creation")
         /** One-shot marker for the capability/prompt upgrade applied to built-in assistants. */
         val AGENT_DEFAULTS_VERSION = intPreferencesKey("agent_defaults_version")
+        val THEME_RETAG_VERSION = intPreferencesKey("theme_retag_version")
+        val GUARDIANS_SEED_VERSION = intPreferencesKey("guardians_seed_version")
         val AUTO_COMPACTION_THRESHOLD_MODE = stringPreferencesKey("auto_compaction_threshold_mode")
         val AUTO_COMPACTION_THRESHOLD_PERCENT = intPreferencesKey("auto_compaction_threshold_percent")
         val AUTO_COMPACTION_THRESHOLD_TOKENS_K = intPreferencesKey("auto_compaction_threshold_tokens_k")
@@ -382,6 +401,8 @@ class SettingsStore(
                     JsonInstant.encodeToString(settings.enabledSystemInjections)
                 preferences[ALLOW_MODEL_MISSION_CREATION] = settings.allowModelMissionCreation
                 preferences[AGENT_DEFAULTS_VERSION] = settings.agentDefaultsVersion
+                preferences[THEME_RETAG_VERSION] = settings.themeRetagVersion
+                preferences[GUARDIANS_SEED_VERSION] = settings.guardiansSeedVersion
                 preferences[AUTO_COMPACTION_THRESHOLD_MODE] = settings.autoCompactionThresholdMode.name
                 preferences[AUTO_COMPACTION_THRESHOLD_PERCENT] =
                     settings.autoCompactionThresholdPercent.coerceIn(5, 95)
@@ -519,6 +540,8 @@ class SettingsStore(
                 } ?: SystemInjections.DEFAULT_IDS,
                 allowModelMissionCreation = preferences[ALLOW_MODEL_MISSION_CREATION] != false,
                 agentDefaultsVersion = preferences[AGENT_DEFAULTS_VERSION] ?: 0,
+                themeRetagVersion = preferences[THEME_RETAG_VERSION] ?: 0,
+                guardiansSeedVersion = preferences[GUARDIANS_SEED_VERSION] ?: 0,
                 autoCompactionThresholdMode = preferences[AUTO_COMPACTION_THRESHOLD_MODE]
                     ?.let { value -> runCatching { AutoCompactionThresholdMode.valueOf(value) }.getOrNull() }
                     ?: AutoCompactionThresholdMode.PERCENT,
@@ -588,7 +611,11 @@ class SettingsStore(
                         preferences[SUB_AGENT_DISPATCH_PROFILE] ?: ""
                     )
                 }.getOrDefault(SubAgentDispatchProfile.NEVER),
-                dynamicColor = preferences[DYNAMIC_COLOR] != false,
+                // Raw decode: only an EXPLICIT true enables Material You. Absent (fresh
+                // install) is false = Nazarick; for upgrades the one-shot marker pass at
+                // [CURRENT_THEME_RETAG_VERSION] is what forces the retag, since older builds
+                // persisted this key wholesale and "absent" never survives an upgrade anyway.
+                dynamicColor = preferences[DYNAMIC_COLOR] == true,
                 themeId = preferences[THEME_ID] ?: PresetThemes[0].id,
                 customThemes = preferences[CUSTOM_THEMES]?.let { raw ->
                     runCatching { JsonInstant.decodeFromString<List<CustomTheme>>(raw) }.getOrElse {
@@ -721,6 +748,12 @@ class SettingsStore(
                         else -> true
                     }
             }
+            // sd.cpp retired in v0.6 (owner ruling): the module and tile are gone, so drop
+            // every persisted local_sdcpp row here — same one-shot cleanup shape as the
+            // sponsored-provider sweep above, but unconditional (the engine no longer exists
+            // to serve the row; its GGUFs stay on disk untouched). The SdCppLocal class
+            // survives as a @Serializable tombstone so old blobs still decode.
+            providers.removeAll { provider -> provider is ProviderSetting.SdCppLocal }
             // For existing installs that pre-date the on-device AICore provider being
             // promoted to first-place, hoist it to the top so the user does not have to
             // scroll past every legacy aggregator to find it.
@@ -753,6 +786,21 @@ class SettingsStore(
                                 .let { if (it >= 0) it + 1 else providers.indexOfFirst { p -> p is ProviderSetting.AICore } + 1 }
                             providers.add(insertAt, defaultProvider.copyProvider())
                         }
+                        is ProviderSetting.LocalDream -> {
+                            // The NPU tile sits directly after the llama.cpp tile so the local
+                            // group stays contiguous (sd.cpp's tile was retired in v0.6, so it
+                            // is no longer the anchor). Same cascade-down when predecessors
+                            // were deleted by a tinkerer: LlamaCpp → LiteRT → AICore → 0.
+                            val after = providers.indexOfFirst { it is ProviderSetting.LlamaCppLocal }
+                                .let {
+                                    when {
+                                        it >= 0 -> it + 1
+                                        else -> providers.indexOfFirst { p -> p is ProviderSetting.LiteRtLocal }
+                                            .let { l -> if (l >= 0) l + 1 else providers.indexOfFirst { a -> a is ProviderSetting.AICore } + 1 }
+                                    }
+                                }
+                            providers.add(after, defaultProvider.copyProvider())
+                        }
                         else -> providers.add(defaultProvider.copyProvider())
                     }
                 }
@@ -767,7 +815,10 @@ class SettingsStore(
                     )
                 } else provider
             }.toMutableList()
-            var assistants = it.assistants.ifEmpty { DEFAULT_ASSISTANTS }.toMutableList()
+            // v0.6: the two donor skeletons are filtered out here (retireDefaultAssistants);
+            // their conversations were re-homed to Albedo in Migration_39_40.
+            var assistants = retireDefaultAssistants(it.assistants)
+                .ifEmpty { DEFAULT_ASSISTANTS }.toMutableList()
             DEFAULT_ASSISTANTS.forEach { defaultAssistant ->
                 if (assistants.none { it.id == defaultAssistant.id }) {
                     assistants.add(defaultAssistant.copy())
@@ -802,6 +853,7 @@ class SettingsStore(
             // context refs all had to be discovered. They are on for built-ins once, then the
             // user's own choices win (the version marker records that the upgrade happened).
             val needsAgentDefaults = it.agentDefaultsVersion < CURRENT_AGENT_DEFAULTS_VERSION
+            val needsThemeRetag = it.themeRetagVersion < CURRENT_THEME_RETAG_VERSION
             if (needsAgentDefaults) {
                 assistants = assistants.map { assistant ->
                     if (DEFAULT_ASSISTANTS.any { default -> default.id == assistant.id }) {
@@ -831,6 +883,19 @@ class SettingsStore(
                     CURRENT_AGENT_DEFAULTS_VERSION
                 } else {
                     it.agentDefaultsVersion
+                },
+                // v0.6 Nazarick retag, once — see CURRENT_THEME_RETAG_VERSION. After this
+                // pass the marker sticks and both toggles belong to the user again.
+                dynamicColor = if (needsThemeRetag) false else it.dynamicColor,
+                themeId = if (needsThemeRetag && it.themeId == LEGACY_DEFAULT_THEME_ID) {
+                    NazarickThemePreset.id
+                } else {
+                    it.themeId
+                },
+                themeRetagVersion = if (needsThemeRetag) {
+                    CURRENT_THEME_RETAG_VERSION
+                } else {
+                    it.themeRetagVersion
                 },
             )
         }
@@ -868,6 +933,14 @@ class SettingsStore(
                             models = provider.models.distinctBy { model -> model.id }
                         )
 
+                        is ProviderSetting.SdCppLocal -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
+
+                        is ProviderSetting.LocalDream -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
+
                         is ProviderSetting.Codex -> provider.copy(
                             models = provider.models.distinctBy { model -> model.id }
                         )
@@ -878,6 +951,10 @@ class SettingsStore(
 
                         is ProviderSetting.GeminiOAuth -> provider.copy(
                             models = dropDeniedGeminiOAuthModels(provider.models)
+                        )
+
+                        is ProviderSetting.Nazarick -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
                         )
                     }
                 },
@@ -957,7 +1034,21 @@ class SettingsStore(
 
     suspend fun update(fn: (Settings) -> Settings) {
         transformLock.withLock {
-            updateInternal(fn(settingsFlow.value))
+            val current = settingsFlow.value
+            // Same dummy rule as update(Settings): settingsFlow is seeded with
+            // Settings.dummy() until the disk read lands, so fn over a dummy would
+            // persist "defaults + caller's delta" as the user's whole settings —
+            // the store's own comment names this wipe. Boot hooks (seedGuardians,
+            // repairSdLibrary) hit exactly this on RikkaHubApp.onCreate: the write
+            // beat the load and blew away providers on every launch (Fold, v0.0.4).
+            // Skip like the sibling overload; callers that must not lose the delta
+            // should await settingsFlow (distinctUntilChanged delivers the real
+            // settings) before writing.
+            if (current.init) {
+                Log.w(TAG, "Cannot update from dummy settings (disk load pending)")
+                return
+            }
+            updateInternal(fn(current))
         }
     }
 
@@ -1079,7 +1170,9 @@ class SettingsStore(
 data class Settings(
     @Transient
     val init: Boolean = false,
-    val dynamicColor: Boolean = true,
+    // v0.6: Material You is opt-in now (was the donor default). The theme page keeps the
+    // toggle; the house palette is what greets a fresh install.
+    val dynamicColor: Boolean = false,
     val themeId: String = PresetThemes[0].id,
     val customThemes: List<CustomTheme> = emptyList(),
     val developerMode: Boolean = false,
@@ -1127,6 +1220,20 @@ data class Settings(
      * Kept so a user who later turns any of those off is not re-opted-in on the next launch.
      */
     val agentDefaultsVersion: Int = 0,
+    /**
+     * One-shot Nazarick palette retag marker (v0.6): 0 = donor defaults, 1 = the install has
+     * been moved onto the house theme once. Same shape as [agentDefaultsVersion]; see
+     * CURRENT_THEME_RETAG_VERSION for why a marker (and not key absence) carries the upgrade.
+     */
+    val themeRetagVersion: Int = 0,
+    /**
+     * AURA-014 — one-shot marker for seeding the Floor Guardians as chat assistants at
+     * first boot (see `GuardianSeed`). Same shape as [agentDefaultsVersion] and
+     * [autoEnabledDefaultSkills]: the seed runs once per [GuardianSeed.SEED_VERSION], so
+     * deleting a guardian sticks until the bundled pack itself changes enough to bump
+     * the version. 0 = never seeded (every install upgrading from <= v0.03).
+     */
+    val guardiansSeedVersion: Int = 0,
     val autoCompactionThresholdMode: AutoCompactionThresholdMode = AutoCompactionThresholdMode.PERCENT,
     val autoCompactionThresholdPercent: Int = 80,
     val autoCompactionThresholdTokensK: Int = 8,
@@ -1245,7 +1352,7 @@ data class Settings(
     val launchCount: Int = 0,
 
     /**
-     * Moxw - the GGUF file name the vector index embeds with, or empty to pick automatically
+     * Nazarick - the GGUF file name the vector index embeds with, or empty to pick automatically
      * among the installed curation. Stored per field like everything else here, which is what
      * SettingsPersistenceCoverageTest enforces: a field without a Preferences.Key would look
      * saved and then vanish on the next launch.
@@ -1373,10 +1480,15 @@ data class NetworkSetting(
     companion object {
         /**
          * Upper bound for both silence watchdogs. Hand-typed values are clamped to this on the way
-         * in, and the settings screen clamps to it too, so the two agree. Ten minutes matches the
-         * shared OkHttp client's readTimeout: waiting longer than that cannot succeed.
+         * in, and the settings screen clamps to it too, so the two agree. The old bound of 600
+         * matched the shared OkHttp client's readTimeout — but that reasoning only ever applied to
+         * remote HTTP providers: the local llama.cpp engine streams in-process over JNI with no
+         * socket to time out, so the watchdog was the ONLY clock, and a 10.6k-token tool-carrying
+         * prompt measures ~1,100 s of CPU prefill on the Fold (run 43: killed at 597.5 s with a
+         * green planner and an honest prompt). Thirty minutes keeps the remote rationale intact
+         * (a socket that silent is dead no matter the ceiling) and lets a phone-CPU prefill finish.
          */
-        const val MAX_WATCHDOG_SECONDS = 600
+        const val MAX_WATCHDOG_SECONDS = 1800
     }
 }
 
@@ -1483,6 +1595,76 @@ fun Settings.getCurrentChatModel(): Model? {
     return findModelById(this.getCurrentAssistant().chatModelId ?: this.chatModelId)
 }
 
+/** Last known Tomb reachability, read by the AUTO branch of [resolveChatModel] (US-010). Defaults to
+ * true so a cold process behaves as it did under US-008. Since US-010r it is written by
+ * [tombReachableProbed], which calls the real [TombProbe] at most every 30s instead of waiting for a
+ * health writer; US-012 keeps that writer role for background health. Nothing else should. */
+var tombReachableCache: Boolean = true
+
+// US-010r: [tombReachableCache] is now refreshed by a real probe instead of waiting for a health
+// writer. Memoized for 30s so a burst of sends does not hammer the instance; both memo fields live
+// next to the cache they feed, and the cold value stays true so a fresh process behaves as under
+// US-008 until the first probe answers.
+private var lastResult: Boolean = true
+private var lastEpochMs: Long = 0L
+
+/**
+ * Whether the enabled Nazarick instance answers right now, read from the memo that is refreshed at
+ * most every 30s. This entry point MUST stay main-thread-safe: composition reaches it through
+ * [resolveChatModel], and a blocking socket on the main thread dies inside [TombProbe]'s catch-all
+ * with NetworkOnMainThreadException, poisoning the memo to false forever (z7 demo defect,
+ * 2026-11-21: every TOMB turn queued). So the refresh runs on a daemon thread and the caller is
+ * served the current memo; the send path wants a fresh answer and calls [tombReachableProbeNow]
+ * from a background thread instead.
+ */
+fun Settings.tombReachableProbed(): Boolean {
+    val now = System.currentTimeMillis()
+    if (now - lastEpochMs < TOMB_PROBE_MEMO_MS) return lastResult
+    // Nothing configured to probe: keep the cold, optimistic answer rather than declaring offline.
+    val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
+    if (probeRefreshInProgress.compareAndSet(false, true)) {
+        Thread({
+            try {
+                probeAndMemo(baseUrl)
+            } finally {
+                probeRefreshInProgress.set(false)
+            }
+        }, "TombProbeRefresh").apply { isDaemon = true }.start()
+    }
+    return lastResult
+}
+
+/**
+ * Synchronous probe + memo write. Call off the main thread only — the ChatService send path does it
+ * under `withContext(Dispatchers.IO)` right before consulting TombSendGate, which needs the fresh
+ * answer rather than a 30s-old memo.
+ */
+fun Settings.tombReachableProbeNow(): Boolean {
+    val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
+    return probeAndMemo(baseUrl)
+}
+
+private fun probeAndMemo(baseUrl: String): Boolean =
+    TombProbe.probe(baseUrl).also { result ->
+        if (!result) Log.w("US003PROBE", "S3 probeAndMemo FAIL baseUrl=$baseUrl (TombProbe never throws -> exception swallowed in TombProbe.probe)")
+        tombReachableCache = result
+        lastResult = result
+        lastEpochMs = System.currentTimeMillis()
+    }
+
+private val probeRefreshInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+
+private const val TOMB_PROBE_MEMO_MS = 30_000L
+
+/**
+ * True when the most recent AUTO turn answered locally because the Tomb was unreachable
+ * ([Decision.EDGE_OFFLINE_NOTICE]). Read by the chat badge next to the brain label (US-010r) and
+ * cleared as soon as a turn routes to the Tomb, or an explicit policy answers without a notice.
+ */
+var lastAutoOfflineNotice: Boolean = false
+
 /**
  * The chat model a conversation will actually talk to: the conversation's own override, then the
  * model of the assistant the conversation belongs to, then the global default.
@@ -1497,8 +1679,44 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     val assistant = assistantId
         ?.let { AssistantResolver.forConversation(this, it).assistant }
         ?: getCurrentAssistant()
-    return listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
-        .firstNotNullOfOrNull { providers.findModelById(it) }
+    // US-008 brain policy refined by US-010: AutoRouter decides, so an AUTO turn with an unreachable
+    // Tomb drops to the local chain with a notice instead of failing. EDGE is untouched, and an
+    // explicit per-conversation override (picker choice) always outranks policy.
+    val edgeChain = listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
+    val tombReachable = tombReachableProbed()
+    val edgeModel = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
+    // US-010r: the token threshold is consulted here, so TOKEN_BUDGET_THRESHOLD_TOKENS is live on the
+    // production AUTO path and not just in the unit tests. Only the *window* is cheap at this point:
+    // resolveChatModel is a pure Settings extension with no messages in scope, so there is no
+    // used-token count to subtract. The effective window (declared ceiling -> provider metadata ->
+    // ModelRegistry) is therefore passed as the most optimistic remaining budget: a model whose whole
+    // window already sits under the threshold cannot afford a Tomb round-trip and drops to the local
+    // chain. An unknown window means above budget, hence Int.MAX_VALUE rather than -1 - the router
+    // compares `remainingTokens < threshold`, so -1 would read as exhausted and flush every
+    // unknown-window turn to the edge. Tighter accounting needs the turn's messages, which the send
+    // path owns and can pass once this call grows an argument for it.
+    val remainingTokens = getEffectiveContextLength(edgeModel) ?: Int.MAX_VALUE
+    val decision = AutoRouter.decide(
+        policy = assistant.brainPolicy,
+        tombReachable = tombReachable,
+        hasLocalFallback = edgeModel != null,
+        remainingTokens = remainingTokens,
+    )
+    // US-010r consumer: the offline AUTO turn is reported through this flag and surfaced by the chat
+    // badge. True only for EDGE_OFFLINE_NOTICE; any TOMB route (and any explicit EDGE) clears it.
+    lastAutoOfflineNotice = decision == Decision.EDGE_OFFLINE_NOTICE
+    Log.e("US003PROBE", "S6 resolveChatModel decision=$decision tombReachable=$tombReachable policy=${assistant.brainPolicy} edgeModel=${edgeModel?.id?.toString()?.take(8)} convOverride=${conversationChatModelId?.toString()?.take(8)}")
+    // enqueue point: done in US-010 - this function resolves a Model, it does not own the turn, so it
+    // never enqueues. The send path owns the turn text and the stable turn id and holds the pending
+    // turns through TombSendGate (TombSendGate.onSubmit / drainOnReconnect in ChatService).
+    if (conversationChatModelId == null && decision == Decision.TOMB) {
+        providers.filterIsInstance<ProviderSetting.Nazarick>()
+            .firstOrNull { it.enabled }
+            ?.models
+            ?.firstOrNull()
+            ?.let { return it }
+    }
+    return edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
 }
 
 private const val FALLBACK_CONTEXT_COMPACTION_TARGET_TOKENS = 2_000
@@ -1564,8 +1782,14 @@ fun Settings.getEffectiveContextLength(model: Model?): Int? =
  * P2-01 — every assistant lookup funnels through [AssistantResolver]; these extensions stay
  * for source compatibility but no longer carry logic of their own.
  */
+// Cold-boot safe (z7 launch-loop, 2026-11-15): the ChatInput/UseAssistant compose path calls
+// this during View.dispatchAttachedToWindow against an unloaded DataStore snapshot; the old
+// throwing resolver crash-looped the whole UI (stateIn attach frame -> FATAL main). The seed
+// Albedo card is the documented default for exactly this state — a placeholder for the frames
+// before the load lands, never persisted.
 fun Settings.getCurrentAssistant(): Assistant =
-    AssistantResolver.current(this.assistants, assistantId)
+    AssistantResolver.currentOrNull(this.assistants, assistantId)
+        ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo")
 
 fun Settings.getAssistantById(id: Uuid): Assistant? =
     AssistantResolver.byId(this.assistants, id)
@@ -1587,7 +1811,13 @@ fun Settings.getSelectedASRProvider(): ASRProviderSetting? {
 }
 
 
-internal val DEFAULT_ASSISTANT_ID = Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa36b4e")
+// v0.6 (owner: "delete the 2 default assistants, we don't want them"): the donor's two
+// unnamed skeletons are retired and the fallback for new conversations becomes Albedo —
+// Overseer of the Floor Guardians, first of the seeded pack. The id is deliberately NOT
+// hand-picked: it is the same slug-derived id GuardianSeed gives Albedo's card, so new
+// conversations land on a real assistant instead of an id the resolver has to rescue.
+internal val DEFAULT_ASSISTANT_ID: Uuid =
+    me.rerere.rikkahub.data.guardians.GuardianSeed.assistantId("albedo")
 
 /**
  * Bundled skills shipped enabled-by-default on top of agent-core. The behavioral
@@ -1602,26 +1832,30 @@ internal val DEFAULT_ASSISTANT_ID = Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa3
  */
 internal val DEFAULT_AUTO_ENABLED_SKILLS = setOf("autonomous-agent")
 
-internal val DEFAULT_ASSISTANTS = listOf(
-    Assistant(
-        id = DEFAULT_ASSISTANT_ID,
-        name = "",
-        // A short, generic skeleton. Mechanics come from SystemInjections and <app_environment>,
-        // so this prompt stays small and does not need editing when a capability ships.
-        systemPrompt = DefaultAssistantPrompt.SKELETON,
-        // The agent-core skill bundle (SOUL/HEARTBEAT/TOOLS) ships with the app and is what
-        // teaches every model "you are running on RikkaHub, here are the tools, here is how
-        // to avoid loops". Auto-enabling it on default assistants means new users get an
-        // agent-aware model out of the box without having to discover the skill toggle.
-        enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
-    ),
-    Assistant(
-        id = Uuid.parse("3d47790c-c415-4b90-9388-751128adb0a0"),
-        name = "",
-        systemPrompt = DefaultAssistantPrompt.SKELETON,
-        enabledSkills = setOf("agent-core") + DEFAULT_AUTO_ENABLED_SKILLS,
-    ),
+/**
+ * v0.6: the donor's two unnamed skeleton assistants are gone (owner ruling — the Floor
+ * Guardians are the roster now, see GuardianSeed). The list and the re-add/upgrade loops
+ * below stay as machinery for a hypothetical future bundled assistant; with an empty
+ * list every one of them is a no-op.
+ */
+internal val DEFAULT_ASSISTANTS = emptyList<Assistant>()
+
+/**
+ * Ids of the two retired donor skeletons, pinned as the literals they always were.
+ * Two consumers:
+ *  - [retireDefaultAssistants] on the read path — the old loop re-adds every missing
+ *    DEFAULT_ASSISTANTS member on *every* load, so merely removing them from the list
+ *    would leave existing installs' copies undeletable ghosts; they must be filtered.
+ *  - Migration_39_40 in Room, which re-homes their conversations to Albedo.
+ */
+internal val RETIRED_DEFAULT_ASSISTANT_IDS = setOf(
+    Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa36b4e"), // the old DEFAULT_ASSISTANT_ID
+    Uuid.parse("3d47790c-c415-4b90-9388-751128adb0a0"), // the second skeleton
 )
+
+/** Pure retire-filter used by the settings read path; unit-tested without Android. */
+internal fun retireDefaultAssistants(assistants: List<Assistant>): List<Assistant> =
+    assistants.filterNot { it.id in RETIRED_DEFAULT_ASSISTANT_IDS }
 
 val DEFAULT_SYSTEM_TTS_ID = Uuid.parse("026a01a2-c3a0-4fd5-8075-80e03bdef200")
 private val DEFAULT_TTS_PROVIDERS = listOf(

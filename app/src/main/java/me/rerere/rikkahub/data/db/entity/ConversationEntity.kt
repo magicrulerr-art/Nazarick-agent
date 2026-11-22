@@ -18,6 +18,10 @@ import androidx.room.PrimaryKey
 data class ConversationEntity(
     @PrimaryKey
     val id: String,
+    // The defaultValue is the ORIGINAL donor DEFAULT_ASSISTANT_ID, baked into the Room schema
+    // since v1 — v0.6 retired that assistant (rows are re-homed in Migration_39_40) but the
+    // column default stays: editing it would be a schema change for a value every INSERT
+    // passes explicitly anyway.
     @ColumnInfo("assistant_id", defaultValue = "0950e2dc-9bd5-4801-afa3-aa887aa36b4e")
     val assistantId: String,
     @ColumnInfo("title")

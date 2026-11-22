@@ -15,7 +15,7 @@ import me.rerere.rikkahub.data.vector.LibrarySearchOutcome
 import me.rerere.rikkahub.data.vector.MAX_SEARCH_LIMIT
 
 /**
- * Moxw - semantic search over the workspace file library.
+ * Nazarick - semantic search over the workspace file library.
  *
  * Registering this does NOT depend on an embedding model being installed: the tool reports that
  * state itself, which is how the model finds out to fall back to `find_files` instead of

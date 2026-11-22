@@ -8,8 +8,8 @@ import org.junit.Test
 class AppEnvironmentPromptTest {
 
     private fun baseInfo() = AppEnvironmentPrompt.Info(
-        appName = "Moxw",
-        privateFilesDir = "/data/user/0/com.moxw.agent/files",
+        appName = "Nazarick",
+        privateFilesDir = "/data/user/0/com.nazarick.agent/files",
     )
 
     @Test
@@ -17,10 +17,10 @@ class AppEnvironmentPromptTest {
         val out = AppEnvironmentPrompt.render(baseInfo())
         assertTrue(out.startsWith("<app_environment>"))
         assertTrue(out.endsWith("</app_environment>"))
-        assertTrue(out.contains("/sdcard/Documents/Moxw/"))
-        assertTrue(out.contains("/sdcard/Pictures/Moxw/"))
-        assertTrue(out.contains("/sdcard/Download/Moxw/"))
-        assertTrue(out.contains("App-private storage: /data/user/0/com.moxw.agent/files"))
+        assertTrue(out.contains("/sdcard/Documents/Nazarick/"))
+        assertTrue(out.contains("/sdcard/Pictures/Nazarick/"))
+        assertTrue(out.contains("/sdcard/Download/Nazarick/"))
+        assertTrue(out.contains("App-private storage: /data/user/0/com.nazarick.agent/files"))
         assertTrue(out.contains("Semantic search: NOT ready"))
         assertTrue(out.contains("Shell privilege: Shizuku is not running"))
     }
@@ -40,7 +40,7 @@ class AppEnvironmentPromptTest {
     fun `brand name only appears inside folder paths`() {
         val out = AppEnvironmentPrompt.render(baseInfo())
         out.lines()
-            .filter { it.contains("Moxw") }
+            .filter { it.contains("Nazarick") }
             .forEach { assertTrue(it.contains("/sdcard/")) }
     }
 

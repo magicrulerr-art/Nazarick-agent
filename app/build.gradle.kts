@@ -21,17 +21,37 @@ plugins {
 // runs the full report locally.
 val skipLintVital = providers.gradleProperty("skipLintVital").isPresent
 
-// The release keystore must never be a hard requirement to *build* — CI has no
-// local.properties, and published APKs are re-signed on the VPS. Only attach
-// the signing config when the material is actually present, otherwise
-// `validateSigning<Flavor>Release` fails on the CI runner.
-val hasReleaseSigning: Boolean = rootProject.file("local.properties").let { f ->
-    if (!f.exists()) false
-    else Properties().apply { FileInputStream(f).use { load(it) } }.let { p ->
-        listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
-            .all { !p.getProperty(it).isNullOrBlank() }
-    }
+// Release signing material, resolved from two sources in precedence order:
+//
+//   1. Environment (CI)  -- NAZARICK_KEYSTORE / NAZARICK_STORE_PASSWORD /
+//                            NAZARICK_KEY_ALIAS / NAZARICK_KEY_PASSWORD. The workflow
+//                            decodes the base64 Actions secret into $RUNNER_TEMP and
+//                            exports the rest, so nothing secret lives in the tree.
+//   2. local.properties  -- storeFile / storePassword / keyAlias / keyPassword, the
+//                            original scheme, for a developer machine.
+//
+// Signing is still never a hard requirement to *build*: with none of the above present
+// the release variant comes out unsigned and `validateSigning<Flavor>Release` stays
+// quiet, which is what a feature branch (or a fork without secrets) wants. When it IS
+// present the artifact is `app-<flavor>-release.apk` -- signed here, by us, with no
+// second pass on a VPS afterwards.
+val localPropertiesForSigning = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
 }
+
+fun signingValue(envName: String, propertyName: String): String? =
+    System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: localPropertiesForSigning.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+
+val releaseSigning: Map<String, String?> = listOf(
+    "storeFile" to "NAZARICK_KEYSTORE",
+    "storePassword" to "NAZARICK_STORE_PASSWORD",
+    "keyAlias" to "NAZARICK_KEY_ALIAS",
+    "keyPassword" to "NAZARICK_KEY_PASSWORD",
+).associate { (propertyName, envName) -> propertyName to signingValue(envName, propertyName) }
+
+val hasReleaseSigning: Boolean = releaseSigning.values.all { it != null }
 
 android {
     namespace = "me.rerere.rikkahub"
@@ -48,30 +68,59 @@ android {
         }
     }
 
-    // This branch ships exactly one product: Moxw Agent. The `brand` dimension is
-    // kept because the flavour source set (`app/src/moxw/res`) carries the name, the
+    // This branch ships exactly one product: Nazarick Agent. The `brand` dimension is
+    // kept because the flavour source set (`app/src/nazarick/res`) carries the name, the
     // icon and the localised strings — but with a single flavour it describes an
     // identity rather than a choice.
     //
-    //  · moxw — Moxw Agent. A standalone brand, with its own applicationId and an
+    //  · nazarick — Nazarick Agent. A standalone brand, with its own applicationId and an
     //    independent version line (0.x), see cold-memory M21.
+    //
+    // The installation identity is `com.nazarick.agent` as of 2026-10-31: this project is
+    // no longer a downstream of anything, so the package follows the project rather than
+    // the old product brand. Two consequences, both accepted knowingly: an existing
+    // `com.nazarick.agent` install does NOT upgrade onto this — Android reads a package name
+    // change as a different app, so the old one stays on the device until it is removed —
+    // and the flavour is still *named* `nazarick`, because renaming that would move source
+    // sets, the CI matrix and every artifact name, which is a ticket of its own.
+    // The Kotlin namespace stays `me.rerere.rikkahub` for the same reason: thousands of
+    // files, plus exported intent actions that external automation addresses by name.
     flavorDimensions += "brand"
     productFlavors {
-        create("moxw") {
+        create("nazarick") {
             dimension = "brand"
-            applicationId = "com.moxw.agent"
-            versionCode = 9
-            versionName = "0.7.0"
-            resValue("string", "app_name", "Moxw Agent")
-            buildConfigField("String", "BRAND_NAME", "\"Moxw\"")
-            buildConfigField("String", "BRAND_ID", "\"moxw\"")
-            buildConfigField("String", "VERSION_NAME", "\"0.7.0\"")
-            buildConfigField("String", "VERSION_CODE", "\"9\"")
+            applicationId = "com.nazarick.agent"
+            // Play Store listing (owner directive, 2026-11-04): the Play build ships
+            // under `com.nazarick.agent.beta` so it coexists with direct installs on
+            // the same device — same signing key, same versionCode/versionName, same
+            // label; the package name is the only difference. Property unset = the
+            // exact prior artifact (house rule: new knobs default to old behavior).
+            // Authorities in the manifest are all `${applicationId}`-scoped, so the
+            // two installs cannot collide on a provider.
+            if (providers.gradleProperty("PLAY_BETA").isPresent) {
+                applicationId = "com.nazarick.agent.beta"
+            }
+            // v1.0-rc1 / vc20 (AURA-021): first release-candidate of the converged loop.
+            // Unpublished builds carry the -rc suffix by house rule; the number goes plain only
+            // when the owner approves publishing. The flavour block stays the single source.
+            versionCode = 24
+            versionName = "2.1"
+            // Renamed for v0.04 — the launcher still read "Nazarick Agent" after the
+            // Nazarick re-brand (owner bug, 2026-11-02). "RikkaHub Agent" survives
+            // only as the upstream fallback in main's strings.xml.
+            resValue("string", "app_name", "Nazarick Agent")
+            buildConfigField("String", "BRAND_NAME", "\"Nazarick\"")
+            buildConfigField("String", "BRAND_ID", "\"nazarick\"")
+            // v0.7: the hand-copied VERSION_NAME/VERSION_CODE fields are gone. They shadowed
+            // AGP's auto-generated BuildConfig values and had been frozen at "0.0.1"/"12" for
+            // five releases — the About page showed 0.0.1 while Play served v0.6 (owner bug
+            // report with screenshot). The flavour's versionCode/versionName above are now the
+            // single source; anything that prints a version prints the release truth.
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
-            // Moxw ships from its own branch; this repo's /releases/latest still points at
-            // the Pure line (vX.Y.Z-pure.N). Without this guard a Moxw build fetches that
-            // Pure release, compares it against versionName 0.2.0, and wrongly offers a
-            // Pure APK as an update.
+            // The version line now matches the tags (v0.03 == 0.0.3), which it did not: this
+            // flavour used to carry the donor's 0.7.x, so an APK labelled 0.7.0 shipped out of a
+            // release called v0.02. Update checks stay off regardless — comparing a "v0.03" tag
+            // against a "0.0.3" name needs a stated rule, and that is a ticket of its own.
             buildConfigField("boolean", "UPDATE_CHECK_ENABLED", "false")
         }
     }
@@ -90,36 +139,30 @@ android {
 
     signingConfigs {
         create("release") {
-            val localProperties = Properties()
-            val localPropertiesFile = rootProject.file("local.properties")
-
-            if (localPropertiesFile.exists()) {
-                localProperties.load(FileInputStream(localPropertiesFile))
-
-                val storeFilePath = localProperties.getProperty("storeFile")
-                val storePasswordValue = localProperties.getProperty("storePassword")
-                val keyAliasValue = localProperties.getProperty("keyAlias")
-                val keyPasswordValue = localProperties.getProperty("keyPassword")
-
-                if (storeFilePath != null && storePasswordValue != null &&
-                    keyAliasValue != null && keyPasswordValue != null
-                ) {
-                    storeFile = file(storeFilePath)
-                    storePassword = storePasswordValue
-                    keyAlias = keyAliasValue
-                    keyPassword = keyPasswordValue
-                } else {
-                    val missing = buildList {
-                        if (storeFilePath == null) add("storeFile")
-                        if (storePasswordValue == null) add("storePassword")
-                        if (keyAliasValue == null) add("keyAlias")
-                        if (keyPasswordValue == null) add("keyPassword")
-                    }
-                    logger.warn("Signing config: local.properties is missing $missing, release build will be unsigned")
-                }
-            } else {
-                logger.warn("Signing config: local.properties not found, release build will be unsigned")
-            }
+            // `create` runs this block at configuration time whether or not signing is
+            // configured, so `!!` here made a machine with neither NAZARICK_* nor
+            // local.properties fail the WHOLE build with a bare NullPointerException at
+            // app/build.gradle.kts:144 - not even `:llama-cpp:testDebugUnitTest` could be
+            // configured. The documented contract above is that signing is never a hard
+            // requirement to build, so absent means absent: leave this config empty and let
+            // the release variant come out unsigned.
+            val storePath = releaseSigning.getValue("storeFile") ?: return@create
+            storeFile = file(storePath)
+            storePassword = releaseSigning.getValue("storePassword")
+            keyAlias = releaseSigning.getValue("keyAlias")
+            keyPassword = releaseSigning.getValue("keyPassword")
+            // AGP's default store type is JKS. Feeding it a PKCS12 container under that
+            // name fails with the deeply misleading "Keystore was tampered with, or
+            // password was incorrect". Derive the type from the file it was handed.
+            storeType = if (storePath.endsWith(".jks")) "JKS" else "PKCS12"
+            // AGP enables v3 only when minSdk >= 28; ours is 26, so the default build
+            // ships v2-only (measured on-device as apkSigningVersion=2). v3 is what lets
+            // Android 9+ accept a ROTATED signing key without every install being
+            // uninstalled — free to turn on now, expensive to retrofit once the app is
+            // on phones. v4 (incremental install) stays off: it needs the matching
+            // `.apk.id.sig` shipped alongside, and nothing here installs incrementally.
+            enableV3Signing = true
+            logger.lifecycle("Signing release build with key '$keyAlias' from $storePath")
         }
     }
 
@@ -160,6 +203,14 @@ android {
         jniLibs {
             useLegacyPackaging = true
             pickFirsts += "lib/*/libtermux.so"
+            // llamajni's OpenCL soname stub is link-time bait for libggml-opencl;
+            // packaging it would shadow the vendor's real libOpenCL.so on device.
+            excludes += "lib/*/libOpenCL.so"
+            // AURA-016, do NOT re-add a libcdsprpc exclude: run 126/127 proved the
+            // DT_NEEDED entry is authored by the SDK's build_idl (hexagon_fun.cmake)
+            // linking the SDK's real android_aarch64 client lib -- the fix is to
+            // SHIP that lib (sd-cpp POST_BUILD copies it into jniLibs), not to
+            // strip it. Excluding it dangles DT_NEEDED and JNI_OnLoad never runs.
         }
     }
     lint {
@@ -206,6 +257,37 @@ androidComponents {
             ?.get(HostTestBuilder.UNIT_TEST_TYPE)
             ?.let { it.enable = true }
     }
+
+    onVariants(selector().all()) { variant ->
+        variant.outputs.forEach { output ->
+            // AGP names every output `app-<flavour>-<abi>-<buildType>.apk`, so the file a
+            // user downloads said "nazarick" — the internal brand id and source-set directory
+            // name — while everything they can actually see (package, repo, release) says
+            // Nazarick.
+            //
+            // Rewrite the token rather than rebuild the name from filters, so AGP keeps
+            // ownership of arm64 / x86_64 / universal. The catch, learned from run
+            // 41433989045: `outputFileName.set(outputFileName.map { … })` compiles happily
+            // and then dies during dependency resolution of :app:packageNazarickRelease with
+            //   Circular evaluation detected: property(java.lang.String, map(…))
+            // because a property's new value was derived from that same property. So read
+            // AGP's default eagerly and assign a plain String — a value, not a mapping.
+            //
+            // Guarded, and deliberately not using output.filters to rebuild the name: AGP
+            // 9.3 is young enough that the filter API is the one thing here not already
+            // proven by this file. A failed read means the old filename ships and the log
+            // says so, which beats a build that cannot configure itself.
+            val default = runCatching { output.outputFileName.orNull }.getOrNull()
+            if (default != null) {
+                output.outputFileName.set(default.replaceFirst("app-nazarick", "app-nazarick"))
+            } else {
+                logger.lifecycle(
+                    "nazarick: could not read AGP's default outputFileName for ${variant.name}" +
+                        " — its artifact keeps the flavour name; fix the rename, do not rename it here",
+                )
+            }
+        }
+    }
 }
 
 composeCompiler {
@@ -215,8 +297,8 @@ composeCompiler {
 }
 
 tasks.register("buildAll") {
-    dependsOn("assembleMoxwRelease", "bundleMoxwRelease")
-    description = "Build the Moxw APK and AAB"
+    dependsOn("assembleNazarickRelease", "bundleNazarickRelease")
+    description = "Build the Nazarick APK and AAB"
 }
 
 ksp {
@@ -231,6 +313,7 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.work.runtime.ktx)
@@ -393,6 +476,8 @@ dependencies {
     implementation(project(":runtime"))
     implementation(project(":local-llm"))
     implementation(project(":llama-cpp"))
+    // :sd-cpp dependency removed in v0.6 (sd.cpp retired — see settings.gradle.kts).
+    implementation(project(":local-dream"))
     implementation(project(":web"))
     implementation(project(":document"))
     implementation(project(":highlight"))
@@ -432,3 +517,4 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+

@@ -1,6 +1,20 @@
 package me.rerere.rikkahub.runtime
 
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.uuid.Uuid
+
+/**
+ * How a generation turn ended, derived from the flow's completion cause (v0.8, for the
+ * floating ball's emotions — the tomb master cheers a win and mourns a failure).
+ */
+enum class TurnOutcome { SUCCEEDED, FAILED, CANCELLED }
+
+/** Map a Flow onCompletion cause to a [TurnOutcome]. Pure, and unit-tested. */
+fun turnOutcomeOf(cause: Throwable?): TurnOutcome = when (cause) {
+    null -> TurnOutcome.SUCCEEDED
+    is CancellationException -> TurnOutcome.CANCELLED
+    else -> TurnOutcome.FAILED
+}
 
 /**
  * LoopHostBridge — every Android effect the generation loop needs, behind one
@@ -42,6 +56,13 @@ interface LoopHostBridge {
 
     /** Hide the floating agent overlay. */
     fun hideOverlay()
+
+    /**
+     * A generation turn just ended with this outcome (v0.8). Called after [hideOverlay] on
+     * every completion path — success, failure, and user cancellation all arrive. Default
+     * no-op: hosts without an emotional overlay (and the JVM test bridges) ignore it.
+     */
+    fun turnFinished(outcome: TurnOutcome) {}
 
     /**
      * Auto-return to the host app after a screen-automation turn ends. The loop has

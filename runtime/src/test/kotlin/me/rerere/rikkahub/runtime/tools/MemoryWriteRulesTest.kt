@@ -66,7 +66,7 @@ class MemoryWriteRulesTest {
     fun `a genuinely different memory is accepted`() {
         val existing = listOf(
             record(1, "User prefers brief replies"),
-            record(2, "User works on an Android agent called Moxw"),
+            record(2, "User works on an Android agent called Nazarick"),
         )
         assertEquals(
             MemoryWriteDecision.Accept,

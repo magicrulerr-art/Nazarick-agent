@@ -122,7 +122,7 @@ class MemorySearchEnvelopeTest {
     fun `unavailable names the reason and the way out`() {
         // "The way out" is an instruction now, not an alternative. This used to point at
         // `memory_read`, which was right while a keyword path existed and is exactly the fallback
-        // Moxw removed: with no embedding model the search does not run at all, so the only
+        // Nazarick removed: with no embedding model the search does not run at all, so the only
         // sentence worth sending is how to install one.
         val json = Json.parseToJsonElement(
             MemorySearchEnvelope.unavailable("no embedding model is installed")
@@ -145,5 +145,45 @@ class MemorySearchEnvelopeTest {
     fun `a missing query is an argument error, not an empty result`() {
         val json = Json.parseToJsonElement(MemorySearchEnvelope.missingQuery()).jsonObject
         assertEquals("missing_argument", json["error"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `keyword-mode hits are labelled and semantic-mode hits are not`() {
+        // A BM25 score of 7.4 read as a cosine similarity is a confident wrong answer, so the
+        // mode has to travel with the result instead of being guessed from the numbers.
+        val keyword = Json.parseToJsonElement(
+            MemorySearchEnvelope.hits(
+                dirLabel = "/d",
+                query = "rel7",
+                outcome = ColdMemorySearchOutcome(
+                    available = true,
+                    hits = listOf(hit()),
+                    indexedDocuments = 3,
+                    recall = KeywordRecall.MARKER,
+                ),
+            )
+        ).jsonObject
+        assertEquals(KeywordRecall.MARKER, keyword["recall"]!!.jsonPrimitive.content)
+        assertTrue(keyword["recallNote"]!!.jsonPrimitive.content.contains("keyword-ranked"))
+
+        val semantic = Json.parseToJsonElement(
+            MemorySearchEnvelope.hits(
+                dirLabel = "/d",
+                query = "rel7",
+                outcome = ColdMemorySearchOutcome(available = true, hits = listOf(hit()), indexedDocuments = 3),
+            )
+        ).jsonObject
+        assertFalse("a normal search must not claim to be degraded", semantic.containsKey("recall"))
+        assertFalse(semantic.containsKey("recallNote"))
+    }
+
+    @Test
+    fun `unavailable no longer claims the notes are unsearchable, only unreadable`() {
+        // Pre-AURA-021 this hint told the model to give up on its notes; the keyword fallback
+        // means the only honest reason left is that there is nothing in the directory at all.
+        val json = Json.parseToJsonElement(MemorySearchEnvelope.unavailable(null)).jsonObject
+        val hint = json["hint"]!!.jsonPrimitive.content
+        assertTrue(hint, hint.contains("keyword"))
+        assertFalse("memory_read is no longer the only way in", hint.contains("memory_read"))
     }
 }

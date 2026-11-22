@@ -116,7 +116,7 @@ class GitHubReleaseCheckerTest {
         assertEquals("512 KB", formatAssetSize(524_288))
     }
 
-    // --- disabled checker (Moxw: no pure-line update push) ------------------------------
+    // --- disabled checker (Nazarick: no pure-line update push) ------------------------------
 
     @Test fun `disabled checker short-circuits without network call`() {
         val result = runBlocking { GitHubReleaseChecker(OkHttpClient(), enabled = false).check() }

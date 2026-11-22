@@ -158,21 +158,23 @@ fun SettingAboutPage() {
                         modifier = Modifier.padding(horizontal = 8.dp),
                     ) {
                         item(
-                            onClick = { context.openUrl("https://github.com/wuyhong715/rikkahub-agent-pure/releases/latest") },
+                            // The donor's URLs were still here in v0.6 (owner report): these
+                            // rows advertise *this* app, so they point at our repo now.
+                            onClick = { context.openUrl("https://github.com/magicrulerr-art/Nazarick-agent/releases/latest") },
                             leadingContent = { Icon(HugeIcons.Earth, null) },
-                            supportingContent = { Text("github.com/wuyhong715/rikkahub-agent-pure/releases/latest") },
+                            supportingContent = { Text("github.com/magicrulerr-art/Nazarick-agent/releases/latest") },
                             headlineContent = { Text(stringResource(R.string.about_page_website)) },
                         )
                         item(
-                            onClick = { context.openUrl("https://github.com/wuyhong715/rikkahub-agent-pure") },
+                            onClick = { context.openUrl("https://github.com/magicrulerr-art/Nazarick-agent") },
                             leadingContent = { Icon(HugeIcons.Github, null) },
-                            supportingContent = { Text("github.com/wuyhong715/rikkahub-agent-pure") },
+                            supportingContent = { Text("github.com/magicrulerr-art/Nazarick-agent") },
                             headlineContent = { Text(stringResource(R.string.about_page_github)) },
                         )
                         item(
-                            onClick = { context.openUrl("https://github.com/wuyhong715/rikkahub-agent-pure/blob/master/LICENSE") },
+                            onClick = { context.openUrl("https://github.com/magicrulerr-art/Nazarick-agent/blob/main/LICENSE") },
                             leadingContent = { Icon(HugeIcons.File02, null) },
-                            supportingContent = { Text("github.com/wuyhong715/rikkahub-agent-pure/blob/master/LICENSE") },
+                            supportingContent = { Text("github.com/magicrulerr-art/Nazarick-agent/blob/main/LICENSE") },
                             headlineContent = { Text(stringResource(R.string.about_page_license)) },
                         )
                     }

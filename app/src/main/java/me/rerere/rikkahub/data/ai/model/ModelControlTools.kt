@@ -67,9 +67,12 @@ internal fun providerKind(provider: ProviderSetting): String = when (provider) {
     is ProviderSetting.AICore -> "aicore"
     is ProviderSetting.LiteRtLocal -> "local_litert"
     is ProviderSetting.LlamaCppLocal -> "local_llamacpp"
+    is ProviderSetting.SdCppLocal -> "local_sdcpp"
+    is ProviderSetting.LocalDream -> "local_dream"
     is ProviderSetting.Codex -> "codex"
     is ProviderSetting.Grok -> "grok"
     is ProviderSetting.GeminiOAuth -> "gemini_oauth"
+    is ProviderSetting.Nazarick -> "nazarick"
 }
 
 internal fun modelTypeWire(type: ModelType): String = when (type) {

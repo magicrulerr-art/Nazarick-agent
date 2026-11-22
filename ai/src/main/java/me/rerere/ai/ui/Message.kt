@@ -3,6 +3,7 @@ package me.rerere.ai.ui
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import me.rerere.ai.core.MessageRole
@@ -25,6 +26,17 @@ data class UIMessage(
     val modelId: Uuid? = null,
     val usage: TokenUsage? = null,
     val translation: String? = null,
+    // US-009r: which answering brain produced THIS message ("edge" | "tomb"). Stamped at
+    // finalize time, so history keeps the brain per message instead of only the live model
+    // in the top bar. "" = unknown / legacy, which renders no badge (AC3).
+    //
+    // Lives here rather than in `annotations` because the whole message list is stored as one
+    // JSON blob in message_node.messages, so an additive field costs no Room schema change and
+    // no serializer branch. @EncodeDefault(NEVER) keeps pre-US-009r payloads byte-identical
+    // under the store's `encodeDefaults = true`. Appended last on purpose: a new field may
+    // never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val brainKind: String = "",
     // 请求期间生成的内部消息；该标记仅在内存中使用
     @Transient
     val isSynthetic: Boolean = false,

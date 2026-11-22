@@ -33,6 +33,8 @@ data class Assistant(
     val enableRecentChatsReference: Boolean = true,
     val messageTemplate: String = "{{ message }}",
     val presetMessages: List<UIMessage> = emptyList(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val brainPolicy: BrainPolicy = BrainPolicy.EDGE,
     val quickMessageIds: Set<Uuid> = emptySet(),
     val regexes: List<AssistantRegex> = emptyList(),
     val reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,
@@ -40,7 +42,7 @@ data class Assistant(
     val customHeaders: List<CustomHeader> = emptyList(),
     val customBodies: List<CustomBody> = emptyList(),
     val mcpServers: Set<Uuid> = emptySet(),
-    // Moxw - redefined: this used to be the set of local-tool GROUPS this assistant had enabled.
+    // Nazarick - redefined: this used to be the set of local-tool GROUPS this assistant had enabled.
     // It is now the set of GATED groups the user turned on. Every other group is unconditional
     // (see LocalToolGates), because a tool catalogue that feeds an embedding model does not get
     // smaller in any way the model notices - the ranking, not the size, decides what a turn sees.
@@ -103,7 +105,7 @@ data class Assistant(
     // Appended last on purpose: a new field may never shift the position of an existing one.
     val enableCompactContextTool: Boolean = true,
     // Phase 17 (①) — tool exposure. This field used to hold DIRECT / PROGRESSIVE_CATALOG and let an
-    // assistant inject every enabled tool's schema up front. Moxw removed the direct dump: the tool
+    // assistant inject every enabled tool's schema up front. Nazarick removed the direct dump: the tool
     // list is always built from `tool_search` / `tool_open` plus what the turn actually retrieved,
     // because the embedding model is a prerequisite here rather than an enhancement. The field is
     // gone rather than fixed to one value, so there is no stored mode left to disagree with the
@@ -176,7 +178,7 @@ data class Assistant(
     // Appended last on purpose: a new field may never shift the position of an existing one.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val pinnedToolNames: List<String> = emptyList(),
-    // Moxw P4 — the file library. Off until asked for, like cold memory: indexing a directory
+    // Nazarick P4 — the file library. Off until asked for, like cold memory: indexing a directory
     // costs a model call per chunk, and a feature that spends that without being asked is one
     // users turn off. @EncodeDefault(NEVER) keeps an assistant that never used it byte-identical
     // in the store, which is also why both fields can be appended here safely.
@@ -188,6 +190,39 @@ data class Assistant(
     // pointing it at a whole workspace survivable.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val libraryDir: String = "",
+    // v0.7 (owner request) — one-line "what to expect" shown under the name in the assistant
+    // lists; the seeded guardians fill it from the pack ("the mini guardians should have better
+    // descriptions that tell the users what to expect from each"). Blank = no subtitle, so every
+    // pre-v0.7 assistant renders exactly as before. @EncodeDefault(NEVER) keeps old payloads
+    // byte-identical in the store.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val description: String = "",
+    // v0.8 (owner ruling 2026-11-10, guardian curation) — when set, the assistant's COMPLETE
+    // local-tool-group allow-list: the assembled surface is intersected with it at the single
+    // assembly point (ToolSurfaceResolver.resolve), and the tool_search/tool_open catalogue is
+    // built from that surface — so a group left out is unfindable and uncallable, not merely
+    // deprioritised. This is the "ONLY the tools necessary to do their job" knob the guardian
+    // pack uses; null means catalogue-wide, which is what every pre-v0.8 assistant keeps.
+    // Infrastructure outside the group system (tool_search/tool_open, memory tools, skill and
+    // workspace tools) is untouched by an allow-list, and disabledLocalTools still removes
+    // individual tools inside the allowed groups. [] = no local tool groups at all.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    @Serializable(with = LenientLocalToolListSerializer::class)
+    val toolAllowlist: List<LocalToolOption>? = null,
+    // AURA-021 v1.0 (contract LC-2) - the ID-level ceiling, enforced where the finished List<Tool>
+    // leaves the harness (ToolSurfaceGuard.enforce). [toolAllowlist] above narrows the local face by
+    // GROUP, and ToolSurfaceResolver is indeed the only place that face is built; but ChatService
+    // stacks skill, MCP and workspace tools on top of it at two inline sites that never pass through
+    // that resolver. A ceiling that stops at the local face is not a ceiling: one installed skill
+    // re-widens it. This field speaks exact Tool.name values, so it binds the whole outgoing list.
+    // null (every assistant until a roster is written for it) = no ceiling, byte-identical to today;
+    // [] = no tools at all; a list = exactly those ids, a ceiling and never a preference.
+    // Assistants live in the settings JSON blob, not a Room table, so this costs no migration.
+    // Appended last on purpose: a new field may never shift the position of an existing one.
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val allowedToolNames: List<String>? = null,
 )
 
 @Serializable
@@ -419,4 +454,18 @@ fun getTriggeredInjections(
     return injections
         .filter { it.isTriggered(context) }
         .sortedByDescending { it.priority }
+}
+
+/**
+ * Which brain answers this assistant (Companion-Edge V2 US-008).
+ * EDGE = existing local/engines chain; TOMB = route turns to the enabled Nazarick
+ * instance agent regardless of bound model; AUTO currently behaves as TOMB (US-010
+ * refines it into heuristic routing + offline queue). Legacy payloads without this
+ * field decode to EDGE — that default IS the migration.
+ */
+@Serializable
+enum class BrainPolicy {
+    @SerialName("edge") EDGE,
+    @SerialName("tomb") TOMB,
+    @SerialName("auto") AUTO,
 }

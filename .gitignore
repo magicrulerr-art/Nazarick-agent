@@ -41,3 +41,5 @@ app/google-services.json
 
 # bun.lock is generated from the tracked pnpm-lock.yaml on clean checkouts
 /web-ui/bun.lock
+# session-local task notes
+*_TODO.md

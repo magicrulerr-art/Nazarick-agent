@@ -683,9 +683,12 @@ object ChatboxImporter {
         is ProviderSetting.AICore -> "aicore"
         is ProviderSetting.LiteRtLocal -> "litert"
         is ProviderSetting.LlamaCppLocal -> "llamacpp"
+        is ProviderSetting.SdCppLocal -> "sdcpp"
+        is ProviderSetting.LocalDream -> "localdream"
         is ProviderSetting.Codex -> "codex"
         is ProviderSetting.Grok -> "grok"
         is ProviderSetting.GeminiOAuth -> "gemini_oauth"
+        is ProviderSetting.Nazarick -> "nazarick"
     }
 
     private fun String.toMessageRole(): MessageRole? = when (this) {
