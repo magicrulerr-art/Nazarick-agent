@@ -410,6 +410,7 @@ jobs:
             app/build/reports/tests/
             ai/build/reports/tests/
             runtime/build/reports/tests/
+            llama-cpp/build/reports/tests/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -429,7 +430,7 @@ jobs:
     name: debug apk (diag)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    if: github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race'
+    if: github.ref_name == 'feat/stall-diag' || github.ref_name == 'fix/embed-gpu-race' || (github.event_name == 'workflow_dispatch' && github.ref_name == 'mission/npu-signed-engine-packs')
     concurrency:
       group: debug-${{ github.ref }}
       cancel-in-progress: true
@@ -598,11 +599,27 @@ jobs:
             echo "NAZARICK_KEY_ALIAS=nazarick"
           } >> "$GITHUB_ENV"
 
+      # AURA-021 LC-2: the roster ceiling changes every outgoing tool list, so it is asserted here
+      # rather than left compiling in a job that never executes :app tests. Three classes, seconds.
+      # (Keep the run block comment-free: it is a folded scalar, so a `#` inside it comments out the
+      # REST of the command — run #188 proved the three new filters silently vanished.)
       - name: Run scoped app unit tests
         run: >
           ./gradlew :app:testNazarickReleaseUnitTest --stacktrace
           --tests "me.rerere.rikkahub.data.guardians.GuardianSeedTest"
           --tests "me.rerere.rikkahub.data.datastore.SettingsPersistenceCoverageTest"
+          --tests "me.rerere.rikkahub.data.guardians.GuardianToolRosterTest"
+          --tests "me.rerere.rikkahub.data.guardians.GuardianRosterAssemblyTest"
+          --tests "me.rerere.rikkahub.data.guardians.RosterSpecBindingTest"
+          --tests "me.rerere.rikkahub.data.ai.ToolSurfaceGuardTest"
+          --tests "me.rerere.rikkahub.data.db.DatabaseBackupTest"
+          --tests "me.rerere.rikkahub.data.vector.KeywordRecallTest"
+          --tests "me.rerere.rikkahub.data.model.BrainPolicyTest"
+          --tests "me.rerere.rikkahub.data.ai.TombQueueTest"
+          --tests "me.rerere.rikkahub.data.ai.TombSendPathTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainBadgeTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainBadgeDetailTest"
+          --tests "me.rerere.rikkahub.data.ai.BrainKindPersistenceTest"
 
       - name: Upload test report
         if: always()
@@ -825,3 +842,296 @@ jobs:
             sd-cpp/src/main/jniLibs/**/*.so
           if-no-files-found: error
           retention-days: 14
+
+  # US-009: engine-pack release lane. Builds a pack v1 from the arm64 native libs of the
+  # nazarick APK artifact, signs the manifest with the ENGINEPACK_SIGNING_SEED secret
+  # (Ed25519 32-byte hex seed; the app embeds the matching PUBLIC key), and publishes a
+  # GitHub Release named enginepack-<id>-<version>. Without the secret the job FAILS loud
+  # (ff203f18f: a silently-skipped signing step is how US-009 loses its whole point). On
+  # mission branches PACK_DRY_RUN keeps uploads to a draft; main publishes.
+  pack-release:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
+    needs: [assemble]
+    # gh release create/upload writes to the Releases API; the workflow default is
+    # contents: read (build.yml:43), so run 44203008603 died with
+    # "HTTP 403: Resource not accessible by integration" on BOTH the create and the
+    # upload fallback. One permissions key per job - the Actions parser rejects a
+    # duplicate mapping key, which is what a rebase onto 7b61b722b just produced.
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    env:
+      PACK_ID: nazarick-engine-llamacpp
+      PACK_VERSION: "1"
+      PACK_DRY_RUN: ${{ github.ref_name != 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk-nazarick
+          path: apk-in
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Assemble pack (extract engine libs, pack, sign)
+        env:
+          ENGINEPACK_SIGNING_SEED: ${{ secrets.ENGINEPACK_SIGNING_SEED }}
+        run: |
+          set -eu
+          if [ -z "${ENGINEPACK_SIGNING_SEED:-}" ]; then
+            echo "::error::ENGINEPACK_SIGNING_SEED (64-hex ed25519 seed) is not configured; signing must fail loudly, never silently skip (US-009)."
+            exit 1
+          fi
+          mkdir -p stage pack-out
+          python - "$PWD" <<'PY'
+          import os, sys, zipfile
+          here = sys.argv[1]
+          apks = sorted(f for f in os.listdir(os.path.join(here, "apk-in")) if f.endswith(".apk"))
+          # artifact ships 3 splits; ext4 listdir order is arbitrary and x86_64-first
+          # produced a vacuous files=0 pack (run 44372825734). Pin arm64.
+          apk = next(f for f in apks if "arm64" in f)
+          want = ("libllama.so", "libllama-common.so", "libggml.so", "libggml-base.so",
+                  "libggml-cpu.so", "libggml-opencl.so", "libllamajni.so")
+          with zipfile.ZipFile(os.path.join(here, "apk-in", apk)) as z:
+              for n in z.namelist():
+                  if n.startswith("lib/arm64-v8a/") and os.path.basename(n) in want:
+                      open(os.path.join(here, "stage", os.path.basename(n)), "wb").write(z.read(n))
+          PY
+          STAGE_N="$(ls stage | wc -l)"
+          [ "$STAGE_N" -eq 7 ] || { echo "::error::stage has $STAGE_N files, expected 7 (apk=$apk)"; ls -l apk-in; exit 1; }
+          printf '%s' "$ENGINEPACK_SIGNING_SEED" > seed.hex
+          trap 'rm -f seed.hex' EXIT
+          python .github/packtools/enginepack.py create --src stage --out pack-out \
+            --id "$PACK_ID" --version "$PACK_VERSION" --backend cpu,opencl --min-api 26 \
+            --engine-pin "$(git ls-tree HEAD llama-cpp/native/llama.cpp | awk '{print $3}')" \
+            --key seed.hex
+          rm seed.hex
+          # Asset name is a client contract: EnginePackReleases resolves
+          # <release>/<id>-<version>.zip, so that is the only acceptable name on disk here.
+          # packtools has shipped both layouts (HEAD writes <out>.zip beside the dir; the
+          # in-tree revision writes <out>/<id>-<version>.zip inside it), so normalise to the
+          # contract instead of betting on one revision. Neither present = fail loud.
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"
+          if [ ! -f "$ZIP" ]; then
+            if [ -f pack-out.zip ]; then
+              mv pack-out.zip "$ZIP"
+              echo "normalised pack-out.zip -> $ZIP (CLI wrote the sibling layout)"
+            else
+              echo "::error::enginepack.py produced neither $ZIP nor pack-out.zip"
+              ls -l . pack-out || true
+              exit 1
+            fi
+          fi
+          ls -l pack-out
+      - name: Verify pack (sig + per-file sha, US-009 AC1)
+        run: |
+          set -eu
+          python .github/packtools/enginepack.py verify --dir pack-out --pubkey .github/packtools/test_pub2.hex
+      - name: Publish pack release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG="enginepack-${PACK_ID}-${PACK_VERSION}"
+          ZIP="pack-out/${PACK_ID}-${PACK_VERSION}.zip"   # normalised in the assemble step
+          # NEVER trust `gh release create` against an already-published tag: it exits 0 but
+          # binds the new release to an untagged lease (silent draft; assets invisible at the
+          # app's download URL - proven twice on this lane). Resolve the tag's release id and
+          # upload explicitly; a manifest without its sig is unverifiable, so ship all three.
+          # gh release view returns "release not found" for this tag under GITHUB_TOKEN on
+          # non-default-branch dispatches (run 44244153078; same endpoint answers 200 under a
+          # classic PAT) - so resolve via raw REST and PRINT the body on failure, no more
+          # guessing. POST binds an existing tag cleanly (422 if a release exists, never a
+          # silent untagged lease - that was the gh-cli behavior).
+          API="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          BODY="$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$API/releases/tags/$TAG")"
+          RID="$(printf '%s' "$BODY" | jq -r '.id // empty')"
+          if [ -z "$RID" ]; then
+            echo "releases/tags endpoint says: $(printf '%s' "$BODY" | head -c 300)"
+            POST_BODY="$(curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"engine pack $PACK_ID v$PACK_VERSION\",\"body\":\"US-009 CI-signed engine pack\",\"draft\":$PACK_DRY_RUN,\"target_commitish\":\"$GITHUB_SHA\"}")"
+            echo "release POST says: $(printf '%s' "$POST_BODY" | head -c 400)"
+            RID="$(printf '%s' "$POST_BODY" | jq -r '.id // empty')"
+          fi
+          [ -n "$RID" ] || { echo "::error::cannot resolve or create release for tag $TAG"; exit 1; }
+          # gh release upload takes tag/NAME not numeric id ("release not found"), and
+          # gh tag-resolution itself is poisoned under the dispatch token. Full REST:
+          for AID in $(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases/$RID/assets" | jq -r '.[].id'); do
+            curl -s -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" "$API/releases/assets/$AID" >/dev/null
+          done
+          for PAIR in "$ZIP#nazarick-engine-llamacpp-1.zip" "pack-out/manifest.json#manifest.json" "pack-out/.sig#pack.sig"; do
+            F="${PAIR%%#*}"; N="${PAIR##*#}"
+            curl -s -X POST -H "Authorization: Bearer $GITHUB_TOKEN" -H "Content-Type: application/octet-stream" \
+              --data-binary "@$F" "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RID/assets?name=$N" | jq -r '.name // .message'
+          done
+          echo "published pack assets to release $RID for tag $TAG (draft=$PACK_DRY_RUN)"
+          curl -s -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$API/releases/$RID/assets" | jq -r '.[].name'
+
+# DRAFT — hexagon-skel job, for merge into .github/workflows/build.yml
+# (replaces/gates alongside the dead `hexagon:` job at build.yml line 634+;
+#  do NOT merge my own work — Albedo reviews, Demiurge verifies.)
+# Provenance (floor/ticket-2026-11-17-hexagon-build-lane-plan.md, 2026-11-17):
+#   - SDK = login-free community mirror (snapdragon-toolchain/hexagon-sdk v6.7.0.0,
+#     asset 741,882,016 B, anonymous download verified live 2026-11-17). Mirror
+#     unblocks the lane; official zip + licensing review still owed for anything shipped.
+#   - Vendored cmake (fork pin 4284599ac): GGML_HEXAGON option, reads
+#     HEXAGON_SDK_ROOT / HEXAGON_TOOLS_ROOT env + $HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake.
+#   - PROBE-before-configure is mandatory (fail loud, no 40-min cmake wander).
+#   - Arch: CORRECTION 2026-11-18: z7 = SM8750 (8 Elite) reports DSP V79, NOT v73
+#     (V79-family trap, QNN lane + executorch #21586). v73 stays for older targets;
+#     v79 added as LOUD-OPTIONAL below. ccache (ticket step 7) deferred to follow-up.
+  hexagon-skel:
+    name: hexagon skel (v73 + v79?) native lane
+    needs: []
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'mission/npu-signed-engine-packs' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HEXAGON_SDK_URL: https://github.com/snapdragon-toolchain/hexagon-sdk/releases/download/v6.7.0.0/hexagon-sdk-v6.7.0.0-amd64-lnx.tar.xz
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download + unpack Hexagon SDK (community mirror, ~742 MB)
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 -o "$HOME/hexagon-sdk.tar.xz" "$HEXAGON_SDK_URL"
+          mkdir -p "$HOME/hexagon-sdk"
+          tar -xJf "$HOME/hexagon-sdk.tar.xz" -C "$HOME/hexagon-sdk"
+          ls "$HOME/hexagon-sdk"
+
+      - name: PROBE SDK layout (fail loud before cmake)
+        run: |
+          set -euo pipefail
+          # Layout of record (run 44150286687): the tarball unpacks to
+          # $HOME/hexagon-sdk/<version>/..., so hexagon_fun.cmake sits at depth 4 - a
+          # maxdepth-3 find misses it and reports "tree reordered" when it is not.
+          export HEXAGON_SDK_ROOT="$(find "$HOME/hexagon-sdk" -maxdepth 4 -type f -path '*/build/cmake/hexagon_fun.cmake' -printf '%h\n' | head -n1 | sed 's#/build/cmake$##')"
+          test -n "$HEXAGON_SDK_ROOT" -a -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_fun.cmake" || {
+            echo "::error::hexagon_fun.cmake not found under $HOME/hexagon-sdk - mirror tree reordered; layout:"
+            find "$HOME/hexagon-sdk" -maxdepth 3 | head -100
+            exit 1
+          }
+          test -f "$HEXAGON_SDK_ROOT/build/cmake/hexagon_arch.cmake" || { echo "::error::hexagon_arch.cmake missing (htp/cmake-toolchain.cmake includes it)"; ls "$HEXAGON_SDK_ROOT/build/cmake"; exit 1; }
+          test -d "$HEXAGON_SDK_ROOT/incs" || { echo "::error::incs/ missing - htp include dir absent"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
+          # utils/examples: referenced only as a dangling -I in ggml-hexagon CMakeLists at pin
+          # 4284599ac (byte-audited: 122 htp files, zero #include from that dir; hvx-utils.h,
+          # hex-utils.h, hmx-utils.h all live in-tree). Mirror lacks it -> warn, do not block.
+          test -d "$HEXAGON_SDK_ROOT/utils/examples" || echo "::warning::utils/examples absent (mirror strips it); -I will dangle harmlessly at this pin"
+          test -d "$HEXAGON_SDK_ROOT/rtos/qurt" || { echo "::error::rtos/qurt missing - mirror is userspace-only, QURT links in htp/cmake-toolchain.cmake cannot resolve"; ls "$HEXAGON_SDK_ROOT"; exit 1; }
+          # rtos/qurt existing is not enough: htp/cmake-toolchain.cmake sets
+          # RTOS_DIR=$HEXAGON_SDK_ROOT/rtos/qurt/compute<arch> and links the skel against
+          # $RTOS_DIR/lib/{crt1.o,debugmon.o,libqurt.a,libqurtcfs.a,libtimer_main.a,
+          # libtimer_island.a,libposix.a}. Ask for the arches we actually build (v73 is this
+          # lane's target) rather than trusting the parent dir - a mirror carrying only newer
+          # arches fails here in seconds instead of at the link.
+          for a in v73 v75 v79 v81 v85; do
+            if [ -f "$HEXAGON_SDK_ROOT/rtos/qurt/compute$a/lib/libqurt.a" ]; then
+              echo "qurt OK: compute$a"
+            else
+              echo "qurt MISSING: compute$a"
+            fi
+          done
+          test -f "$HEXAGON_SDK_ROOT/rtos/qurt/computev73/lib/libqurt.a" || {
+            echo "::error::computev73 QURT libs absent - this mirror cannot link a v73 skel"
+            ls "$HEXAGON_SDK_ROOT/rtos/qurt" 2>/dev/null | head -20 || ls "$HEXAGON_SDK_ROOT"
+            exit 1; }
+          echo "HEXAGON_SDK_ROOT=$HEXAGON_SDK_ROOT" >> "$GITHUB_ENV"
+          ls "$HEXAGON_SDK_ROOT/build/cmake"
+          ls "$HEXAGON_SDK_ROOT/rtos/qurt" | head -20
+          # Compiler resolution must not bet on depth or on file-vs-symlink. Evidence:
+          # run 44223164865 listed tools/HEXAGON_Tools/21.0.04 as present, yet
+          # "find tools -maxdepth 5 -type f -name hexagon-clang" found nothing - so the driver
+          # is either a symlink (which -type f drops) or lives one tier deeper. Search both
+          # kinds, then derive the root from the path that actually matched.
+          CLANG="$(find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 6 \( -type f -o -type l \) -name 'hexagon-clang' -print -quit)"
+          if [ -z "$CLANG" ]; then
+            echo "::error::no hexagon-clang (regular file or symlink) under tools/HEXAGON_Tools; tree:"
+            find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 4 | head -60
+            exit 1
+          fi
+          test -x "$CLANG" || { echo "::error::driver found but not executable: $CLANG"; ls -l "$CLANG"; exit 1; }
+          echo "compiler driver: $CLANG"
+          # htp/cmake-toolchain.cmake wants <HEXAGON_TOOLS_ROOT>/Tools/bin/hexagon-clang
+          HEXAGON_TOOLS_ROOT="${CLANG%/Tools/bin/hexagon-clang}"
+          if [ "$HEXAGON_TOOLS_ROOT" = "$CLANG" ]; then
+            echo "::error::driver is not under a Tools/bin/ path - toolchain cannot resolve it: $CLANG"
+            find "$HEXAGON_SDK_ROOT/tools/HEXAGON_Tools" -maxdepth 4 | head -60
+            exit 1
+          fi
+          export HEXAGON_TOOLS_ROOT
+          echo "HEXAGON_TOOLS_ROOT=$HEXAGON_TOOLS_ROOT" >> "$GITHUB_ENV"
+          # same toolchain also reads Tools/target/hexagon/lib (TARGET_DIR) and Tools/lib/iss
+          for d in Tools/bin Tools/target/hexagon/lib Tools/lib/iss; do
+            if [ -d "$HEXAGON_TOOLS_ROOT/$d" ]; then echo "tools OK: $d"; else echo "::warning::tools dir missing: $d"; fi
+          done
+          "$HEXAGON_TOOLS_ROOT/Tools/bin/hexagon-clang" --version | head -3
+          ls "$HEXAGON_SDK_ROOT/rtos/qurt" | grep -i compute | head -10 || true
+
+      - name: cmake configure (GGML_HEXAGON=ON) + build the v73 skel
+        run: |
+          set -euo pipefail
+          export HEXAGON_SDK_ROOT HEXAGON_TOOLS_ROOT
+          # ggml/src/ggml-hexagon/CMakeLists.txt carries no project() of its own (ggml adds
+          # it), so configuring that directory standalone cannot work - it dies on
+          # ggml_add_backend_library. Configure llama.cpp and ask for the skel's
+          # ExternalProject target: build_htp_skel(v73) -> ExternalProject_Add(htp-v73),
+          # which is what emits libggml-htp-v73.so. The host ggml-hexagon lib is not built
+          # here; the skel is the artifact this lane exists for.
+          # ggml-hexagon/CMakeLists.txt:1-6 tests the CMake VARIABLE (file(TO_CMAKE_PATH
+          # "${HEXAGON_SDK_ROOT}") then if (NOT IS_DIRECTORY ...)), not $ENV{...}. Exporting
+          # the variables is not enough - an empty variable reads as "not a directory" and the
+          # job dies with "Make sure HEXAGON_SDK_ROOT point to the correct Hexagon SDK
+          # installation" (run 44233723439, probe green, compiler at
+          # tools/HEXAGON_Tools/21.0.04/Tools/bin/hexagon-clang). Pass both as -D defines;
+          # CMAKE_TRY_COMPILE_PLATFORM_VARIABLES in htp/cmake-toolchain.cmake then carries
+          # them into the ExternalProject sub-configure as well.
+          #
+          # PREBUILT_LIB_DIR is the SDK's bug to route around, not ours to ignore:
+          # SDK 6.7.0.0 build/cmake/hexagon_fun.cmake:99-106 runs
+          #   string(FIND ${PREBUILT_LIB_DIR} "toolvNN" is_toolvNN)
+          # unquoted, and at include time (ggml-hexagon/CMakeLists.txt:22) that variable is
+          # set only inside build_htp_skel's -D list - so the expansion collapses to two
+          # arguments and cmake aborts with "string sub-command FIND requires 3 or 4
+          # parameters" x8 (run 44239759500). A cache entry satisfies it before the include;
+          # each skel ExternalProject still passes its own toolv21_<arch>, and for v73 the
+          # value is exactly what that function would derive. Upstream quotes these lines
+          # after pin 4284599ac - a submodule bump would also fix it, but that changes the
+          # engine pin the packs carry, so it is Demiurge's call, not a side effect here.
+          # Proven locally against the real file + cmake 4.4.5: unset -> the x8 error;
+          # toolv21_v73 -> is_toolv81/84/88 = -1, no errors (repro/npu/findrepro.cmake).
+          cmake -S llama-cpp/native/llama.cpp -B build-hex \
+            -DCMAKE_BUILD_TYPE=Release -DGGML_HEXAGON=ON -DLLAMA_CURL=OFF -DBUILD_TESTING=OFF \
+            -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT" \
+            -DPREBUILT_LIB_DIR=toolv21_v73
+          cmake --build build-hex --target htp-v73 -- -j"$(nproc)"
+          # V79 for SM8750-class devices (z7, Fold7). At pin 4284599ac it is UNKNOWN
+          # whether build_htp_skel enumerates an htp-v79 target: attempt LOUDLY.
+          # A missing target must print SKIPPED with cmake's own error - never silent.
+          set +e
+          cmake --build build-hex --target htp-v79 -- -j"$(nproc)" 2>&1 | tee /tmp/v79.log
+          V79_RC=$?
+          set -e
+          if [ "$V79_RC" -eq 0 ]; then
+            echo "SKEL_V79=FOUND"; find build-hex -name 'libggml-htp-v79.so' -printf '%p  %s bytes\n'
+          else
+            echo "SKEL_V79=SKIPPED (target absent at engine pin 4284599ac)"; tail -5 /tmp/v79.log
+          fi
+
+      - name: Upload skel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexagon-skel
+          path: |
+            build-hex/**/*.so
+          if-no-files-found: error

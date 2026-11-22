@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.core.classifyLlamaFinish
 import me.rerere.ai.provider.ImageGenerationParams
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.Provider
@@ -160,7 +161,17 @@ class LlamaCppProvider(
         // layered on. Resolved per load so flipping the switch takes effect on the next chat,
         // no reinstall. Embeddings are a separate loader (LlamaCppEmbedder.nativeLoadModel,0)
         // and stay on CPU regardless - the KV guard + planner Q8_0 invariant is untouched.
-        val gpuLayers = resolveGpuLayers(
+                // Engine-pack lane (US-006): per model load, re-scan verified packs and state the
+        // chosen backend honestly. A decline or absence leaves the built-in engine lane
+        // exactly as before - the graft adds a gate, never a new failure mode.
+        EnginePackRegistry.logSelection(
+            root = EnginePackRegistry.appRoot(),
+            openclStubPresent = EnginePackRegistry.openclStubPresent(),
+            npuRequested = EngineTunables.npuActive(context),
+            packsEnabled = EngineTunables.fromSystemProperties().enginePack != "off",
+        )
+
+val gpuLayers = resolveGpuLayers(
             forceCpu = prefs.forceCpu(LocalRuntime.LlamaCpp),
             propOverride = gpuLayersOverride(),
         )
@@ -431,6 +442,22 @@ class LlamaCppProvider(
                 if (sentAny) allOk else !isClosedForSend
             }
 
+            // z7 2026-11-14 03:31, read off the device: Spark's output makes llama.cpp's PEG
+            // parser THROW rather than return a content-only message while the generation is
+            // still mid-stream - `nazarick-perf: throw: The model produced output that does not
+            // match the expected peg-native format` (jni_util.h throwf <- nativeParseChat), four
+            // times in one three-run window, each followed by GenerationLoop's
+            // `restarting the reply after a mid-stream failure`. An exception thrown out of the
+            // callback below abandons a turn that has already paid for every token decoded so
+            // far, and the restart re-prefills the same prefix: measured
+            // `prefill 6062 tok 73682 ms` per restart on this device.
+            //
+            // Partial parses are advisory. Every delta they produce is restated by the final
+            // parse, which is the authoritative one (see the flush note on ChatDeltaTracker
+            // .consume). So a partial refusal means "nothing new this token" - it is not
+            // evidence that the turn is broken, and it must not end the turn. The final parse
+            // stays fatal on purpose: if THAT does not parse, the output really is unusable.
+            var partialParseRefusals = 0
             val worker = launch(Dispatchers.IO) {
                 Log.i("nazarick-perf", "diag: worker launching native generate")
                 try {
@@ -440,15 +467,57 @@ class LlamaCppProvider(
                         ContextPlanner.tunables.toolGrammar,
                     ) { piece ->
                         accumulated.append(piece)
-                        val parsed = runtime.parse(accumulated.toString(), true, appliedTemplateJson)
-                        sendDelta(tracker.consume(parsed, isPartial = true), false)
+                        val parsed = runCatching {
+                            runtime.parse(accumulated.toString(), true, appliedTemplateJson)
+                        }.onFailure {
+                            partialParseRefusals++
+                            if (partialParseRefusals == 1 || partialParseRefusals % 32 == 0) {
+                                Log.w("nazarick-perf",
+                                    "diag: partial parse refused (chars=${accumulated.length}, " +
+                                        "refusals=$partialParseRefusals): ${it.message}")
+                            }
+                        }.getOrNull()
+                        if (parsed == null) !isClosedForSend else sendDelta(tracker.consume(parsed, isPartial = true), false)
                     }
                     Log.i("nazarick-perf", "diag: native generate returned chars=${accumulated.length} decoded=$decoded/$maxTokens")
 
                     // The final parse is authoritative: it flushes any tool call whose arguments
                     // were still settling when generation stopped (see ChatDeltaTracker.consume).
-                    val finalParsed = runtime.parse(accumulated.toString(), false, appliedTemplateJson)
-                    sendDelta(tracker.consume(finalParsed, isPartial = false), true)
+                    //
+                    // AURA-021 US-012 (z7 2026-11-14, probe_jensen_logcat_final.txt): Spark's
+                    // thinking-first output can make even this authoritative parse refuse a step
+                    // that ended cleanly on its stop word. Throwing here abandoned finished
+                    // tokens and drove GenerationLoop's whole-reply restart — a measured ~40 s
+                    // re-prefill per refusal — and the one-shot restart guard meant the second
+                    // refusal in the same turn killed it outright, no answer, Continue inert.
+                    // The tokens are paid for either way, so a refusal now degrades to a
+                    // content-only step: raw output goes out on the reasoning channel, no tool
+                    // calls are forwarded, and postGenerationNotices below labels the skipped
+                    // <tool_call so the model sees why the step has no tool result and can
+                    // re-issue the call properly. An empty step still fails loudly — there is
+                    // nothing to degrade to and a silent empty success would be a lie.
+                    val finalParsed = runCatching {
+                        runtime.parse(accumulated.toString(), false, appliedTemplateJson)
+                    }.getOrElse { cause ->
+                        // User stop must propagate, not degrade — same rule as the tool
+                        // executor's runCatching sites in GenerationLoop.
+                        if (cause is kotlinx.coroutines.CancellationException) throw cause
+                        if (accumulated.length == 0) throw cause
+                        Log.w(
+                            "nazarick-perf",
+                            "diag: final parse refused (${cause.message?.take(140)}) -> degrading " +
+                                "step to content-only; ${accumulated.length} chars forwarded as reasoning",
+                        )
+                        sendDelta(ChatDelta("", accumulated.toString(), emptyList()), true)
+                        null
+                    }
+                    if (partialParseRefusals > 0) {
+                        Log.i("nazarick-perf",
+                            "diag: stream recovered from $partialParseRefusals partial-parse refusal(s)")
+                    }
+                    if (finalParsed != null) {
+                        sendDelta(tracker.consume(finalParsed, isPartial = false), true)
+                    }
 
                     // Bug #5 F3/F4: the two ways a broken step used to look exactly like a
                     // finished answer. Notices go out as text so the owner sees them and the
@@ -466,8 +535,20 @@ class LlamaCppProvider(
                         Log.e("nazarick-engine", notice.trim())
                         trySend(StreamChunk.TextDelta(textId, notice))
                     }
-                    trySend(StreamChunk.Finish())
-                    Log.i("nazarick-perf", "diag: stream finish sent")
+                    // AURA-021 (LC-1): classify at the source, where both numbers are
+                    // measured — the token count llama actually decoded vs the budget it
+                    // was given. decoded < max means the engine stopped on its own stop
+                    // word (a clean Stop, even when the visible text ends oddly);
+                    // decoded >= max means the cap cut the generation, and the loop must
+                    // treat the step as continueable (Length), never as a stall.
+                    val finishKind = classifyLlamaFinish(
+                        stopWordReached = decoded < maxTokens,
+                        decodedTokens = decoded,
+                        maxTokens = maxTokens,
+                        emittedToolCalls = forwardedToolCalls,
+                    )
+                    trySend(StreamChunk.Finish(reason = finishKind))
+                    Log.i("nazarick-perf", "diag: stream finish sent kind=$finishKind")
                 } finally {
                     finished.set(true)
                     close()

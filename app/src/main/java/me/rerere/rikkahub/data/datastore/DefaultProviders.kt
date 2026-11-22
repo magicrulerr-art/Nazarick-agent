@@ -89,6 +89,19 @@ val DEFAULT_PROVIDERS = listOf(
             Text("On-device - NPU images")
         },
     ),
+    ProviderSetting.Nazarick(
+        // Remote Nazarick-agent instance (US-001 scaffold). Disabled by default like every
+        // built-in: fill base URL / token / agent id on the provider page and press Test
+        // Connection first. Chat dispatch arrives in US-004.
+        enabled = false,
+        builtIn = true,
+        description = {
+            Text("Talks to a self-hosted Nazarick-agent instance (base URL + Bearer token + agent id). Test Connection proves reachability; chat arrives in US-004.")
+        },
+        shortDescription = {
+            Text("Remote - Nazarick instance")
+        },
+    ),
     // All built-in providers ship DISABLED by default. New installs start with zero
     // network-egress paths so a freshly-installed app can never make an LLM call (or
     // bill any account) until the user explicitly enables a provider AND adds an API

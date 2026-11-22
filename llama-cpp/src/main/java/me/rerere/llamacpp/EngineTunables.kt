@@ -43,6 +43,17 @@ data class EngineTunables(
     /** Never plan to use more than this share of what the device has free. */
     val ramSafetyFraction: Double = 0.8,
     /**
+     * Flash Attention at context creation (AURA-020, port of the knob OGAM exposes).
+     * null = the planner default, which is ON; a quantised KV cache always forces it ON,
+     * and GPU layer offload always forces it OFF (the measured OpenCL fault, see
+     * LlamaCppRuntime). Doubles as the settings-UI value: same parser, one language.
+     */
+    val flashAttention: Boolean? = null,
+    /** Wanted KV cache type: -1 = auto ladder (f16 then q8_0 then q4_0), 0 = f16,
+     *  1 = q8_0, 2 = q4_0. The settings-UI Cache Type selector writes this through the
+     *  same spec string the debug property uses. */
+    val kvPreference: Int = -1,
+    /**
      * null = leave `enable_thinking` out of the request entirely, which in this build means
      * **thinking on**: llama.cpp's `llama_chat_inputs` defaults the flag to true and always binds
      * it, so a template's own `enable_thinking | default(...)` never actually applies to us —
@@ -66,6 +77,10 @@ data class EngineTunables(
      *  The parse side does not need the grammar: tool calls are extracted by the template
      *  parser carried in the same applied blob. `true` re-arms it for A/B benches. */
     val toolGrammar: Boolean = false,
+    /** Engine-pack lane (US-006 AC2): "auto" = verified packs drive backend selection;
+     *  "off" = pin the built-in engine no matter what is installed. Part of the tune bundle
+     *  so a bench replay records it like every other knob. */
+    val enginePack: String = "auto",
 ) {
     companion object {
         const val PROPERTY = "debug.nazarick.tune"
@@ -73,6 +88,18 @@ data class EngineTunables(
 
         /** Exactly what the planner did before this class existed. */
         val DEFAULT = EngineTunables()
+        /** Engine-pack lane (US-006/US-008): debug.nazarick.npu=1 marks the NPU A/B arm
+         *  wanted; 0 (default) keeps today's behavior exactly. Read per model load.
+         *  Kept out of the tune bundle on purpose: this is an operator switch, not a
+         *  crash-replay parameter, and it must survive tune clearing. */
+        fun npuActive(context: android.content.Context): Boolean = try {
+            android.provider.Settings.Global.getString(
+                context.contentResolver, "debug.nazarick.npu",
+            ) == "1"
+        } catch (_: Throwable) {
+            false
+        }
+
 
         /**
          * Parse a spec into knobs plus every pair that was not understood.
@@ -82,8 +109,8 @@ data class EngineTunables(
          * silently changes nothing is the failure mode that eats a whole device session, which is
          * why unrecognised and malformed pairs come back in the open instead of being swallowed.
          */
-        fun parse(spec: String?): Pair<EngineTunables, List<String>> {
-            var t = DEFAULT
+        fun parse(spec: String?, base: EngineTunables = DEFAULT): Pair<EngineTunables, List<String>> {
+            var t = base
             val rejected = mutableListOf<String>()
             for (raw in spec.orEmpty().split(';', ',', ' ')) {
                 val pair = raw.trim()
@@ -116,6 +143,13 @@ data class EngineTunables(
                         val b = value.toBooleanStrictOrNull()
                         if (b != null) t = t.copy(toolGrammar = b) else rejected += pair
                     }
+                    "engine_pack" ->
+                        if (value == "auto" || value == "off") t = t.copy(enginePack = value) else rejected += pair
+                    "flash_attn" -> {
+                        val b = value.toBooleanStrictOrNull()
+                        if (b != null) t = t.copy(flashAttention = b) else rejected += pair
+                    }
+                    "kv" -> if (i != null && i in -1..2) t = t.copy(kvPreference = i) else rejected += pair
                     else -> rejected += pair
                 }
             }
@@ -127,7 +161,7 @@ data class EngineTunables(
          * same route `LlamaCpp.gpuLayersOverride()` takes, and off-device it degrades to the
          * defaults, which is what keeps the JVM unit tests honest about the shipped numbers.
          */
-        fun fromSystemProperties(): EngineTunables {
+        fun fromSystemProperties(userSpec: String? = null): EngineTunables {
             val spec = try {
                 val cls = Class.forName("android.os.SystemProperties")
                 val get = cls.getMethod("get", String::class.java)
@@ -135,7 +169,12 @@ data class EngineTunables(
             } catch (e: Throwable) {
                 "" // No SystemProperties: unit tests, or a host without Android.
             }
-            val (tunables, rejected) = parse(spec.ifBlank { null })
+            // Two specs, one language (AURA-020): userSpec is what the settings UI persisted;
+            // spec is the debug property. The property wins, so the bench loop (setprop,
+            // force-stop, rerun) can always override what the UI saved without a settings trip.
+            val (fromUser, userRejected) = parse(userSpec?.ifBlank { null })
+            val (tunables, propRejected) = parse(spec.ifBlank { null }, base = fromUser)
+            val rejected = userRejected + propRejected
             Log.i(TAG, tunables.echo())
             rejected.forEach { Log.w(TAG, "unrecognised or malformed '$it' — ignored") }
             return tunables
@@ -159,6 +198,8 @@ data class EngineTunables(
             append(" ram_safety=").append(ramSafetyFraction)
             append(" reasoning=").append(reasoning ?: "template")
             append(" tool_grammar=").append(toolGrammar)
+            append(" engine_pack=").append(enginePack)
+            append(" flash_attn=").append(flashAttention ?: "auto").append(" kv=").append(kvPreference)
         }
         return if (this == DEFAULT) s else "$s   (OVERRIDDEN)"
     }

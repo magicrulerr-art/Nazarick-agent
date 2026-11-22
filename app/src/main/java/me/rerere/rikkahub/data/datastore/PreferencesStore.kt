@@ -35,8 +35,11 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.registry.ModelRegistry
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.data.ai.AssistantResolver
+import me.rerere.rikkahub.data.ai.AutoRouter
 import me.rerere.rikkahub.data.ai.ContextWindowResolver
+import me.rerere.rikkahub.data.ai.Decision
 import me.rerere.rikkahub.data.ai.DefaultAssistantPrompt
+import me.rerere.rikkahub.data.ai.TombProbe
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
 import me.rerere.rikkahub.data.ai.prompts.DEFAULT_LIBRARY_IMAGE_PROMPT
 import me.rerere.rikkahub.data.gemini.DENIED_MODEL_IDS
@@ -949,6 +952,10 @@ class SettingsStore(
                         is ProviderSetting.GeminiOAuth -> provider.copy(
                             models = dropDeniedGeminiOAuthModels(provider.models)
                         )
+
+                        is ProviderSetting.Nazarick -> provider.copy(
+                            models = provider.models.distinctBy { model -> model.id }
+                        )
                     }
                 },
                 assistants = settings.assistants.distinctBy { it.id }.map { assistant ->
@@ -1588,6 +1595,75 @@ fun Settings.getCurrentChatModel(): Model? {
     return findModelById(this.getCurrentAssistant().chatModelId ?: this.chatModelId)
 }
 
+/** Last known Tomb reachability, read by the AUTO branch of [resolveChatModel] (US-010). Defaults to
+ * true so a cold process behaves as it did under US-008. Since US-010r it is written by
+ * [tombReachableProbed], which calls the real [TombProbe] at most every 30s instead of waiting for a
+ * health writer; US-012 keeps that writer role for background health. Nothing else should. */
+var tombReachableCache: Boolean = true
+
+// US-010r: [tombReachableCache] is now refreshed by a real probe instead of waiting for a health
+// writer. Memoized for 30s so a burst of sends does not hammer the instance; both memo fields live
+// next to the cache they feed, and the cold value stays true so a fresh process behaves as under
+// US-008 until the first probe answers.
+private var lastResult: Boolean = true
+private var lastEpochMs: Long = 0L
+
+/**
+ * Whether the enabled Nazarick instance answers right now, read from the memo that is refreshed at
+ * most every 30s. This entry point MUST stay main-thread-safe: composition reaches it through
+ * [resolveChatModel], and a blocking socket on the main thread dies inside [TombProbe]'s catch-all
+ * with NetworkOnMainThreadException, poisoning the memo to false forever (z7 demo defect,
+ * 2026-11-21: every TOMB turn queued). So the refresh runs on a daemon thread and the caller is
+ * served the current memo; the send path wants a fresh answer and calls [tombReachableProbeNow]
+ * from a background thread instead.
+ */
+fun Settings.tombReachableProbed(): Boolean {
+    val now = System.currentTimeMillis()
+    if (now - lastEpochMs < TOMB_PROBE_MEMO_MS) return lastResult
+    // Nothing configured to probe: keep the cold, optimistic answer rather than declaring offline.
+    val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
+    if (probeRefreshInProgress.compareAndSet(false, true)) {
+        Thread({
+            try {
+                probeAndMemo(baseUrl)
+            } finally {
+                probeRefreshInProgress.set(false)
+            }
+        }, "TombProbeRefresh").apply { isDaemon = true }.start()
+    }
+    return lastResult
+}
+
+/**
+ * Synchronous probe + memo write. Call off the main thread only — the ChatService send path does it
+ * under `withContext(Dispatchers.IO)` right before consulting TombSendGate, which needs the fresh
+ * answer rather than a 30s-old memo.
+ */
+fun Settings.tombReachableProbeNow(): Boolean {
+    val baseUrl = providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled }?.baseUrl ?: return tombReachableCache
+    return probeAndMemo(baseUrl)
+}
+
+private fun probeAndMemo(baseUrl: String): Boolean =
+    TombProbe.probe(baseUrl).also { result ->
+        tombReachableCache = result
+        lastResult = result
+        lastEpochMs = System.currentTimeMillis()
+    }
+
+private val probeRefreshInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+
+private const val TOMB_PROBE_MEMO_MS = 30_000L
+
+/**
+ * True when the most recent AUTO turn answered locally because the Tomb was unreachable
+ * ([Decision.EDGE_OFFLINE_NOTICE]). Read by the chat badge next to the brain label (US-010r) and
+ * cleared as soon as a turn routes to the Tomb, or an explicit policy answers without a notice.
+ */
+var lastAutoOfflineNotice: Boolean = false
+
 /**
  * The chat model a conversation will actually talk to: the conversation's own override, then the
  * model of the assistant the conversation belongs to, then the global default.
@@ -1602,8 +1678,43 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     val assistant = assistantId
         ?.let { AssistantResolver.forConversation(this, it).assistant }
         ?: getCurrentAssistant()
-    return listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
-        .firstNotNullOfOrNull { providers.findModelById(it) }
+    // US-008 brain policy refined by US-010: AutoRouter decides, so an AUTO turn with an unreachable
+    // Tomb drops to the local chain with a notice instead of failing. EDGE is untouched, and an
+    // explicit per-conversation override (picker choice) always outranks policy.
+    val edgeChain = listOfNotNull(conversationChatModelId, assistant.chatModelId, chatModelId)
+    val tombReachable = tombReachableProbed()
+    val edgeModel = edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
+    // US-010r: the token threshold is consulted here, so TOKEN_BUDGET_THRESHOLD_TOKENS is live on the
+    // production AUTO path and not just in the unit tests. Only the *window* is cheap at this point:
+    // resolveChatModel is a pure Settings extension with no messages in scope, so there is no
+    // used-token count to subtract. The effective window (declared ceiling -> provider metadata ->
+    // ModelRegistry) is therefore passed as the most optimistic remaining budget: a model whose whole
+    // window already sits under the threshold cannot afford a Tomb round-trip and drops to the local
+    // chain. An unknown window means above budget, hence Int.MAX_VALUE rather than -1 - the router
+    // compares `remainingTokens < threshold`, so -1 would read as exhausted and flush every
+    // unknown-window turn to the edge. Tighter accounting needs the turn's messages, which the send
+    // path owns and can pass once this call grows an argument for it.
+    val remainingTokens = getEffectiveContextLength(edgeModel) ?: Int.MAX_VALUE
+    val decision = AutoRouter.decide(
+        policy = assistant.brainPolicy,
+        tombReachable = tombReachable,
+        hasLocalFallback = edgeModel != null,
+        remainingTokens = remainingTokens,
+    )
+    // US-010r consumer: the offline AUTO turn is reported through this flag and surfaced by the chat
+    // badge. True only for EDGE_OFFLINE_NOTICE; any TOMB route (and any explicit EDGE) clears it.
+    lastAutoOfflineNotice = decision == Decision.EDGE_OFFLINE_NOTICE
+    // enqueue point: done in US-010 - this function resolves a Model, it does not own the turn, so it
+    // never enqueues. The send path owns the turn text and the stable turn id and holds the pending
+    // turns through TombSendGate (TombSendGate.onSubmit / drainOnReconnect in ChatService).
+    if (conversationChatModelId == null && decision == Decision.TOMB) {
+        providers.filterIsInstance<ProviderSetting.Nazarick>()
+            .firstOrNull { it.enabled }
+            ?.models
+            ?.firstOrNull()
+            ?.let { return it }
+    }
+    return edgeChain.firstNotNullOfOrNull { providers.findModelById(it) }
 }
 
 private const val FALLBACK_CONTEXT_COMPACTION_TARGET_TOKENS = 2_000
@@ -1669,8 +1780,14 @@ fun Settings.getEffectiveContextLength(model: Model?): Int? =
  * P2-01 — every assistant lookup funnels through [AssistantResolver]; these extensions stay
  * for source compatibility but no longer carry logic of their own.
  */
+// Cold-boot safe (z7 launch-loop, 2026-11-15): the ChatInput/UseAssistant compose path calls
+// this during View.dispatchAttachedToWindow against an unloaded DataStore snapshot; the old
+// throwing resolver crash-looped the whole UI (stateIn attach frame -> FATAL main). The seed
+// Albedo card is the documented default for exactly this state — a placeholder for the frames
+// before the load lands, never persisted.
 fun Settings.getCurrentAssistant(): Assistant =
-    AssistantResolver.current(this.assistants, assistantId)
+    AssistantResolver.currentOrNull(this.assistants, assistantId)
+        ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo")
 
 fun Settings.getAssistantById(id: Uuid): Assistant? =
     AssistantResolver.byId(this.assistants, id)
