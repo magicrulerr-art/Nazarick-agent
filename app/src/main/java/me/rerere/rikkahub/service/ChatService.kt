@@ -1032,10 +1032,14 @@ class ChatService(
     }
 
     fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
-        if (content.isEmptyInputMessage()) return
+        if (content.isEmptyInputMessage()) {
+            Log.w("US003PROBE", "S1 ChatService.GUARD isEmptyInput -> drop cid=${conversationId.toString().take(8)}")
+            return
+        }
         val session = getOrCreateSession(conversationId)
         synchronized(session) {
             if (session.messageQueue.state.value.messages.isEmpty()) session.messageQueue.resume()
+            Log.d("US003PROBE", "S1 ChatService.enqueue cid=${conversationId.toString().take(8)} paused=${session.messageQueue.state.value.paused} job!=null=${session.getJob() != null}")
             session.messageQueue.enqueue(content, answer)
             dispatchNextQueuedMessage(conversationId)
         }
@@ -1066,8 +1070,14 @@ class ChatService(
             // A pending tool approval is still part of the current turn.
             if (session.getJob() != null || session.state.value.currentMessages.any { message ->
                     message.parts.any { it is UIMessagePart.Tool && it.isPending }
-                }) return null
-            val next = session.messageQueue.takeNext() ?: return null
+                }) {
+                Log.w("US003PROBE", "S2 dispatch.NULL arm=${if (session.getJob() != null) "job" else "pendingTool"} cid=${conversationId.toString().take(8)}")
+                return null
+            }
+            val next = session.messageQueue.takeNext() ?: run {
+                Log.w("US003PROBE", "S2 dispatch.NULL arm=takeNext cid=${conversationId.toString().take(8)}")
+                return null
+            }
             session.submittingMessage = next
             return sendQueuedMessage(session, next)
         }
@@ -1105,20 +1115,23 @@ class ChatService(
                 // TombSendGate instead of failing. Reconnect is detected probe-at-next-send (there is
                 // no connectivity listener until US-012 owns a background pump), so the backlog is
                 // drained here — oldest first, before the turn being sent now.
+                val probeT0 = System.currentTimeMillis()
                 val tombReachable = withContext(Dispatchers.IO) { settings.tombReachableProbeNow() }
+                Log.d("US003PROBE", "S3 probeNow reachable=$tombReachable ms=${System.currentTimeMillis() - probeT0} baseUrl=${settings.providers.filterIsInstance<me.rerere.ai.provider.ProviderSetting.Nazarick>().firstOrNull { it.enabled }?.baseUrl}")
                 if (answer) {
                     for (turn in TombSendGate.drainOnReconnect(tombReachable)) {
                         saveConversation(conversationId, session.state.value.withReplayedTombTurn(turn.text))
                         handleMessageComplete(conversationId)
                     }
-                    if (TombSendGate.onSubmit(
+                    val gate = TombSendGate.onSubmit(
                             policy = assistant.brainPolicy,
                             tombReachable = tombReachable,
                             turnText = processedContent.filterIsInstance<UIMessagePart.Text>()
                                 .joinToString("\n") { it.text },
                             turnId = queued.id.toString(),
-                            ) == TombSendGate.Gate.QUEUED
-                    ) {
+                            )
+                    Log.d("US003PROBE", "S5 gate verdict=$gate gateQUEUED=${gate == TombSendGate.Gate.QUEUED} policy=${assistant.brainPolicy} tombReachable=$tombReachable cid=${conversationId.toString().take(8)}")
+                    if (gate == TombSendGate.Gate.QUEUED) {
                         saveConversation(conversationId, currentConversation.withTombQueuedTurn(processedContent))
                         session.submittingMessage = null
                         queued.reply?.completeWith(runCatching { TOMB_QUEUED_NOTICE })

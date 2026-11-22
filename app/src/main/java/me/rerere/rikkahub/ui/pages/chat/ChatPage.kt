@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import android.util.Log
+
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -542,9 +544,13 @@ private fun ChatPageContent(
                         vm.stopGeneration()
                     },
                     onSendClick = {
+                        Log.d("US003PROBE", "S0a ChatPage.onSendClick init=${setting.init} modelNull=${currentChatModel == null}")
                         // Settings.dummy() is still standing in for the real settings: nothing
                         // resolves yet, so do nothing (the draft stays) rather than misreport.
-                        if (setting.init) return@ChatInput
+                        if (setting.init) {
+                            Log.w("US003PROBE", "S0b ChatPage.GUARD setting.init=true -> send DROPPED")
+                            return@ChatInput
+                        }
                         if (currentChatModel == null) {
                             toaster.show(
                                 context.getString(R.string.chat_select_model_first),
@@ -565,6 +571,7 @@ private fun ChatPageContent(
                             // Routing matters only when a turn is generated: the long-press path
                             // (answer = false) stores the message without ever calling a provider.
                             applyImageDestination()
+                            Log.d("US003PROBE", "S0b ChatPage.callVM.handleMessageSend model=${currentChatModel?.id?.toString()?.take(8)}")
                             vm.handleMessageSend(inputState.getContents())
                             scope.launch {
                                 delay(100.milliseconds)

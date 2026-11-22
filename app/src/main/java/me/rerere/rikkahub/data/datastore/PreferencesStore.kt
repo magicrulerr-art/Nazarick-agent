@@ -1648,6 +1648,7 @@ fun Settings.tombReachableProbeNow(): Boolean {
 
 private fun probeAndMemo(baseUrl: String): Boolean =
     TombProbe.probe(baseUrl).also { result ->
+        if (!result) Log.w("US003PROBE", "S3 probeAndMemo FAIL baseUrl=$baseUrl (TombProbe never throws -> exception swallowed in TombProbe.probe)")
         tombReachableCache = result
         lastResult = result
         lastEpochMs = System.currentTimeMillis()
@@ -1704,6 +1705,7 @@ fun Settings.resolveChatModel(conversationChatModelId: Uuid?, assistantId: Uuid?
     // US-010r consumer: the offline AUTO turn is reported through this flag and surfaced by the chat
     // badge. True only for EDGE_OFFLINE_NOTICE; any TOMB route (and any explicit EDGE) clears it.
     lastAutoOfflineNotice = decision == Decision.EDGE_OFFLINE_NOTICE
+    Log.d("US003PROBE", "S6 resolveChatModel decision=$decision tombReachable=$tombReachable policy=${assistant.brainPolicy} edgeModel=${edgeModel?.id?.toString()?.take(8)} convOverride=${conversationChatModelId?.toString()?.take(8)}")
     // enqueue point: done in US-010 - this function resolves a Model, it does not own the turn, so it
     // never enqueues. The send path owns the turn text and the stable turn id and holds the pending
     // turns through TombSendGate (TombSendGate.onSubmit / drainOnReconnect in ChatService).

@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.components.ai
 
+import android.util.Log
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -178,6 +180,7 @@ fun ChatInput(
     var isFullScreen by remember { mutableStateOf(false) }
 
     fun sendMessage() {
+        Log.d("US003PROBE", "S0a ChatInput.sendClick loading=$loading stateEmpty=${state.isEmpty()}")
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
         if (loading && state.isEmpty()) onCancelClick() else onSendClick()

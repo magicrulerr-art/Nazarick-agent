@@ -637,6 +637,7 @@ class GenerationLoop(
     var pendingLengthContinuation = false
         var pendingStallNudge = false
 
+        Log.d("US003PROBE", "S8 GenerationLoop.enter before first streamText model=${model.id}")
         for (stepIndex in 0 until maxSteps) {
             // Wall-clock cap: any single user turn that has been running longer than the
             // budget is force-ended, regardless of whether the model wants more steps.
