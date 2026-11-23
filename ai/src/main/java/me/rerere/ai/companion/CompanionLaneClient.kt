@@ -1,8 +1,8 @@
 package me.rerere.ai.companion
 
-import okhttp3.MediaType
 import okhttp3.Request
-import okhttp3.RequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * US-008: companion-lane client.
@@ -60,12 +60,7 @@ class CompanionLaneRequestBuilder private constructor(
             .url(chatUrl(agentId))
             .header("X-Companion-Device", config.deviceId)
             .header("Authorization", config.authorization)
-            .post(
-                RequestBody.create(
-                    "{}".toByteArray(),
-                    MediaType.get("application/json"),
-                )
-            )
+            .post("{}".toRequestBody("application/json".toMediaType()))
             .build()
     }
 }
