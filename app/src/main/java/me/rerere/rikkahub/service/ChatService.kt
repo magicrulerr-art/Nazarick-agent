@@ -416,6 +416,9 @@ data class ChatError(
     val conversationId: Uuid? = null,
     val timestamp: Long = System.currentTimeMillis(),
     val solution: ChatErrorSolution? = null,
+    /** Keep the card on screen until the user dismisses it. Set for failures that END a turn
+     *  (an empty assistant bubble is left behind, so the explanation must outlive a timer). */
+    val sticky: Boolean = false,
 )
 
 enum class ChatErrorSolution {
@@ -714,9 +717,18 @@ class ChatService(
         conversationId: Uuid? = null,
         title: String? = null,
         solution: ChatErrorSolution? = null,
+        sticky: Boolean = false,
     ) {
         if (error is CancellationException) return
-        _errors.update { it + ChatError(title = title, error = error, conversationId = conversationId, solution = solution) }
+        _errors.update {
+            it + ChatError(
+                title = title,
+                error = error,
+                conversationId = conversationId,
+                solution = solution,
+                sticky = sticky,
+            )
+        }
     }
 
     fun dismissError(id: Uuid) {
@@ -2880,7 +2892,16 @@ class ChatService(
             }
 
             it.printStackTrace()
-            addError(it, conversationId, title = context.getString(R.string.error_title_generation))
+            // US-005 (z7 send-stall): this is the terminal surface of a dead turn - after it
+            // returns the bubble stays empty, so the explanation must not evaporate the way a
+            // transient warning may. Capture4 proof: ladder ended +11.3 s, card auto-dismissed
+            // +5 s later, the UI dump at +26 s held no error text at all.
+            addError(
+                it,
+                conversationId,
+                title = context.getString(R.string.error_title_generation),
+                sticky = true,
+            )
             Logging.log(TAG, "handleMessageComplete: $it")
             Logging.log(TAG, it.stackTraceToString())
         }.onSuccess {

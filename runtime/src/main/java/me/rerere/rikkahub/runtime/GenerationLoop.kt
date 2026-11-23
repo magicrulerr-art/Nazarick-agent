@@ -130,6 +130,31 @@ private fun isContextLimitFailure(failure: Throwable): Boolean =
                 "maximum context window" in text
         }
 
+// A local-model capacity refusal (ModelTooLargeException, thrown by both the MemoryGuard and
+// the global budget ledger inside LlamaCppRuntime.load) is deterministic: nothing about the
+// device changes between attempt 1 and attempt 5, so replaying the ladder only delays the
+// message the user needs. US-004 capture4 on z7 is the proof - the SAME exception
+// ("only 2838MB is unreserved of the 2838MB free while this model needs 3543MB (held: {})")
+// fired five times across 11.3 s with nothing else even loaded, then the turn died.
+//
+// Matched by class name + message markers instead of the type because :runtime does not depend
+// on :llama-cpp - the same reason isContextLimitFailure above is a string match.
+private val MODEL_CAPACITY_MARKERS = listOf(
+    "local model budget cannot seat",
+    "this model needs about ",
+    "model's file size could not be read",
+)
+
+private fun isModelCapacityFailure(failure: Throwable): Boolean =
+    generateSequence(failure) { it.cause }
+        .take(8)
+        .any { cause ->
+            cause.javaClass.simpleName == "ModelTooLargeException" ||
+                MODEL_CAPACITY_MARKERS.any { marker ->
+                    cause.message?.contains(marker, ignoreCase = true) == true
+                }
+        }
+
 private fun generationStreamRetryDelayMs(retryAttempt: Long): Long =
     ((retryAttempt + 1) * GENERATION_STREAM_RETRY_INITIAL_DELAY_MS)
         .coerceAtMost(GENERATION_STREAM_RETRY_MAX_DELAY_MS)
@@ -2109,6 +2134,9 @@ internal fun shouldRetryGenerationStreamFailure(
         return false
     }
     if (failure is ResponseStreamErrorException || isContextLimitFailure(failure)) {
+        return false
+    }
+    if (isModelCapacityFailure(failure)) {
         return false
     }
     if (isNonRetryableClientError(failure)) {

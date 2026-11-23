@@ -114,10 +114,15 @@ fun ErrorCard(
     val checkFastModelSettings = stringResource(R.string.chat_page_check_fast_model_settings)
     val linkColor = MaterialTheme.colorScheme.primary
 
-    // 5 秒后自动消失
+    // 5 秒后自动消失 — unless the card is sticky. A turn-ending failure leaves an empty bubble
+    // behind, and the timer is what made the z7 send-stall read as "tap → nothing": the card
+    // appeared 11 s after the send (after the retries) and self-dismissed 5 s later, long
+    // before anyone looked back at the chat. Sticky cards wait for the user to dismiss them.
     LaunchedEffect(error.id) {
-        delay(5000)
-        onDismiss()
+        if (!error.sticky) {
+            delay(5000)
+            onDismiss()
+        }
     }
 
     Surface(
