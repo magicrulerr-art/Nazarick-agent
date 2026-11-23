@@ -194,6 +194,14 @@ fun ChatMessage(
                 )
             }
         }
+        // US-009r: which brain produced THIS answer, read back from the message itself rather
+        // than from whatever model is selected now. Empty is the legacy value and draws nothing,
+        // so every message written before this card keeps rendering exactly as it did (AC3), and
+        // a turn still streaming draws nothing either - the stamp lands when it finalizes.
+        if (message.role == MessageRole.ASSISTANT) {
+            BrainBadgeChip(stored = message.brainKind)
+        }
+
         ProvideTextStyle(textStyle) {
             MessagePartsBlock(
                 assistant = assistant,
@@ -684,8 +692,11 @@ private fun MessagePartsBlock(
         }
     }
 
-    // Annotations (always rendered at the end)
-    if (annotations.isNotEmpty()) {
+    // Annotations (always rendered at the end). LC-1 stamps every finished assistant
+    // message with a finish_reason annotation, so this block narrows to citations:
+    // otherwise every answer grows a "1 citations" button that opens onto nothing.
+    val citations = annotations.filterIsInstance<UIMessageAnnotation.UrlCitation>()
+    if (citations.isNotEmpty()) {
         Column(
             modifier = Modifier.animateContentSize(),
         ) {
@@ -709,23 +720,19 @@ private fun MessagePartsBlock(
                             .padding(4.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        annotations.fastForEachIndexed { index, annotation ->
-                            when (annotation) {
-                                is UIMessageAnnotation.UrlCitation -> {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Favicon(annotation.url, modifier = Modifier.size(20.dp))
-                                        Text(
-                                            text = buildAnnotatedString {
-                                                append("${index + 1}. ")
-                                                withLink(LinkAnnotation.Url(annotation.url)) {
-                                                    append(annotation.title.urlDecode())
-                                                }
-                                            }
-                                        )
+                        citations.fastForEachIndexed { index, citation ->
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Favicon(citation.url, modifier = Modifier.size(20.dp))
+                                Text(
+                                    text = buildAnnotatedString {
+                                        append("${index + 1}. ")
+                                        withLink(LinkAnnotation.Url(citation.url)) {
+                                            append(citation.title.urlDecode())
+                                        }
                                     }
-                                }
+                                )
                             }
                         }
                     }
@@ -736,7 +743,7 @@ private fun MessagePartsBlock(
                     expand = !expand
                 }
             ) {
-                Text(stringResource(R.string.citations_count, annotations.size))
+                Text(stringResource(R.string.citations_count, citations.size))
             }
         }
     }

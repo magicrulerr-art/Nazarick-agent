@@ -74,6 +74,8 @@ private const val TOOL_OUTPUT_MAX_BYTES = 200L * 1024L * 1024L
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Engine-pack lanes (US-006): remember app dirs + log what verified on disk.
+        me.rerere.llamacpp.EnginePackRegistry.init(this)
         // Give the accessibility tool bridge an application context so its "service not active"
         // envelope can tell "never enabled" apart from "the system killed it in the background".
         AccessibilityServiceHandle.attach(this)

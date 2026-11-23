@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.ui.pages.chat
 
 import me.rerere.rikkahub.costguards.TokenBudgetTracker
+import me.rerere.rikkahub.data.ai.BadgeKind
+import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.usage.TurnFooter
 import me.rerere.rikkahub.ui.pages.stats.formatCompactTokens
@@ -27,6 +29,27 @@ internal fun usedTokensOrFallback(ledgerTokens: Long, fallback: () -> Long): Lon
 /** The part of the regular subtitle that may ellipsize: "Assistant / Model". */
 internal fun topBarSubtitleName(assistantName: String, modelName: String): String =
     "$assistantName / $modelName"
+
+/**
+ * US-009: badge text naming the brain that answers — "Tomb" for Nazarick, "Edge" for every
+ * other provider, empty when there is no brain to name. Plain literals on purpose: the badge
+ * is a status label, not a localized UI string.
+ */
+internal fun brainBadgeLabel(kind: BadgeKind): String = brainBadgeLabel(BrainBadge.stored(kind))
+
+/**
+ * US-009r: the same text read back from a message's stored `brainKind`, so the per-message chip
+ * on a bubble and the top-bar badge of a live conversation can never disagree on wording.
+ * Anything unrecognised — including `""`, which is what every pre-US-009r message decodes to —
+ * yields no label, hence no chip. What a message stores may carry detail behind the kind
+ * (`tomb:aura@host`, `edge:gemini-x`, from `BrainBadge.storedDetail`), so only the part before
+ * the first `:` is matched: the wording stays coarse and identical to the top bar either way.
+ */
+internal fun brainBadgeLabel(stored: String): String = when (stored.substringBefore(':')) {
+    BrainBadge.STORED_TOMB -> "Tomb"
+    BrainBadge.STORED_EDGE -> "Edge"
+    else -> ""
+}
 
 /**
  * The part of the regular subtitle that must stay whole: " / N token(s)".

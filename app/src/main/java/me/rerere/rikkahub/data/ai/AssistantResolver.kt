@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
+import me.rerere.rikkahub.data.datastore.DEFAULT_ASSISTANT_ID
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import kotlin.uuid.Uuid
@@ -57,12 +58,23 @@ object AssistantResolver {
         assistants.firstOrNull { it.id == id }
 
     /**
+     * The global "current" assistant, or `null` when nothing resolves — including the empty
+     * list. Cold-boot callers (ChatService session hydration) hit the resolver against a
+     * DataStore snapshot whose assistants had not loaded yet; the throwing form crashed
+     * ChatVM on launch and drove z7 into SafeMode twice on 2026-11-15 (z7 battery, 00:16 +
+     * 07:54 local: NoSuchElementException at getCurrentAssistant).
+     */
+    fun currentOrNull(assistants: List<Assistant>, currentAssistantId: Uuid?): Assistant? =
+        assistants.find { it.id == currentAssistantId } ?: assistants.firstOrNull()
+
+    /**
      * The global "current" assistant: whatever the app-level pointer names, else the first
      * assistant. Throws on an empty list — the same `assistants.first()` the callers used to
-     * do inline.
+     * do inline. Cold-boot paths should use [currentOrNull] with a seeded fallback instead.
      */
     fun current(assistants: List<Assistant>, currentAssistantId: Uuid?): Assistant =
-        assistants.find { it.id == currentAssistantId } ?: assistants.first()
+        currentOrNull(assistants, currentAssistantId)
+            ?: throw NoSuchElementException("List is empty.")
 
     /**
      * The assistant a conversation belongs to, falling back to the global pointer when the
@@ -106,8 +118,19 @@ object AssistantResolver {
 
     fun current(settings: Settings): Assistant = current(settings.assistants, settings.assistantId)
 
+    // Seed fallback (z7 crash 15:40 device-local, 3rd cold-boot site): a conversation bound
+    // to a dangling assistantId (pm clear removes the assistant but the Room conversation row
+    // survives) hits the GLOBAL_CURRENT branch, which used to call the throwing current()
+    // against an unloaded snapshot -> NoSuchElementException at ChatInput attach (resolveChatModel).
     fun forConversation(settings: Settings, conversationAssistantId: Uuid): Resolution =
-        forConversation(settings.assistants, conversationAssistantId, settings.assistantId)
+        if (settings.assistants.isEmpty()) {
+            Resolution(
+                Assistant(id = DEFAULT_ASSISTANT_ID, name = "Albedo"),
+                Source.GLOBAL_CURRENT,
+            )
+        } else {
+            forConversation(settings.assistants, conversationAssistantId, settings.assistantId)
+        }
 
     fun forWorkflow(settings: Settings, authoringAssistantId: String?): Resolution? =
         forWorkflow(settings.assistants, authoringAssistantId)

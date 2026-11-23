@@ -86,10 +86,16 @@ import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.costguards.TokenBudgetTracker
+import me.rerere.rikkahub.data.ai.BrainBadge
 import me.rerere.rikkahub.data.usage.TurnFooter
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.runtime.findProvider
+import me.rerere.rikkahub.data.ai.ImageDestination
+import me.rerere.rikkahub.data.ai.initialChoice
+import me.rerere.rikkahub.data.ai.tombEnabled
+import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.getCurrentAssistant
+import me.rerere.rikkahub.data.datastore.lastAutoOfflineNotice
 import me.rerere.rikkahub.data.datastore.resolveChatModel
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
@@ -423,6 +429,28 @@ private fun ChatPageContent(
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val assistant = setting.getCurrentAssistant()
     var showFilesSheet by remember { mutableStateOf(false) }
+    // US-011r AC1: Edge|Tomb destination for images on this draft. The default and whether
+    // Tomb may be picked come from the pure helpers in ComposerImageToggle; the choice is
+    // applied to the turn at send (Tomb = the enabled Nazarick model, whose provider encodes
+    // the image part; Edge = the assistant's own model, so the image never leaves the device).
+    val tombProvider = setting.providers.filterIsInstance<ProviderSetting.Nazarick>()
+        .firstOrNull { it.enabled && it.baseUrl.isNotBlank() }
+    var imageDestination by rememberSaveable { mutableStateOf<ImageDestination?>(null) }
+    val draftHasImage = inputState.messageContent.any { it is UIMessagePart.Image }
+    val effectiveImageDestination = if (draftHasImage) {
+        imageDestination ?: initialChoice(assistant.brainPolicy, tombProvider != null)
+    } else {
+        null
+    }
+    fun applyImageDestination() {
+        val target = when (effectiveImageDestination) {
+            null -> return
+            ImageDestination.TOMB -> tombProvider?.models?.firstOrNull()
+            ImageDestination.EDGE ->
+                setting.providers.findModelById(assistant.chatModelId ?: setting.chatModelId)
+        }
+        if (target != null) vm.setConversationChatModel(target)
+    }
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
@@ -534,6 +562,9 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
+                            // Routing matters only when a turn is generated: the long-press path
+                            // (answer = false) stores the message without ever calling a provider.
+                            applyImageDestination()
                             vm.handleMessageSend(inputState.getContents())
                             scope.launch {
                                 delay(100.milliseconds)
@@ -580,6 +611,9 @@ private fun ChatPageContent(
                     onMoreClick = {
                         showFilesSheet = true
                     },
+                    imageDestination = effectiveImageDestination,
+                    tombSelectable = tombEnabled(assistant.brainPolicy),
+                    onImageDestinationChange = { imageDestination = it },
                 )
             },
             containerColor = Color.Transparent,
@@ -940,6 +974,11 @@ private fun TopBar(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (model != null) {
+                        // US-009: the brain that answers this conversation, shown after the
+                        // model name. Resolved from the provider that actually owns the model.
+                        val brainBadge = brainBadgeLabel(
+                            BrainBadge.kind(model, model.findProvider(settings.providers)),
+                        )
                         // Aggregate conversation token consumption across all turns and tool calls.
                         // UsageLedger (turnFooters) is the ground truth (includes all tool loop steps);
                         // fallback to TokenBudgetTracker for legacy or imported conversations without ledger rows.
@@ -958,7 +997,14 @@ private fun TopBar(
                         // text instead of stretching to the title slot.
                         TopBarSubtitleLine(
                             assistantName = assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) },
-                            modelName = model.displayName,
+                            // US-009r brain badge + US-010r offline notice: both suffixes on one line.
+                            // US-010r: an AUTO turn that answered locally because the Tomb was
+                            // unreachable says so on the badge. "kind == EDGE" is the resolved model
+                            // not belonging to the enabled Nazarick (Tomb) provider.
+                            modelName = model.displayName +
+                                (if (brainBadge.isEmpty()) "" else " · $brainBadge") +
+                                (if (lastAutoOfflineNotice && !isTombModel(settings, model))
+                                    " offline: answered locally" else ""),
                             usedTokens = usedTokens,
                             color = LocalContentColor.current.copy(0.65f),
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -999,6 +1045,21 @@ private fun TopBar(
         },
     )
 }
+
+/**
+ * US-010r: true when [model] is served by the enabled Nazarick instance (the Tomb). Everything else
+ * is answered on-device, i.e. kind == EDGE, which is the case the offline notice may annotate.
+ *
+ * Reads the plain `lastAutoOfflineNotice` var, so the badge refreshes with the next recomposition of
+ * the title (any send or settings change triggers one) rather than observing the flag directly.
+ */
+private fun isTombModel(settings: Settings, model: Model): Boolean = settings
+    .providers
+    .filterIsInstance<ProviderSetting.Nazarick>()
+    .firstOrNull { it.enabled }
+    ?.models
+    ?.any { it.id == model.id }
+    ?: false
 
 /**
  * The title bar keeps its transparent background (the conversation shows through); only the three
