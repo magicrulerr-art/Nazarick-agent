@@ -425,7 +425,7 @@ internal fun companionTurnRequest(
     val url = nazarickUrl(settings.baseUrl, companionChatPath(settings))
         ?: throw IllegalArgumentException("invalid nazarick baseUrl: ${settings.baseUrl}")
     val body = buildCompanionTurnBody(messages, sessionId, settings)
-        .toRequestBody(JSON_MEDIA_TYPE.toMediaType())
+        .toRequestBody("application/json".toMediaType())
     return Request.Builder().url(url).apply {
         companionHeaders(
             deviceId = settings.companion_device_id,
