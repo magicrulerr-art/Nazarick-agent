@@ -5,6 +5,7 @@ import me.rerere.ai.provider.AICORE_PROVIDER_ID
 import me.rerere.ai.provider.LLAMACPP_PROVIDER_ID
 import me.rerere.ai.provider.SDCPP_PROVIDER_ID
 import me.rerere.ai.provider.LITERT_PROVIDER_ID
+import me.rerere.ai.provider.NAZARICK_PROVIDER_ID
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.R
 import kotlin.uuid.Uuid
@@ -63,6 +64,9 @@ private val BUILT_IN_PROVIDER_CATEGORY: Map<Uuid, ProviderCategory> = buildMap {
     put(Uuid.parse("d5734028-d39b-4d41-9841-fd648d65440e"), ProviderCategory.INTERNATIONAL) // OpenRouter
     put(Uuid.parse("386e0f29-8228-4512-affe-8fd8add82d88"), ProviderCategory.INTERNATIONAL) // Vercel AI Gateway
     put(Uuid.parse("ff3cde7e-0f65-43d7-8fb2-6475c99f5990"), ProviderCategory.INTERNATIONAL) // xAI
+    // 自建远端实例：与聚合网关同属联网服务商，不能落进「其他」（该组只留给用户自建行，
+    // 见 DefaultProvidersTest 的 every-default-provider-is-assigned-an-explicit-category）。
+    put(NAZARICK_PROVIDER_ID, ProviderCategory.INTERNATIONAL) // Nazarick (self-hosted instance)
 }
 
 /** 服务商所属分组；非内置（用户自建/导入）一律 [ProviderCategory.OTHER]。 */

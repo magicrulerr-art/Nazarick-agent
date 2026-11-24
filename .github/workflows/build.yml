@@ -620,6 +620,7 @@ jobs:
           --tests "me.rerere.rikkahub.data.ai.BrainBadgeTest"
           --tests "me.rerere.rikkahub.data.ai.BrainBadgeDetailTest"
           --tests "me.rerere.rikkahub.data.ai.BrainKindPersistenceTest"
+          --tests "me.rerere.rikkahub.data.datastore.migration.PreferenceStoreV6MigrationTest"
 
       - name: Upload test report
         if: always()

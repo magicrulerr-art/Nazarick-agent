@@ -188,6 +188,9 @@ private fun createSettingsDataStore(context: Context): DataStore<Preferences> {
             PreferenceStoreV3Migration(),
             PreferenceStoreV4Migration(),
             PreferenceStoreV5Migration(),
+            // DEF-A (US-004d): seed the built-in nazarick row into the stored providers blob so an
+            // upgraded install persists it (read-side merge alone never reaches disk).
+            PreferenceStoreV6Migration(),
         ),
         produceFile = { file },
     )
