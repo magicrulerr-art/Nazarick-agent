@@ -39,6 +39,8 @@ import me.rerere.ai.ui.ServerToolStatus
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.ToolApprovalState
+import me.rerere.ai.core.LlmFinishReason
+import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.StreamChunkHandler
 import me.rerere.ai.ui.handleTextGenerationResult
@@ -126,6 +128,31 @@ private fun isContextLimitFailure(failure: Throwable): Boolean =
             "context length exceeded" in text ||
                 "maximum context length" in text ||
                 "maximum context window" in text
+        }
+
+// A local-model capacity refusal (ModelTooLargeException, thrown by both the MemoryGuard and
+// the global budget ledger inside LlamaCppRuntime.load) is deterministic: nothing about the
+// device changes between attempt 1 and attempt 5, so replaying the ladder only delays the
+// message the user needs. US-004 capture4 on z7 is the proof - the SAME exception
+// ("only 2838MB is unreserved of the 2838MB free while this model needs 3543MB (held: {})")
+// fired five times across 11.3 s with nothing else even loaded, then the turn died.
+//
+// Matched by class name + message markers instead of the type because :runtime does not depend
+// on :llama-cpp - the same reason isContextLimitFailure above is a string match.
+private val MODEL_CAPACITY_MARKERS = listOf(
+    "local model budget cannot seat",
+    "this model needs about ",
+    "model's file size could not be read",
+)
+
+private fun isModelCapacityFailure(failure: Throwable): Boolean =
+    generateSequence(failure) { it.cause }
+        .take(8)
+        .any { cause ->
+            cause.javaClass.simpleName == "ModelTooLargeException" ||
+                MODEL_CAPACITY_MARKERS.any { marker ->
+                    cause.message?.contains(marker, ignoreCase = true) == true
+                }
         }
 
 private fun generationStreamRetryDelayMs(retryAttempt: Long): Long =
@@ -350,6 +377,49 @@ internal const val STALL_NUDGE_INSTRUCTION =
         "If you already have the answer, write it for the user directly. " +
         "Do not stop after thinking again — this reply must contain a tool call or an answer."
 
+// AURA-021 (LC-3 + A1): a step cut by the response-token cap is NOT a stall — the
+// thought is real, the budget was not. The loop continues it with strictly more tokens
+// (nextEscalatedMaxTokens) and the reasoning already in history, budgeted by
+// MAX_CONTINUATIONS per user turn, separate from MAX_STALL_NUDGES because the two
+// faults have different remedies and must not starve each other.
+internal const val MAX_CONTINUATIONS = 2
+
+/**
+ * The honest terminal note (loop contract LC-3): when an answer keeps hitting the response-token
+ * cap, the user is told the budget that was tried and the cap that stopped it, instead of being
+ * handed half a sentence and a shrug.
+ *
+ * Extracted from the loop body for one reason: the test that claims to prove this message exists
+ * must read the SAME string the UI shows. A hand-copied mirror in a test passes long after the
+ * production wording has drifted, which is exactly the false green this program was called for.
+ */
+internal fun continuationCapNote(lastBudget: Int?, cap: Int = MAX_CONTINUATIONS): String =
+    "\n[stopped: this answer kept hitting the response token limit " +
+        "(last budget: max_tokens=$lastBudget, cap $cap continuations). Raise the assistant's token limit " +
+        "or lower the thinking budget to get more.]"
+
+internal const val LENGTH_CONTINUATION_INSTRUCTION =
+    "Your previous answer hit the response token limit mid-generation. Continue exactly " +
+        "where you stopped: same train of thought, same language. Finish the answer, or " +
+        "emit the tool call you were preparing. Do not restart from the beginning."
+
+/**
+ * A1 escalation ladder: strictly greater than [previous]; from [baseline]
+ * (= assistant.maxTokens of the attempt being continued) when nothing was escalated
+ * yet. +50% with a 256 floor: small models need a visible jump, big ones must not
+ * request absurd contexts. Pure so the JVM test can pin the contract.
+ */
+internal fun nextEscalatedMaxTokens(previous: Int?, baseline: Int): Int =
+    previous?.let { it + maxOf(256, it / 2) } ?: (baseline + maxOf(256, baseline / 2))
+
+/** Default baseline when the assistant carries no maxTokens (matches provider defaults). */
+internal const val DEFAULT_CONTINUATION_BASELINE = 4096
+
+/** Typed finish reason recorded on a message, newest wins; null for pre-contract history. */
+internal fun lastFinishReason(msg: UIMessage?): LlmFinishReason? =
+    msg?.annotations?.filterIsInstance<UIMessageAnnotation.FinishReason>()?.lastOrNull()?.reason
+
+
 /**
  * True when the CURRENT step of [msg] carries no user-visible reply and no fresh tool
  * progress. A turn accumulates every step into ONE assistant message, so the parts list
@@ -501,6 +571,12 @@ class GenerationLoop(
         // `tool_open` is callable on its very next step, in the same turn. Default: empty, so
         // every caller that does not pass it sends exactly the surface it sent before.
         extraToolsProvider: suspend () -> List<Tool> = { emptyList() },
+        // LC-2 (US-002, Demiurge REJECT 2026-11-14) - the loop builds its OWN tools when
+        // assistant.enableMemory is set, BELOW the ChatService gate, so those tools never meet
+        // ToolSurfaceGuard.enforce and a rostered guardian gets offered memory tools its row
+        // never granted. :app passes the same guard it applies everywhere else; the default is
+        // passthrough, so every caller that does not pass it is byte-identical.
+        filterInjectedTools: (List<Tool>) -> List<Tool> = { it },
         // Read live from the runtime holder, not captured once: the default expression is
         // evaluated per call, so a settings change takes effect on the next turn.
         maxSteps: Int = ToolRuntimeLimits.maxToolSteps,
@@ -579,6 +655,11 @@ class GenerationLoop(
         // completed turn: the chat went silent with no error. Retry budget for nudging those
         // steps back to life; see stalledWithoutReply + STALL_NUDGE_INSTRUCTION below.
         var stallNudgesUsed = 0
+    // AURA-021 (LC-3 + A1): typed-continuation state for THIS user turn (fresh per run,
+    // like stallNudgesUsed beside it — the escalation chain must not leak across turns).
+    var continuationsUsed = 0
+    var escalatedMaxTokens: Int? = null
+    var pendingLengthContinuation = false
         var pendingStallNudge = false
 
         for (stepIndex in 0 until maxSteps) {
@@ -622,7 +703,7 @@ class GenerationLoop(
                         onDelete = { id ->
                             memoryRepo.deleteMemory(id)
                         }
-                    ).let(this::addAll)
+                    ).let { addAll(filterInjectedTools(it)) }
                 }
                 addAll(tools)
                 // Re-read every step (see extraToolsProvider): this is how a tool the model
@@ -691,9 +772,16 @@ class GenerationLoop(
                             add(STALL_NUDGE_INSTRUCTION)
                             pendingStallNudge = false
                         }
+                        // AURA-021 (LC-3): same request-only contract as the stall nudge —
+                        // the continuation instruction must never render or persist.
+                        if (pendingLengthContinuation) {
+                            add(LENGTH_CONTINUATION_INSTRUCTION)
+                            pendingLengthContinuation = false
+                        }
                     }
                     generateInternal(
                         assistant = assistant,
+                        escalatedMaxTokens = escalatedMaxTokens,
                         systemInjection = systemInjection,
                         settings = settings,
                         systemAddendum = systemAddendum,
@@ -780,7 +868,18 @@ class GenerationLoop(
                                 if (messages.isNotEmpty()) {
                                     messages = messages.slice(0 until messages.lastIndex) + messages.last().copy(
                                         finishedAt = Clock.System.now()
-                                            .toLocalDateTime(TimeZone.currentSystemDefault())
+                                            .toLocalDateTime(TimeZone.currentSystemDefault()),
+                                        // AURA-021 (LC-1): a user stop is its OWN typed
+                                        // ending — without the stamp the next session's
+                                        // trimming/continuation logic cannot tell a cut
+                                        // thought from a stopped one. Only stamp when the
+                                        // provider never said (pre-contract = Unknown):
+                                        // a real reason outranks the stop.
+                                        annotations = if (lastFinishReason(messages.lastOrNull()) == null) {
+                                            messages.last().annotations + UIMessageAnnotation.FinishReason(LlmFinishReason.Cancelled, raw = null)
+                                        } else {
+                                            messages.last().annotations
+                                        }
                                     )
                                 }
                                 emit(GenerationChunk.Messages(messages))
@@ -807,6 +906,45 @@ class GenerationLoop(
                     // with a request-only instruction (budget MAX_STALL_NUDGES per turn);
                     // old break behavior resumes when the budget is spent or the step
                     // produced real output.
+                    // AURA-021 (LC-3 + A1): a Length-cut step continues with more
+                    // budget and its reasoning in history — BEFORE the stall check, so a
+                    // truncation is never misfiled as a silent stop. Complete tool calls
+                    // that did stream still execute (this branch only sees steps with no
+                    // executable call). After MAX_CONTINUATIONS: honest visible failure
+                    // naming the budget tried and the cap — never an empty bubble.
+                    if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length &&
+                        continuationsUsed < MAX_CONTINUATIONS
+                    ) {
+                        continuationsUsed += 1
+                        val escalated = nextEscalatedMaxTokens(
+                            previous = escalatedMaxTokens,
+                            baseline = assistant.maxTokens ?: DEFAULT_CONTINUATION_BASELINE,
+                        )
+                        escalatedMaxTokens = escalated
+                        pendingLengthContinuation = true
+                        Log.w(
+                            TAG,
+                            "length-cut step: continuation $continuationsUsed/$MAX_CONTINUATIONS at max_tokens=$escalated " +
+                                "(reasoning kept in history)",
+                        )
+                        continue
+                    }
+                    if (lastFinishReason(messages.lastOrNull()) == LlmFinishReason.Length) {
+                        val capNote = continuationCapNote(escalatedMaxTokens ?: assistant.maxTokens)
+                        val last = messages.last()
+                        val lastTextIdx = last.parts.indexOfLast { it is UIMessagePart.Text && it.text.isNotBlank() }
+                        val newParts = if (lastTextIdx >= 0) {
+                            last.parts.mapIndexed { i, part ->
+                                if (i == lastTextIdx) (part as UIMessagePart.Text).copy(text = part.text + capNote) else part
+                            }
+                        } else {
+                            last.parts + UIMessagePart.Text(text = capNote)
+                        }
+                        messages = messages.slice(0 until messages.lastIndex) + last.copy(parts = newParts)
+                        emit(GenerationChunk.Messages(messages))
+                        Log.w(TAG, "length-cut cap exhausted after $MAX_CONTINUATIONS continuations, honest failure surfaced")
+                        break
+                    }
                     if (stalledWithoutReply(messages.lastOrNull()) && stallNudgesUsed < MAX_STALL_NUDGES) {
                         stallNudgesUsed += 1
                         pendingStallNudge = true
@@ -1135,6 +1273,53 @@ class GenerationLoop(
                         }
                         runCatching {
                             val args = parsedArgs.getOrThrow()
+                            // AURA-021 US-012 (z7 2026-11-14, probe_jensen_logcat_final.txt):
+                            // every tool call in the failing Jensen turns carried no usable
+                            // arguments - the UI chip rendered `Search web: ` empty. The
+                            // `executing tool` line below is debug-build-only, so the release
+                            // beta went silent while the loop burned step after step on calls
+                            // that could never answer (empty-args search_web returns junk the
+                            // model replays). A call missing schema-required parameters cannot
+                            // do anything useful, so reject it with an envelope naming the
+                            // missing fields - the model recovers on the next step instead of
+                            // dying silently at the step budget.
+                            val gateRequired = me.rerere.rikkahub.runtime.tools.RequiredArgsGate
+                                .requiredNames(toolDef.parameters())
+                            if (gateRequired.isNotEmpty()) {
+                                val gateMissing = me.rerere.rikkahub.runtime.tools
+                                    .RequiredArgsGate.missing(gateRequired, args)
+                                if (gateMissing.isNotEmpty()) {
+                                    Log.w(TAG, "generateText: ${toolDef.name} called without required $gateMissing (args=${tool.input.take(120)}) - rejected without executing")
+                                    executedTools += tool.copy(
+                                        output = listOf(
+                                            UIMessagePart.Text(
+                                                json.encodeToString(buildJsonObject {
+                                                    put("error", JsonPrimitive("missing_required_arguments"))
+                                                    put("tool", JsonPrimitive(toolDef.name))
+                                                    put(
+                                                        "missing",
+                                                        kotlinx.serialization.json.JsonArray(
+                                                            gateMissing.map { JsonPrimitive(it) }
+                                                        ),
+                                                    )
+                                                    put("received", JsonPrimitive(tool.input.take(200)))
+                                                    put(
+                                                        "recovery",
+                                                        JsonPrimitive(
+                                                            "Call ${toolDef.name} again with a JSON arguments " +
+                                                                "object containing every required key (" +
+                                                                gateRequired.joinToString(", ") + "). " +
+                                                                "Include the values themselves - an empty object {} " +
+                                                                "or a bare 'name=value' line is not valid tool-call JSON.",
+                                                        ),
+                                                    )
+                                                })
+                                            )
+                                        )
+                                    )
+                                    return@runCatching
+                                }
+                            }
                             if (host.isDebugBuild) {
                                 Log.i(TAG, "generateText: executing tool ${toolDef.name} with args: ${redactSecrets(args)}")
                             }
@@ -1351,6 +1536,12 @@ class GenerationLoop(
         facts: List<LoopFact> = emptyList(),
         factsOmitted: Int = 0,
         stream: Boolean,
+        /**
+         * AURA-021 (A1): when a continuation chain is active, run THIS attempt at the
+         * strictly-escalated budget instead of the assistant's configured maxTokens.
+         * Owned by the caller (GenerationLoop.run) because the chain is per user turn.
+         */
+        escalatedMaxTokens: Int? = null,
         processingStatus: MutableStateFlow<String?> = MutableStateFlow(null),
         conversationSystemPrompt: String? = null,
         conversationId: Uuid? = null,
@@ -1448,7 +1639,9 @@ class GenerationLoop(
             model = model,
             temperature = assistant.temperature,
             topP = assistant.topP,
-            maxTokens = assistant.maxTokens,
+            // AURA-021 (A1): while a continuation chain is active this attempt runs at
+            // the strictly-escalated budget; assistant.maxTokens returns next user turn.
+            maxTokens = escalatedMaxTokens ?: assistant.maxTokens,
             // Auto-retry is forced on: retrying a transient network failure is strictly better
             // than surfacing it as a dead error, so the switch was removed and the flag ignored.
             maxStreamRetries = settings.responseStreamMaxRetries,
@@ -1941,6 +2134,9 @@ internal fun shouldRetryGenerationStreamFailure(
         return false
     }
     if (failure is ResponseStreamErrorException || isContextLimitFailure(failure)) {
+        return false
+    }
+    if (isModelCapacityFailure(failure)) {
         return false
     }
     if (isNonRetryableClientError(failure)) {

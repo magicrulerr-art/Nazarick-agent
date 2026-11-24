@@ -644,6 +644,60 @@ sealed class ProviderSetting {
         }
     }
 
+    /**
+     * Remote **Nazarick-agent instance** provider: the fleet's own server, addressed by
+     * baseUrl + Bearer token + agentId. US-001 lands the scaffold and the connection test
+     * ([me.rerere.ai.provider.providers.nazarick.NazarickClient]); the chat dispatch is a
+     * stub that refuses until US-004 wires the protocol.
+     *
+     * Companion lane fields (US-001): when enabled, the phone opens a long-lived SSE
+     * connection to the companion agent for low-latency ambient assistance. The three
+     * fields default to OFF so existing installs don't suddenly start a background lane.
+     */
+    @Serializable
+    @SerialName("nazarick")
+    data class Nazarick(
+        override var id: Uuid = NAZARICK_PROVIDER_ID,
+        override var enabled: Boolean = false,
+        override var name: String = "Nazarick",
+        override var models: List<Model> = emptyList(),
+        override val balanceOption: BalanceOption = BalanceOption(),
+        override val customHeaders: List<CustomHeader> = emptyList(),
+        @Transient override val builtIn: Boolean = true,
+        @Transient override val description: @Composable (() -> Unit) = {},
+        @Transient override val shortDescription: @Composable (() -> Unit) = {},
+        var baseUrl: String = "",
+        var token: String = "",
+        var agentId: String = "",
+        var companion_enabled: Boolean = false,
+        var companion_agent_id: String = "default",
+        var companion_device_id: String = "",
+    ) : ProviderSetting() {
+        override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
+        override fun editModel(model: Model): ProviderSetting =
+            copy(models = models.map { if (it.id == model.id) model else it })
+        override fun delModel(model: Model): ProviderSetting =
+            copy(models = models.filter { it.id != model.id })
+        override fun moveMove(from: Int, to: Int): ProviderSetting =
+            copy(models = models.toMutableList().apply { add(to, removeAt(from)) })
+        override fun copyProvider(
+            id: Uuid,
+            enabled: Boolean,
+            name: String,
+            models: List<Model>,
+            balanceOption: BalanceOption,
+            customHeaders: List<CustomHeader>,
+            builtIn: Boolean,
+            description: @Composable (() -> Unit),
+            shortDescription: @Composable (() -> Unit),
+        ): ProviderSetting = copy(
+            id = id, enabled = enabled, name = name, models = models,
+            builtIn = builtIn, description = description, shortDescription = shortDescription,
+            balanceOption = balanceOption,
+            customHeaders = customHeaders,
+        )
+    }
+
     companion object {
         // Types presented to the user when adding / converting a provider. AICore is
         // intentionally NOT in this list: it is a singleton built-in (one per device,
@@ -684,6 +738,12 @@ val SDCPP_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000004")
  * the user turns on the NPU, not "images".
  */
 val LOCAL_DREAM_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000005")
+
+/**
+ * The remote Nazarick-agent instance provider (US-001). Stable ID like the local family so
+ * a seeded row survives re-installs; baseUrl/token/agentId are user-entered, the ID is not.
+ */
+val NAZARICK_PROVIDER_ID: Uuid = Uuid.parse("11111111-aaaa-bbbb-cccc-000000000006")
 private val AICORE_NANO_FAST_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000002")
 private val AICORE_NANO_FULL_ID: Uuid = Uuid.parse("a1c0a1c0-1234-4111-a000-000000000003")
 

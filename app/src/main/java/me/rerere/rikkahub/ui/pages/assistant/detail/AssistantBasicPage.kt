@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.assistant.detail
 
+import androidx.compose.material3.ButtonDefaults
+import me.rerere.rikkahub.data.model.BrainPolicy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -526,6 +528,27 @@ internal fun AssistantBasicContent(
                         onUpdate(assistant.copy(reasoningLevel = level))
                     }
                 )
+            }
+            FormItem(
+                modifier = Modifier.padding(8.dp),
+                label = {
+                    Text("Brain policy")
+                },
+                description = {
+                    Text("Which brain answers: Edge (on-device), Tomb (QwenPaw instance), or Auto")
+                }
+            ) {
+                BrainPolicy.entries.forEach { policy ->
+                    TextButton(
+                        onClick = { onUpdate(assistant.copy(brainPolicy = policy)) },
+                        colors = if (assistant.brainPolicy == policy)
+                            ButtonDefaults.filledTonalButtonColors()
+                        else
+                            ButtonDefaults.textButtonColors(),
+                    ) {
+                        Text(policy.name.lowercase())
+                    }
+                }
             }
             HorizontalDivider()
             FormItem(

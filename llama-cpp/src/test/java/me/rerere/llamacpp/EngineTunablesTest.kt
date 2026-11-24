@@ -83,6 +83,16 @@ class EngineTunablesTest {
     }
 
     @Test
+    fun `engine_pack accepts only auto and off`() {
+        // US-006 AC2: the lane switch is two-valued; anything else must reject loudly so a
+        // typo in a battery note cannot silently leave packs on (or off) the load path.
+        assertEquals("auto", EngineTunables.parse(null).first.enginePack)
+        assertEquals("off", EngineTunables.parse("engine_pack=off").first.enginePack)
+        assertEquals("auto", EngineTunables.parse("engine_pack=auto").first.enginePack)
+        assertEquals(listOf("engine_pack=yes"), EngineTunables.parse("engine_pack=yes").second)
+    }
+
+    @Test
     fun `unknown and malformed pairs are returned rather than swallowed`() {
         val spec = "n_gpu_layers=99;ctx_max=abc;response_reserve;=7;history_headroom=40"
         val (t, rejected) = EngineTunables.parse(spec)
