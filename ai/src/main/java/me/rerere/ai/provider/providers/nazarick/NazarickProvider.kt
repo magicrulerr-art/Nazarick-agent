@@ -102,7 +102,15 @@ class NazarickProvider(
         providerSetting: ProviderSetting.Nazarick,
         messages: List<UIMessage>,
         params: TextGenerationParams,
-    ): Flow<StreamChunk> = flow {
+    ): Flow<StreamChunk> {
+        // US-002: companion_enabled is a WIRE switch, not a no-op. ON sends the same turn
+        // through the companion lane (POST /api/companion/agents/{agent}/chat, X-Companion-*
+        // headers, companionEventsToChunks); OFF falls through to the untouched console
+        // assembly below — same request bytes as every build before this branch.
+        if (providerSetting.companion_enabled) {
+            return companionStreamText(providerSetting, messages, params)
+        }
+        return flow {
         val url = nazarickUrl(providerSetting.baseUrl, NazarickClient.CHAT_PATH)
             ?: throw IllegalArgumentException("invalid nazarick baseUrl: ${providerSetting.baseUrl}")
         val input = nazarickLastUserText(messages)
@@ -249,6 +257,63 @@ class NazarickProvider(
         }
     // Unbounded buffer, same reason the OpenAI/Google providers give one: a buffered channel that
     // fills would drop a delta, and a dropped delta is a missing word in the middle of an answer.
+        }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO)
+    }
+
+    /**
+     * US-002 — the companion-lane turn, mirroring the console branch's streaming idiom:
+     * `POST {baseUrl}/api/companion/agents/{companion_agent_id or agentId}/chat` assembled by
+     * [companionTurnRequest] ([buildCompanionTurnBody] body carrying the same namespaced
+     * session id the console path uses, [companionHeaders] envelope from
+     * `companion_device_id` + this device's Build model/os), answered by companion SSE lines
+     * mapped verbatim through [companionEventsToChunks].
+     *
+     * Cancellation follows the console branch: a cancelled collector cancels the call via
+     * `invokeOnCompletion`, the read loop re-checks `ensureActive()` per line, and a non-2xx
+     * answer throws [NazarickHttpException] instead of stalling. There is no stop POST: the
+     * companion lane ships no stop endpoint in US-002, so closing the socket is the stop.
+     */
+    private fun companionStreamText(
+        providerSetting: ProviderSetting.Nazarick,
+        messages: List<UIMessage>,
+        params: TextGenerationParams,
+    ): Flow<StreamChunk> = flow {
+        // One id on both wires: same nazarickSessionId(deviceSlug, chatId) the console path
+        // sends as session_id; the companion server takes it in chat_id.
+        val sessionId = nazarickSessionId(deviceSlug, params.sessionId)
+        val request = companionTurnRequest(
+            settings = providerSetting,
+            messages = messages,
+            sessionId = sessionId,
+            deviceModel = Build.MODEL,
+            deviceOs = "Android " + Build.VERSION.RELEASE,
+        )
+        val call = client.newCall(request)
+        val stopHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) call.cancel()
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    val errorBody = runCatching { response.body?.string() }.getOrNull().orEmpty()
+                    throw NazarickHttpException(response.code, errorBody)
+                }
+                val source = response.body?.source()
+                    ?: throw IllegalStateException("companion chat returned no body")
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val line = runCatching { source.readUtf8Line() }.getOrElse {
+                        // call.cancel() (user Stop) lands here as an IOException; the collector
+                        // is already gone, so end quietly like the console branch does.
+                        if (currentCoroutineContext()[Job]?.isActive != true) return@flow else throw it
+                    } ?: break       // EOF: the server closed the stream
+                    for (chunk in companionEventsToChunks(listOf(line))) emit(chunk)
+                }
+            }
+        } finally {
+            stopHandle?.dispose()
+        }
+    // Unbounded buffer for the same reason as the console path: a dropped delta is a lost word.
     }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO)
 
     override suspend fun generateImage(
@@ -330,3 +395,44 @@ internal fun nazarickImageMimeFromPath(path: String): String =
         "png" -> "image/png"
         else -> "image/png"
     }
+
+/**
+ * US-002 — the companion turn endpoint path: `/api/companion/agents/{agent}/chat`, where the
+ * agent segment is `companion_agent_id`, falling back to the console `agentId` when blank.
+ */
+internal fun companionChatPath(settings: ProviderSetting.Nazarick): String {
+    val agent = settings.companion_agent_id.takeUnless { it.isBlank() } ?: settings.agentId
+    return "/api/companion/agents/$agent/chat"
+}
+
+/**
+ * US-002 — the companion branch's ONE request-build point, kept pure so the JVM unit test
+ * pins URL + headers without Android or a socket: `android.os.Build` stays in
+ * [NazarickProvider.companionStreamText] and the device model/os arrive as plain strings.
+ *
+ * Body: [buildCompanionTurnBody] with the same namespaced session id the console path derives.
+ * Headers: [companionHeaders] (X-Companion-Device/Model/Os + Bearer token) plus
+ * `Accept: text/event-stream`, mirroring the console request's SSE negotiation. The agent is
+ * addressed by the URL path, so no X-Agent-Id header is sent.
+ */
+internal fun companionTurnRequest(
+    settings: ProviderSetting.Nazarick,
+    messages: List<UIMessage>,
+    sessionId: String,
+    deviceModel: String,
+    deviceOs: String,
+): Request {
+    val url = nazarickUrl(settings.baseUrl, companionChatPath(settings))
+        ?: throw IllegalArgumentException("invalid nazarick baseUrl: ${settings.baseUrl}")
+    val body = buildCompanionTurnBody(messages, sessionId, settings)
+        .toRequestBody(JSON_MEDIA_TYPE.toMediaType())
+    return Request.Builder().url(url).apply {
+        companionHeaders(
+            deviceId = settings.companion_device_id,
+            model = deviceModel,
+            osName = deviceOs,
+            token = settings.token,
+        ).forEach { (name, value) -> header(name, value) }
+        header("Accept", "text/event-stream")
+    }.post(body).build()
+}
