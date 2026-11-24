@@ -11,6 +11,8 @@ import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * US-002: pure turn-shaping for the companion lane.
