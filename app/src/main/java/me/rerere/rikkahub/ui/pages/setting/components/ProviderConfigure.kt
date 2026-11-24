@@ -922,6 +922,34 @@ private fun ProviderConfigureNazarick(
         modifier = Modifier.fillMaxWidth(),
     )
 
+    // US-003: companion lane toggle + fields. Defaults keep the lane OFF, so the
+    // console path stays byte-identical until the user opts in here.
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Companion lane")
+        Switch(
+            checked = provider.companion_enabled,
+            onCheckedChange = { onEdit(provider.copy(companion_enabled = it)) },
+        )
+    }
+    if (provider.companion_enabled) {
+        OutlinedTextField(
+            value = provider.companion_agent_id,
+            onValueChange = { onEdit(provider.copy(companion_agent_id = it.trim())) },
+            label = { Text("Companion Agent ID") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = provider.companion_device_id,
+            onValueChange = { onEdit(provider.copy(companion_device_id = it.trim())) },
+            label = { Text("Companion Device ID") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+
     // US-005: roster-driven agent picker. "Load agents" calls GET /api/agents with the
     // configured baseUrl/token and renders the live roster as radio rows; the hand-typed
     // Agent ID field above stays as the fallback and pre-selects a row when it matches.
