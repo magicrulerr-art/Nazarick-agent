@@ -649,6 +649,10 @@ sealed class ProviderSetting {
      * baseUrl + Bearer token + agentId. US-001 lands the scaffold and the connection test
      * ([me.rerere.ai.provider.providers.nazarick.NazarickClient]); the chat dispatch is a
      * stub that refuses until US-004 wires the protocol.
+     *
+     * Companion lane fields (US-001): when enabled, the phone opens a long-lived SSE
+     * connection to the companion agent for low-latency ambient assistance. The three
+     * fields default to OFF so existing installs don't suddenly start a background lane.
      */
     @Serializable
     @SerialName("nazarick")
@@ -665,6 +669,9 @@ sealed class ProviderSetting {
         var baseUrl: String = "",
         var token: String = "",
         var agentId: String = "",
+        var companion_enabled: Boolean = false,
+        var companion_agent_id: String = "default",
+        var companion_device_id: String = "",
     ) : ProviderSetting() {
         override fun addModel(model: Model): ProviderSetting = copy(models = models + model)
         override fun editModel(model: Model): ProviderSetting =
