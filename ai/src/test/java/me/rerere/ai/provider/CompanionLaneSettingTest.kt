@@ -118,10 +118,9 @@ class CompanionLaneSettingTest {
         val encoded = json.encodeToString(setting)
         val jsonObject = json.parseToJsonElement(encoded).jsonObject
 
-        // Defaults should be serialized explicitly
-        assertEquals("companion_enabled default is false", false, jsonObject["companion_enabled"]?.jsonPrimitive?.booleanOrNull)
-        assertEquals("companion_agent_id default is 'default'", "default", jsonObject["companion_agent_id"]?.jsonPrimitive?.contentOrNull)
-        assertEquals("companion_device_id default is empty", "", jsonObject["companion_device_id"]?.jsonPrimitive?.contentOrNull)
+        // encodeDefaults=false (repo dialect): defaults are ABSENT on the wire and
+        // re-applied on decode - assert that contract instead of explicit serialization.
+        assertEquals("companion_enabled omitted when default", null, jsonObject["companion_enabled"])
 
         val restored = json.decodeFromString<ProviderSetting.Nazarick>(encoded)
         assertFalse("companion_enabled default false", restored.companion_enabled)
